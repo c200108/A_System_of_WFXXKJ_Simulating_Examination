@@ -78,7 +78,8 @@ rem ---------- 3. 数据库 ----------
 echo [3/6] 初始化数据库...
 pushd "%~dp0backend"
 if not exist "data" mkdir "data"
-"%VENV%\alembic.exe" upgrade head
+rem 用 python -m 调用，这样项目文件夹改名或换台电脑都不会失效
+"%VENV%\python.exe" -m alembic upgrade head
 if errorlevel 1 (
     echo [错误] 数据库迁移失败。
     popd
