@@ -1,6 +1,6 @@
 #!/bin/sh
 # 每天备份一次数据库和上传目录，保留最近 30 天。
-# 用法：加到宿主机 crontab —— 0 2 * * * /opt/exam-system/backup/backup.sh
+# 用法：加到宿主机 crontab —— 0 2 * * * /opt/A_System_of_WFXXKJ_Simulating_Examination/backup/backup.sh
 set -e
 cd "$(dirname "$0")/.."
 

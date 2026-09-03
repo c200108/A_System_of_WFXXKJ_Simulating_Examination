@@ -12,7 +12,7 @@
 ## 一、目录结构
 
 ```
-exam-system/
+A_System_of_WFXXKJ_Simulating_Examination/
 ├─ 一键启动.bat              Windows 上双击就能跑（装依赖、建库、导题、开服务）
 ├─ 一键停止.bat              停掉前后端（只杀 python/node，不误伤别的程序）
 ├─ scripts/                  上面两个脚本调用的子脚本
@@ -266,7 +266,7 @@ cd backend && pytest -v
 **数据安全**：题目软删除可恢复；上传原件留底；`backup/backup.sh` 加到 crontab 每天备份，保留 30 天：
 
 ```bash
-0 2 * * * /opt/exam-system/backup/backup.sh
+0 2 * * * /opt/A_System_of_WFXXKJ_Simulating_Examination/backup/backup.sh
 ```
 
 **部署升级**：改完代码在服务器上
