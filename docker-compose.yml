@@ -1,0 +1,48 @@
+services:
+  db:
+    image: mysql:8.0
+    restart: always
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_pwd}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-exam}
+      MYSQL_USER: ${MYSQL_USER:-exam}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-exam_pwd}
+      TZ: Asia/Shanghai
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./backup:/backup
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:-root_pwd}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build: ./backend
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: mysql+pymysql://${MYSQL_USER:-exam}:${MYSQL_PASSWORD:-exam_pwd}@db:3306/${MYSQL_DATABASE:-exam}?charset=utf8mb4
+      JWT_SECRET: ${JWT_SECRET:-please-change-me}
+      UPLOAD_DIR: /app/data/uploads
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      TZ: Asia/Shanghai
+    volumes:
+      # 上传的图片和 Excel 原件挂到宿主机，容器重建数据不丢
+      - ./data/uploads:/app/data/uploads
+
+  frontend:
+    build: ./frontend
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "${WEB_PORT:-8080}:80"
+
+volumes:
+  db_data:

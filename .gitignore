@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# 前端
+node_modules/
+dist/
+
+# 运行时数据：题库数据库、上传的图片和 Excel 原件
+# 这些不进版本库，靠 backup/backup.sh 单独备份
+data/
+
+# 备份产物
+backup/*.sql*
+backup/*.tar.gz
+
+# 配置里有密钥和密码，只提交 .env.example
+.env
+
+# 编辑器与系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
