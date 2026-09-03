@@ -11,9 +11,8 @@ from app.services.importer import (
     build_template,
     norm_answer,
     norm_type,
-    parse_csv,
+    parse_upload,
     parse_options,
-    parse_workbook,
     stem_hash,
 )
 from app.services.paper import right_letter, shuffle_options
@@ -155,7 +154,7 @@ def test_csv_import_follows_the_same_rules():
         "判断题,U 盘属于外存储器。,,正确,计算机硬件,\n"
         "简答题,这个题型不认识,,略,计算机硬件,\n"
     )
-    good, errors, rows = parse_csv(csv_text.encode("utf-8"), set(SCOPES))
+    good, errors, rows = parse_upload(csv_text.encode("utf-8"), "x.csv", set(SCOPES))
     assert rows == 3
     assert len(good) == 2
     assert good[1]["answer"] == "正确"
@@ -166,7 +165,7 @@ def test_csv_import_follows_the_same_rules():
 def test_csv_accepts_gbk():
     """WPS / Excel 存出来的 CSV 多半是 GBK。"""
     csv_text = "题型,题干,可选项,答案,知识范围,图片\n判断题,计算机病毒会自我复制。,,正确,信息安全与网络道德,\n"
-    good, _, _ = parse_csv(csv_text.encode("gbk"), set(SCOPES))
+    good, _, _ = parse_upload(csv_text.encode("gbk"), "x.csv", set(SCOPES))
     assert len(good) == 1
     assert good[0]["stem"] == "计算机病毒会自我复制。"
 
@@ -175,7 +174,7 @@ def test_csv_accepts_gbk():
 def test_our_own_template_parses_without_errors():
     """自带模板里的「对照表」没有题干列，不能被当成失败行。"""
     data = build_template(SCOPES, ["选择题", "判断题", "操作题", "填空题"])
-    good, errors, rows = parse_workbook(data, set(SCOPES))
+    good, errors, rows = parse_upload(data, "x.xlsx", set(SCOPES))
     assert len(good) == 3
     assert rows == 3
     assert errors == []
@@ -193,7 +192,7 @@ def test_workbook_with_no_question_sheet_reports_error():
     buf = io.BytesIO()
     wb.save(buf)
 
-    good, errors, _ = parse_workbook(buf.getvalue(), set(SCOPES))
+    good, errors, _ = parse_upload(buf.getvalue(), "x.xlsx", set(SCOPES))
     assert good == []
     assert len(errors) == 1
     assert "表头" in errors[0]["reason"]

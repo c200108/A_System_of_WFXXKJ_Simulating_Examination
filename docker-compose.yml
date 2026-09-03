@@ -35,6 +35,8 @@ services:
     volumes:
       # 上传的图片和 Excel 原件挂到宿主机，容器重建数据不丢
       - ./data/uploads:/app/data/uploads
+      # 配置文件挂进去：改完 config.yaml 只要 docker compose restart backend，不用重新构建
+      - ./config.yaml:/app/config.yaml:ro
 
   frontend:
     build: ./frontend

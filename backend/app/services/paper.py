@@ -11,9 +11,11 @@ import time
 from sqlalchemy.orm import Session
 
 from ..models import Question
+from ..siteconfig import site
 from .sampler import pick
 
-CN_NUM = ["一", "二", "三", "四", "五", "六"]
+# 大题序号从配置读，改 config.yaml 的 paper.section_numerals 即可
+CN_NUM = site.paper.section_numerals
 
 
 def _seed_int(seed: str) -> int:
@@ -117,7 +119,7 @@ def build_paper(
         "title": title or "信息技术测试卷",
         "school": school,
         "duration": duration,
-        "code": "NO." + str(_seed_int(seed_str) % 100000).zfill(5),
+        "code": site.paper.code_prefix + str(_seed_int(seed_str) % 100000).zfill(5),
         "seed": seed_str,
         "total": len(flat),
         "tally": tally,

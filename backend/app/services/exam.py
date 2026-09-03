@@ -11,12 +11,13 @@ import secrets
 from sqlalchemy.orm import Session
 
 from ..models import Exam, Paper, PaperItem, Question
+from ..siteconfig import site
 from .paper import right_letter
 
 
 def new_token() -> str:
     """学生链接里的口令，够随机以防被猜到。"""
-    return secrets.token_urlsafe(9)
+    return secrets.token_urlsafe(site.exam.token_length)
 
 
 def _item_from_row(item: PaperItem, q: Question) -> dict:

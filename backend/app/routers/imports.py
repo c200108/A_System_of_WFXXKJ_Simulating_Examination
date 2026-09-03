@@ -13,7 +13,7 @@ from ..database import get_db
 from ..deps import get_current_user
 from ..models import ImportLog, Option, Question, User
 from ..schemas import ImportLogOut, ImportResult, ImportRowError
-from ..services.importer import build_template, parse_csv, parse_workbook, stem_hash
+from ..services.importer import build_template, parse_upload, stem_hash
 from .dicts import active_names
 
 router = APIRouter(prefix="/api/imports", tags=["题库导入"])
@@ -48,10 +48,7 @@ async def import_questions(
     scopes = set(active_names(db, DICT_SCOPE))
     is_csv = name.endswith(".csv")
     try:
-        if is_csv:
-            good, errors, rows_seen = parse_csv(content, scopes)
-        else:
-            good, errors, rows_seen = parse_workbook(content, scopes)
+        good, errors, rows_seen = parse_upload(content, name, scopes)
     except Exception as exc:  # 文件损坏、编码认不出、不是表格等
         raise HTTPException(status_code=400, detail=f"这个文件读不了：{exc}")
 

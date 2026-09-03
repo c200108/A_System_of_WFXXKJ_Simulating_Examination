@@ -1,9 +1,10 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { siteConfig } from '../siteConfig'
 import { api, download, safeName } from '../api'
 
-const CN = ['一', '二', '三', '四', '五', '六']
+const CN = siteConfig.paper.section_numerals
 
 const scopes = ref([])
 const types = ref([])
@@ -17,15 +18,16 @@ const resp = reactive({}) // 学生作答 {题目id: 选项或文本}
 const graded = ref(false)
 const score = reactive({ right: 0, obj: 0 })
 
+// 卷头、题量、三个开关的默认值都来自 config.yaml，改配置这里就跟着变
 const form = reactive({
-  title: '2026年信息技术模拟测试（A卷）',
-  school: '',
-  duration: '40',
-  counts: { 选择题: 20, 判断题: 10, 操作题: 3 },
+  title: siteConfig.paper.default_title,
+  school: siteConfig.school,
+  duration: siteConfig.paper.default_duration,
+  counts: { ...siteConfig.paper.default_counts },
   scopes: [],
-  use_pinned: true,
-  require_answer: true,
-  shuffle_options: true,
+  use_pinned: siteConfig.paper.use_pinned,
+  require_answer: siteConfig.paper.require_answer,
+  shuffle_options: siteConfig.paper.shuffle_options,
   seed: '',
   save: false
 })

@@ -1,31 +1,17 @@
-"""与原 HTML 保持一致的业务常量。
+"""真常量 + 从 config.yaml 转出来的业务默认值。
 
-注意：运行时真正生效的是数据库 dict_items 表，这里只是首次初始化的种子值。
-以后要加一类知识范围，在后台改表即可，不用改代码。
+这里不再写死知识范围和题型 —— 它们在 config.yaml 里（首次建库的初始值），
+运行期真正生效的是数据库 dict_items 表。
 """
 
-SCOPES: list[str] = [
-    "信息基础与信息技术",
-    "计算机硬件",
-    "计算机软件",
-    "Windows系统操作",
-    "WPS文字操作",
-    "信息安全与网络道德",
-    "计算机网络基础",
-    "Python编程基础",
-    "人工智能",
-    "物联网",
-]
+from .siteconfig import site
 
-# 组卷用的三种题型（填空题可以入库，但默认不参与抽题，与原页面一致）
-TYPES: list[str] = ["选择题", "判断题", "操作题"]
-
-# 入库允许的题型
-ALL_TYPES: list[str] = ["选择题", "判断题", "操作题", "填空题"]
-
-DEFAULT_QTY: dict[str, int] = {"选择题": 20, "判断题": 10, "操作题": 3}
-
+# 字典表的两个分类名，属于代码内部约定，不对外配置
 DICT_SCOPE = "scope"
 DICT_TYPE = "qtype"
 
-IMPORT_HEADERS = ["题型", "题干", "可选项", "答案", "知识范围", "图片"]
+# 下面几个都是从 config.yaml 读出来的，保留同名变量方便老代码引用
+SCOPES: list[str] = site.bank.scopes
+ALL_TYPES: list[str] = site.bank.types
+DEFAULT_QTY: dict[str, int] = site.paper.default_counts
+IMPORT_HEADERS: list[str] = site.import_.headers

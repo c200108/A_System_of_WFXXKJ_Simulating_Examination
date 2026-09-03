@@ -2,6 +2,8 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .siteconfig import site as _site
+
 
 class Settings(BaseSettings):
     """全部配置从环境变量读取，不写死在代码里，换环境只改 .env。"""
@@ -16,7 +18,8 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 720
 
     upload_dir: str = "./data/uploads"
-    max_upload_mb: int = 20
+    # 默认值取自 config.yaml 的 upload.max_mb，环境变量 MAX_UPLOAD_MB 可再覆盖
+    max_upload_mb: int = _site.upload.max_mb
 
     admin_username: str = "admin"
     admin_password: str = "admin123"

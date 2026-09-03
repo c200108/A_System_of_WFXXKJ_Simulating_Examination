@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { siteConfig } from '../siteConfig'
 import { api, download } from '../api'
 
 const exams = ref([])
@@ -11,10 +12,10 @@ const publishDlg = ref(false)
 const form = reactive({
   paper_id: null,
   title: '',
-  is_open: true,
-  allow_retake: false,
-  show_score: true,
-  show_answer: false
+  is_open: siteConfig.exam.defaults.is_open,
+  allow_retake: siteConfig.exam.defaults.allow_retake,
+  show_score: siteConfig.exam.defaults.show_score,
+  show_answer: siteConfig.exam.defaults.show_answer
 })
 
 const current = ref(null) // 正在看成绩的那场考试
@@ -46,10 +47,10 @@ function openPublish() {
   Object.assign(form, {
     paper_id: papers.value[0].id,
     title: '',
-    is_open: true,
-    allow_retake: false,
-    show_score: true,
-    show_answer: false
+    is_open: siteConfig.exam.defaults.is_open,
+    allow_retake: siteConfig.exam.defaults.allow_retake,
+    show_score: siteConfig.exam.defaults.show_score,
+    show_answer: siteConfig.exam.defaults.show_answer
   })
   publishDlg.value = true
 }
@@ -207,7 +208,7 @@ const hardest = computed(() => {
           <el-table-column prop="student_no" label="学号" width="110" show-overflow-tooltip />
           <el-table-column label="得分" width="70">
             <template #default="{ row }">
-              <b :class="row.score >= 60 ? 'ok' : 'no'">{{ row.score }}</b>
+              <b :class="row.score >= siteConfig.exam.pass_score ? 'ok' : 'no'">{{ row.score }}</b>
             </template>
           </el-table-column>
           <el-table-column label="答对" width="80">

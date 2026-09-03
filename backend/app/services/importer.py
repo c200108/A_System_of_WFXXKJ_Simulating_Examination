@@ -1,61 +1,74 @@
-"""Excel 题库导入：把原 HTML 里 normType / parseOpts / normAns / handleRows
-这套校验规则原样搬到后端，规则不变，只是执行位置从浏览器换成了服务器。"""
+"""Excel / CSV 题库导入：解析、逐行校验、归一化。
 
+规则原样来自单文件 HTML 版的 normType / parseOpts / normAns / handleRows，
+但不再写死在代码里 —— 题型关键词、判断题答案的各种写法、选项分隔符、
+最多认几个选项，全部读 config.yaml 的 import 段，改配置即改行为。
+"""
+
+import csv
 import hashlib
 import io
 import re
 
 from openpyxl import Workbook, load_workbook
 
-from ..constants import IMPORT_HEADERS
+from ..siteconfig import site
 
-_OPT_RE = re.compile(r"^([A-Da-d])\s*[.．、,，:：]?\s*(.+)$")
 _IMG_RE = re.compile(r"^(data:image|https?://|/uploads/)")
+
+# 内部记号：这张表没有题干列
+HEADLESS = "__headless__"
+
+
+def _opt_regex() -> re.Pattern:
+    """按配置里的分隔符拼出 "A.内容" 的匹配式。"""
+    seps = re.escape(site.import_.option_separators)
+    return re.compile(rf"^([A-Za-z])\s*[{seps}]?\s*(.+)$")
 
 
 def stem_hash(stem: str) -> str:
     """题干去掉所有空白后取哈希，用来查重。"""
-    normalized = re.sub(r"\s+", "", stem)
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return hashlib.sha256(re.sub(r"\s+", "", stem).encode("utf-8")).hexdigest()
 
 
 def norm_type(value) -> str:
+    """题型识别。题型栏里含有配置的关键词之一，就算这种题型。"""
     s = str(value or "").strip()
-    if "选择" in s:
-        return "选择题"
-    if "判断" in s:
-        return "判断题"
-    if "操作" in s:
-        return "操作题"
-    if "填空" in s:
-        return "填空题"
+    for qtype, keywords in site.import_.type_keywords.items():
+        if any(k in s for k in keywords):
+            return qtype
     return ""
 
 
 def parse_options(value, qtype: str) -> list[tuple[str, str]]:
+    """把"可选项"一栏拆成 [(标签, 内容)]。判断题自动补两个选项。"""
     if qtype == "判断题":
-        return [("A", "正确"), ("B", "错误")]
+        return [(o[0], o[1]) for o in site.import_.judge_options]
+
     s = "" if value is None else str(value).strip()
     if not s:
         return []
-    parts = [x.strip() for x in re.split(r"[\r\n]+", s) if x.strip()]
+
+    pattern = _opt_regex()
+    limit = site.import_.max_options
+    labels = "ABCDEFGHIJ"
     out: list[tuple[str, str]] = []
-    for i, p in enumerate(parts):
-        m = _OPT_RE.match(p)
+    for i, part in enumerate(x.strip() for x in re.split(r"[\r\n]+", s) if x.strip()):
+        m = pattern.match(part)
         if m:
             out.append((m.group(1).upper(), m.group(2).strip()))
         else:
-            out.append(("ABCD"[i] if i < 4 else str(i + 1), p))
-    return out[:4]
+            out.append((labels[i] if i < len(labels) else str(i + 1), part))
+    return out[:limit]
 
 
 def norm_answer(value, qtype: str) -> str:
+    """判断题答案归一成标准写法（√/对/T/是 → 正确）。其他题型原样保留。"""
     s = "" if value is None else str(value).strip()
     if qtype == "判断题":
-        if re.fullmatch(r"(√|对|T|true|正确)", s, re.I):
-            return "正确"
-        if re.fullmatch(r"(×|x|错|F|false|错误)", s, re.I):
-            return "错误"
+        for standard, variants in site.import_.judge_answers.items():
+            if any(s.lower() == str(v).lower() for v in variants):
+                return standard
     return s
 
 
@@ -64,30 +77,46 @@ def norm_image(value) -> str | None:
     return s if s and _IMG_RE.match(s) else None
 
 
-def _rows_to_questions(
-    grid: list[list], sheet_name: str, valid_scopes: set[str]
-) -> tuple[list[dict], list[dict], int]:
-    """逐行校验一张二维表。Excel 的每个工作表和 CSV 都走这里，规则只有一份。"""
-    if not grid:
-        return [], [], 0
+def _read_csv(content: bytes) -> list[list[str]]:
+    """CSV 兼容 UTF-8(BOM) 和 GBK —— 老师用 Excel 另存的 CSV 多半是 GBK。"""
+    for encoding in ("utf-8-sig", "gbk", "utf-8"):
+        try:
+            text = content.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        raise ValueError("这个 CSV 的编码认不出来，建议另存为 .xlsx 再传")
+    return [row for row in csv.reader(io.StringIO(text))]
 
-    head = [str(h or "").strip() for h in grid[0]]
-    idx = {h: (head.index(h) if h in head else -1) for h in IMPORT_HEADERS}
-    if idx["题型"] < 0 or idx["题干"] < 0:
-        return [], [{"sheet": sheet_name, "row": 1, "reason": "__headless__"}], 0
 
+def _validate_rows(grid: list[list], sheet_name: str, valid_scopes: set[str]):
+    """校验一张表的所有行，返回 (合格题目, 错误明细, 扫描到的数据行数)。"""
     good: list[dict] = []
     errors: list[dict] = []
     rows_seen = 0
 
+    if not grid:
+        return good, errors, rows_seen
+
+    headers = site.import_.headers
+    head = [str(h or "").strip() for h in grid[0]]
+    idx = {h: (head.index(h) if h in head else -1) for h in headers}
+
+    if idx.get("题型", -1) < 0 or idx.get("题干", -1) < 0:
+        # 先打个记号。说明页、对照表这类表本来就没有题干列，
+        # 只有整本工作簿都读不出题时才算错误，否则用自带模板导入会平白多一条“失败”。
+        errors.append({"sheet": sheet_name, "row": 1, "reason": HEADLESS})
+        return good, errors, rows_seen
+
     for i, row in enumerate(grid[1:], start=2):
         def get(col: str):
-            j = idx[col]
+            j = idx.get(col, -1)
             return row[j] if 0 <= j < len(row) else ""
 
         stem = str(get("题干") or "").strip()
         if not stem:
-            continue  # 空行直接忽略，不算错误
+            continue  # 空行忽略，不算错误
         rows_seen += 1
 
         qtype = norm_type(get("题型"))
@@ -102,7 +131,7 @@ def _rows_to_questions(
         if scope not in valid_scopes:
             errors.append(
                 {"sheet": sheet_name, "row": i,
-                 "reason": f"知识范围「{scope or '空'}」不在十类之内"}
+                 "reason": f"知识范围「{scope or '空'}」不在允许的范围之内"}
             )
             continue
 
@@ -130,7 +159,7 @@ def _rows_to_questions(
                 "stem": stem,
                 "answer": answer,
                 "scope": scope,
-                "source": "自定义",
+                "source": site.bank.default_source,
                 "image_url": norm_image(get("图片")),
                 "options": options,
                 "sheet": sheet_name,
@@ -141,89 +170,70 @@ def _rows_to_questions(
     return good, errors, rows_seen
 
 
-def parse_workbook(content: bytes, valid_scopes: set[str]) -> tuple[list[dict], list[dict], int]:
-    """返回 (合格题目, 错误明细, 扫描到的数据行数)。多张工作表一起读。"""
-    wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-    rows_seen = 0
-    good: list[dict] = []
-    errors: list[dict] = []
-    # 说明页、对照表这类没有题干列的工作表先记下来，只有整本都读不出题时才报错，
-    # 否则教师用我们自带的模板导入会平白多出一条“失败”。
-    headless_sheets: list[str] = []
-    usable_sheets = 0
+def parse_upload(content: bytes, filename: str, valid_scopes: set[str]):
+    """解析上传的 xlsx 或 csv，返回 (合格题目, 错误明细, 数据行数)。"""
+    if filename.lower().endswith(".csv"):
+        good, errors, seen = _validate_rows(_read_csv(content), "CSV", valid_scopes)
+        for e in errors:  # CSV 只有一张表，没表头就是真的没表头
+            if e["reason"] == HEADLESS:
+                e["reason"] = "找不到「题型」「题干」表头，整表跳过"
+        return good, errors, seen
 
-    for sheet in wb.worksheets:
+    wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    all_good, all_errors, total = [], [], 0
+    headless: list[str] = []
+    usable = 0
+
+    for sheet in wb.worksheets:  # 多张工作表一起读
         grid = [list(r) for r in sheet.iter_rows(values_only=True)]
         if not grid:
             continue
-        g, e, n = _rows_to_questions(grid, sheet.title, valid_scopes)
-        if e and e[0]["reason"] == "__headless__":
-            headless_sheets.append(sheet.title)
+        good, errors, seen = _validate_rows(grid, sheet.title, valid_scopes)
+        if errors and errors[0]["reason"] == HEADLESS:
+            headless.append(sheet.title)
             continue
-        usable_sheets += 1
-        good += g
-        errors += e
-        rows_seen += n
+        usable += 1
+        all_good += good
+        all_errors += errors
+        total += seen
 
-    if usable_sheets == 0:
-        for title in headless_sheets:
-            errors.append(
+    if usable == 0:  # 整本都没有能用的表，这才是真的传错文件了
+        for title in headless:
+            all_errors.append(
                 {"sheet": title, "row": 1, "reason": "找不到「题型」「题干」表头，整表跳过"}
             )
 
     wb.close()
-    return good, errors, rows_seen
-
-
-def parse_csv(content: bytes, valid_scopes: set[str]) -> tuple[list[dict], list[dict], int]:
-    """CSV 走和 Excel 完全一样的校验规则，只是读法不同。
-
-    编码依次试 UTF-8(BOM)、UTF-8、GBK —— WPS 和 Excel 存出来的 CSV 多半是 GBK。
-    """
-    import csv
-
-    text = None
-    for enc in ("utf-8-sig", "utf-8", "gbk"):
-        try:
-            text = content.decode(enc)
-            break
-        except UnicodeDecodeError:
-            continue
-    if text is None:
-        raise ValueError("这个 CSV 的编码认不出来，请另存为 UTF-8 或 xlsx 再传")
-
-    grid = [row for row in csv.reader(io.StringIO(text))]
-    good, errors, rows_seen = _rows_to_questions(grid, "CSV", valid_scopes)
-    for e in errors:
-        if e["reason"] == "__headless__":
-            e["reason"] = "找不到「题型」「题干」表头，第一行必须是表头"
-    return good, errors, rows_seen
+    return all_good, all_errors, total
 
 
 def build_template(scopes: list[str], types: list[str]) -> bytes:
-    """生成空白模板：第一张表是填写区，第二张表是对照表。"""
+    """生成空白模板：第一张表填写区，第二张表对照表。"""
     wb = Workbook()
     ws = wb.active
     ws.title = "题目"
-    ws.append(IMPORT_HEADERS)
+    ws.append(site.import_.headers)
+
+    demo_scope = scopes[0] if scopes else ""
     ws.append(
         [
             "选择题",
             "在 Windows 中，用于切换当前活动窗口的快捷键是（ ）。",
             "A.Alt+Tab\nB.Ctrl+C\nC.Alt+F4\nD.Win+D",
             "A",
-            "Windows系统操作",
+            demo_scope,
             "",
         ]
     )
-    ws.append(["判断题", "计算机病毒是一种可以自我复制的程序。", "", "正确", "信息安全与网络道德", ""])
-    ws.append(["操作题", "把当前文档另存为 PDF 并命名为「作业.pdf」。", "", "略", "WPS文字操作", ""])
-    widths = [10, 60, 40, 12, 22, 30]
-    for col, w in zip("ABCDEF", widths):
+    ws.append(["判断题", "计算机病毒是一种可以自我复制的程序。", "", "正确", demo_scope, ""])
+    ws.append(["操作题", "把当前文档另存为 PDF 并命名为「作业.pdf」。", "", "略", demo_scope, ""])
+
+    for col, w in zip("ABCDEF", [10, 60, 40, 12, 22, 30]):
         ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A2"
 
     ws2 = wb.create_sheet("对照表")
-    ws2.append(["知识范围（只能填这十类）", "题型"])
+    ws2.append(["知识范围（只能填这些）", "题型"])
     for i in range(max(len(scopes), len(types))):
         ws2.append([scopes[i] if i < len(scopes) else "", types[i] if i < len(types) else ""])
     ws2.column_dimensions["A"].width = 26
