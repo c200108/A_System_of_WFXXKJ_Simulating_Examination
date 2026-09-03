@@ -1,0 +1,21 @@
+# 统一换行，避免 Windows 开发、Linux 部署来回转换造成的问题
+* text=auto eol=lf
+
+# 在 Linux 容器里执行，必须是 LF。用了 CRLF 会报 bad interpreter 起不来
+*.sh text eol=lf
+entrypoint.sh text eol=lf
+
+# Windows 的批处理必须是 CRLF，否则 cmd 解析出错
+*.bat text eol=crlf
+
+# 老版本 HTML 是存档件，按原样保存不做任何换行转换
+legacy/*.html -text
+
+# 二进制资源不做转换、不参与 diff
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.xlsx binary
+*.db binary
