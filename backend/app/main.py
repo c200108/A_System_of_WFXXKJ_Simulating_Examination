@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
-from .routers import auth, dicts, exams, imports, papers, questions, take
+from .routers import auth, config, dicts, exams, imports, papers, questions, take
 
 app = FastAPI(
     title="信息技术组卷台 API",
@@ -25,6 +25,7 @@ app.add_middleware(
 os.makedirs(os.path.join(settings.upload_dir, "images"), exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=settings.upload_dir), name="uploads")
 
+app.include_router(config.router)  # 公开，前端启动时读
 app.include_router(auth.router)
 app.include_router(dicts.router)
 app.include_router(questions.router)

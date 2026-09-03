@@ -47,6 +47,9 @@ export function safeName(name) {
 }
 
 export const api = {
+  // 前后端共用 config.yaml，这里取界面要用的那部分
+  siteConfig: () => http.get('/config'),
+
   login(username, password) {
     const form = new URLSearchParams()
     form.append('username', username)

@@ -2,6 +2,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .siteconfig import site
+
 
 class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -94,14 +96,14 @@ class QuestionPage(BaseModel):
 
 # ---------- 组卷 ----------
 class PaperGenerateIn(BaseModel):
-    title: str = "信息技术测验卷"
-    school: str = ""                      # 试卷抬头的学校名
-    duration: str = ""                    # 考试时长（分钟）
-    counts: dict[str, int] = {"选择题": 20, "判断题": 10, "操作题": 3}
+    title: str = Field(default_factory=lambda: site.paper.default_title)
+    school: str = Field(default_factory=lambda: site.school.name)
+    duration: str = Field(default_factory=lambda: site.paper.default_duration)
+    counts: dict[str, int] = Field(default_factory=lambda: dict(site.paper.default_counts))
     scopes: list[str] | None = None       # 为空表示全部知识范围
-    use_pinned: bool = True               # 必出题优先
-    require_answer: bool = True           # 跳过原卷未给答案的题（与原页面默认一致）
-    shuffle_options: bool = True          # 打乱选择题选项，答案自动跟随
+    use_pinned: bool = Field(default_factory=lambda: site.paper.use_pinned)
+    require_answer: bool = Field(default_factory=lambda: site.paper.require_answer)
+    shuffle_options: bool = Field(default_factory=lambda: site.paper.shuffle_options)
     seed: str | None = None               # 填了就可复现同一套卷子
     save: bool = False
 
@@ -152,10 +154,10 @@ class PaperOut(ORMModel):
 class ExamCreate(BaseModel):
     paper_id: int
     title: str | None = None              # 不填就用试卷标题
-    is_open: bool = True
-    allow_retake: bool = False
-    show_score: bool = True               # 交卷后给学生看分数
-    show_answer: bool = False             # 交卷后给学生看对错和答案（正式考试建议关）
+    is_open: bool = Field(default_factory=lambda: site.exam.defaults.is_open)
+    allow_retake: bool = Field(default_factory=lambda: site.exam.defaults.allow_retake)
+    show_score: bool = Field(default_factory=lambda: site.exam.defaults.show_score)
+    show_answer: bool = Field(default_factory=lambda: site.exam.defaults.show_answer)
 
 
 class ExamUpdate(BaseModel):

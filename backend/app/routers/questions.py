@@ -14,11 +14,12 @@ from ..models import Option, Question, User
 from ..schemas import QuestionCreate, QuestionOut, QuestionPage, QuestionUpdate, StatsOut
 from ..services.export import questions_to_xlsx
 from ..services.importer import stem_hash
+from ..siteconfig import site
 from .dicts import active_names
 
 router = APIRouter(prefix="/api/questions", tags=["题库"])
 
-ALLOWED_IMAGE = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+ALLOWED_IMAGE = set(site.upload.image_extensions)
 
 
 def _filtered(

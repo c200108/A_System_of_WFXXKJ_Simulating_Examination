@@ -13,9 +13,11 @@ import os
 from openpyxl import Workbook
 
 from ..config import settings
+from ..siteconfig import site
 
-BANK_HEADERS = ["题型", "题干", "可选项", "答案", "知识范围", "来源", "编号"]
-BANK_WIDTHS = [8, 60, 34, 26, 16, 10, 9]
+# 表头和列宽读配置，见 config.yaml 的 import.export_headers / export_widths
+BANK_HEADERS = site.import_.export_headers
+BANK_WIDTHS = site.import_.export_widths
 
 
 def _opts_text(options) -> str:
