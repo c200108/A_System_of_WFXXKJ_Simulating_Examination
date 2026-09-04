@@ -99,8 +99,16 @@ if [ "$NEED_GENERATE" = 1 ]; then
     DETECTED="$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null || true)"
     read -r -p "  地址 [${DETECTED:-localhost}]: " HOST_ADDR
     HOST_ADDR="${HOST_ADDR:-${DETECTED:-localhost}}"
-    read -r -p "  对外端口 [8080]: " PORT
-    PORT="${PORT:-8080}"
+    while true; do
+        read -r -p "  对外端口 [8080]: " PORT
+        PORT="${PORT:-8080}"
+        # 必须是纯数字且在合法范围。手滑多打一个字母，docker compose 要到
+        # 构建阶段才会报 invalid hostPort，白等好几分钟，所以这里当场拦下。
+        if [[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ]; then
+            break
+        fi
+        warn "「$PORT」不是合法端口，请填 1-65535 的纯数字"
+    done
 
     ADMIN_PW="$(gen 16)"
     cat > .env <<EOF
@@ -128,6 +136,17 @@ fi
 # shellcheck disable=SC1091
 set -a; . ./.env; set +a
 WEB_PORT="${WEB_PORT:-8080}"
+
+if ! [[ "$WEB_PORT" =~ ^[0-9]+$ ]] || [ "$WEB_PORT" -lt 1 ] || [ "$WEB_PORT" -gt 65535 ]; then
+    die ".env 里的 WEB_PORT 是「${WEB_PORT}」，不是合法端口（要 1-65535 的纯数字）。
+
+      编辑 .env，把 WEB_PORT 改对，并且**把 CORS_ORIGINS 结尾的端口一起改成同一个值**。
+      例如两处都用 8080：
+
+        nano .env
+
+      改完重新运行本脚本。"
+fi
 
 # ---------------------------------------------------------------- 3 端口
 step "[3/6] 检查端口 ${WEB_PORT}..."
