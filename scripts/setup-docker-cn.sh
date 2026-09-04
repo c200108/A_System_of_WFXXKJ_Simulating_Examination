@@ -60,7 +60,7 @@ fi
 
 # ---------------------------------------------------------------- 2 探测加速站
 step "[2/4] 探测可用的镜像加速站..."
-echo "      国内公共加速站关停频繁，这里逐个实测，只写入真正能用的。"
+echo "      逐个真实拉取小镜像验证，只写入确实能拉下来的（每个最多 90 秒）。"
 
 # docker.1ms.run 排第一：2026-09 实测可用，作为默认首选。
 # 后面几个是备选，前面的不通时自动往下试。
@@ -80,15 +80,20 @@ if [ -n "${DOCKER_MIRROR:-}" ]; then
     echo "      已把你指定的 $DOCKER_MIRROR 排在最前面"
 fi
 
+# 只测 /v2/ 端点是不够的：有的站能返回元数据，实际镜像层却重定向到
+# CloudFront 之类的国外 CDN，照样拉不下来。所以这里直接拿显式前缀真拉一次
+# hello-world（几十 KB），端到端验证。
 WORKING=()
 for m in "${CANDIDATES[@]}"; do
-    # registry 的 /v2/ 端点返回 200 或 401 都算通（401 是要求认证，说明服务在）
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "${m}/v2/" 2>/dev/null || echo 000)"
-    if [ "$code" = "200" ] || [ "$code" = "401" ]; then
-        ok "可用   $m  (HTTP $code)"
+    host="${m#https://}"; host="${host#http://}"; host="${host%/}"
+    printf "      测试 %-28s " "$host"
+
+    if timeout 90 docker pull "${host}/library/hello-world" >/dev/null 2>&1; then
+        echo -e "${C_GREEN}可用${C_OFF}"
         WORKING+=("$m")
+        docker rmi "${host}/library/hello-world" >/dev/null 2>&1 || true
     else
-        printf "      不通   %s  (HTTP %s)\n" "$m" "$code"
+        echo "拉取失败"
     fi
 done
 
@@ -101,7 +106,11 @@ if [ ${#WORKING[@]} -eq 0 ]; then
         3. 重新运行：
            DOCKER_MIRROR=https://你的ID.mirror.aliyuncs.com sudo -E bash $0
 
-      如果这台机器就在阿里云/腾讯云上，用厂商的内网加速地址更快。"
+      如果这台机器就在阿里云/腾讯云上，用厂商的内网加速地址更快。
+
+      注意：有的站能返回镜像元数据、看着像通的，但镜像层会重定向到
+      CloudFront 等国外 CDN，实际拉不下来。所以这里用真实拉取来判断，
+      而不是只 ping 一下接口。"
 fi
 
 # ---------------------------------------------------------------- 3 写配置
