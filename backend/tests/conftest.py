@@ -8,7 +8,15 @@ import pathlib
 import tempfile
 
 TMP = pathlib.Path(tempfile.mkdtemp(prefix="exam_test_"))
-os.environ["DATABASE_URL"] = "sqlite:///" + (TMP / "test.db").as_posix()
+
+# 默认跑在临时 SQLite 上：快、不用起服务、随手就能跑。
+# 想验证 MySQL 方言有没有问题，指定一个**专用的空库**再跑：
+#   set TEST_DATABASE_URL=mysql+pymysql://exam:密码@127.0.0.1:3306/exam_test?charset=utf8mb4
+#   pytest -q
+# 注意：测试开始时会把该库的表全部删掉重建，绝不要指向正式库。
+os.environ["DATABASE_URL"] = os.environ.get(
+    "TEST_DATABASE_URL", "sqlite:///" + (TMP / "test.db").as_posix()
+)
 os.environ["UPLOAD_DIR"] = str(TMP / "uploads")
 os.environ["JWT_SECRET"] = "test-secret-not-used-in-production"
 os.environ["ADMIN_USERNAME"] = "admin"
@@ -26,6 +34,8 @@ def client():
     from app.models import Base
     from app.seed import seed
 
+    # 指向 MySQL 时表会留在库里，先清干净再建，保证每次都是同样的起点
+    Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     seed()
     with TestClient(app) as c:
