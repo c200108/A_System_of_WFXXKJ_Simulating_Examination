@@ -58,8 +58,26 @@ def save_image(data_url: str, images_dir: str) -> str | None:
 
 
 def main() -> None:
-    html_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_HTML
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    # --if-empty：题库里已经有题就直接退出。容器每次启动都会调用，
+    # 全新部署时把原题库灌进去，从备份恢复的库则原样不动。
+    if_empty = "--if-empty" in sys.argv
+
+    if if_empty:
+        db = SessionLocal()
+        try:
+            n = db.query(Question).count()
+        finally:
+            db.close()
+        if n:
+            print(f"题库里已有 {n} 道题，跳过导入。")
+            return
+
+    html_path = args[0] if args else DEFAULT_HTML
     if not os.path.exists(html_path):
+        if if_empty:
+            print(f"没找到 {html_path}，跳过导入。")
+            return
         raise SystemExit(f"找不到文件：{html_path}")
     print(f"读取：{html_path}")
 
