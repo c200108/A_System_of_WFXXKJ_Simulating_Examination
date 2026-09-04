@@ -34,8 +34,9 @@ def ensure() -> None:
     if not db_name:
         _die("[db] DATABASE_URL 里没写数据库名，形如 .../exam?charset=utf8mb4")
 
-    # 先连到服务器本身（不指定 database），才能执行 CREATE DATABASE
-    server_url = url.set(database=None)
+    # 先连到服务器本身（不指定 database），才能执行 CREATE DATABASE。
+    # 注意必须用空字符串：URL.set() 把 None 当成"这一项不改"，传 None 是无效的。
+    server_url = url.set(database="")
     try:
         server = create_engine(server_url, pool_pre_ping=True)
         conn = server.connect()
