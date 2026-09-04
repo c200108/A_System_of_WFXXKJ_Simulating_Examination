@@ -23,7 +23,11 @@ def upgrade() -> None:
         batch.add_column(sa.Column("code", sa.String(length=32), nullable=False, server_default=""))
 
     with op.batch_alter_table("paper_items") as batch:
-        batch.add_column(sa.Column("snapshot_json", sa.Text(), nullable=False, server_default=""))
+        # 不能写 server_default=""：MySQL 禁止 TEXT/BLOB 列带默认值（错误 1101），
+        # 而且它的 DDL 不支持回滚，一旦在这里失败，前面几列已经加上、版本号却没推进，
+        # 重启后会卡在「Duplicate column name」的死循环里。
+        # 默认值由 models.py 的 default="" 在 Python 侧给出，已有行会自动填空串。
+        batch.add_column(sa.Column("snapshot_json", sa.Text(), nullable=False))
 
 
 def downgrade() -> None:
