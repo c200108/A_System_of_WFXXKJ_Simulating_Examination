@@ -1,19 +1,31 @@
+# 三个容器：数据库 / 后端 / 前端。
+# 部署前先跑 python backend/tools/check_deploy.py 确认 .env 已改好。
+#
+# 对外只暴露 WEB_PORT 一个端口，数据库和后端都只在内网，外面连不到。
+
+x-logging: &default-logging
+  # 不限制的话容器日志会一直涨，几个月后能把服务器磁盘写满
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   db:
     image: mysql:8.0
     restart: always
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    logging: *default-logging
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_pwd}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请先在 .env 里设置 MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-exam}
       MYSQL_USER: ${MYSQL_USER:-exam}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-exam_pwd}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请先在 .env 里设置 MYSQL_PASSWORD}
       TZ: Asia/Shanghai
     volumes:
       - db_data:/var/lib/mysql
-      - ./backup:/backup
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:-root_pwd}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -21,28 +33,43 @@ services:
   backend:
     build: ./backend
     restart: always
+    logging: *default-logging
     depends_on:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: mysql+pymysql://${MYSQL_USER:-exam}:${MYSQL_PASSWORD:-exam_pwd}@db:3306/${MYSQL_DATABASE:-exam}?charset=utf8mb4
-      JWT_SECRET: ${JWT_SECRET:-please-change-me}
+      DATABASE_URL: mysql+pymysql://${MYSQL_USER:-exam}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE:-exam}?charset=utf8mb4
+      JWT_SECRET: ${JWT_SECRET:?请先在 .env 里设置 JWT_SECRET}
       UPLOAD_DIR: /app/data/uploads
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请先在 .env 里设置 ADMIN_PASSWORD}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
       TZ: Asia/Shanghai
     volumes:
       # 上传的图片和 Excel 原件挂到宿主机，容器重建数据不丢
       - ./data/uploads:/app/data/uploads
-      # 配置文件挂进去：改完 config.yaml 只要 docker compose restart backend，不用重新构建
+      # 改完 config.yaml 只要 docker compose restart backend，不用重新构建
       - ./config.yaml:/app/config.yaml:ro
+      # 原题库存档。全新部署时容器会从这里把 331 道题导进空库
+      - ./legacy:/legacy:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
 
   frontend:
     build: ./frontend
     restart: always
+    logging: *default-logging
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
       - "${WEB_PORT:-8080}:80"
 

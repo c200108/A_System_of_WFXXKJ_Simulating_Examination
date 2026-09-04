@@ -28,5 +28,10 @@ alembic upgrade head
 echo "[start] 初始化管理员与字典"
 python -m app.seed
 
+# 全新部署时把 legacy/ 里那份原题库灌进去；库里已有题目则原样不动，
+# 所以从备份恢复的实例不会被影响，重启也不会重复导入。
+echo "[start] 检查题库"
+python -m tools.migrate_from_html --if-empty
+
 echo "[start] 启动服务"
 exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers
