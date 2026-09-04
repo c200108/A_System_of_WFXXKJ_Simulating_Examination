@@ -32,8 +32,20 @@ docker info >/dev/null 2>&1 || die "Docker 已安装但没运行（或当前用�
       权限：sudo usermod -aG docker \$USER  然后重新登录"
 
 docker compose version >/dev/null 2>&1 || die "缺少 docker compose 插件（v2）。
-      安装：sudo apt install docker-compose-plugin  或参考官方文档。"
+      安装：sudo bash scripts/setup-docker-cn.sh  （国内服务器用这个）"
 ok "Docker 就绪  $(docker --version | sed 's/Docker version //')"
+
+# 国内服务器直连 Docker Hub 基本拉不动，先确认镜像源是通的，
+# 免得等构建到一半才失败、白等好几分钟。
+if docker info 2>/dev/null | grep -q "Registry Mirrors"; then
+    ok "已配置镜像加速  $(docker info 2>/dev/null | grep -A1 'Registry Mirrors' | tail -1 | tr -d ' ')"
+elif [ -n "${REGISTRY:-}" ]; then
+    ok "使用指定的镜像仓库  $REGISTRY"
+else
+    warn "没有配置镜像加速，将直连 Docker Hub"
+    warn "国内服务器多半拉不动。若下一步卡住或超时，先跑："
+    warn "  sudo bash scripts/setup-docker-cn.sh"
+fi
 
 # ---------------------------------------------------------------- 2 配置
 step "[2/6] 准备配置文件..."
@@ -140,10 +152,21 @@ for i in 1 2 3; do
     [ "$i" -lt 3 ] && { warn "这次没成功（多半是拉镜像中断），10 秒后重试"; sleep 10; }
 done
 [ "$BUILT" = 1 ] || die "镜像构建失败，试了 3 次。
-      最常见原因是拉取 Docker Hub 超时。配国内镜像加速再试，
-      编辑 /etc/docker/daemon.json：
-        { \"registry-mirrors\": [\"https://docker.m.daocloud.io\"] }
-      然后 sudo systemctl restart docker，重新跑本脚本。"
+
+      国内服务器最常见的原因是拉不动 Docker Hub。跑这个脚本会自动
+      装好 Docker 并逐个实测国内加速站，只写入真正能用的：
+
+        sudo bash scripts/setup-docker-cn.sh
+
+      如果加速站全都不通（现在关停很频繁），申请一个阿里云专属加速器
+      （免费，需账号，在 https://cr.console.aliyun.com 的「镜像加速器」里），
+      然后：
+
+        DOCKER_MIRROR=https://你的ID.mirror.aliyuncs.com sudo -E bash scripts/setup-docker-cn.sh
+
+      要是那个站只能当仓库前缀用、当不了透明加速器，就改用：
+
+        REGISTRY=那个站的域名 ./deploy.sh"
 ok "容器已启动"
 
 # ---------------------------------------------------------------- 5 等待就绪

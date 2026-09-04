@@ -12,7 +12,7 @@ x-logging: &default-logging
 
 services:
   db:
-    image: mysql:8.0
+    image: ${REGISTRY:-docker.io}/library/mysql:8.0
     restart: always
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     logging: *default-logging
@@ -31,7 +31,10 @@ services:
       retries: 20
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        REGISTRY: ${REGISTRY:-docker.io}
     restart: always
     logging: *default-logging
     depends_on:
@@ -64,7 +67,10 @@ services:
       start_period: 40s
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        REGISTRY: ${REGISTRY:-docker.io}
     restart: always
     logging: *default-logging
     depends_on:
