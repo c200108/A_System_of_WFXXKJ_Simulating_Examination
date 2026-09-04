@@ -7,7 +7,12 @@ from app.config import settings
 from app.models import Base
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.database_url)
+
+# 调用方（测试、迁移工具）显式指定了地址就用它；没指定才回落到 .env。
+# 不能无条件覆盖：app.config 的 settings 带 lru_cache，进程里一旦读过就固定了，
+# 那样外部再想换目标库就只能改环境变量，而此时已经晚了。
+if not config.get_main_option("sqlalchemy.url", None):
+    config.set_main_option("sqlalchemy.url", settings.database_url)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
