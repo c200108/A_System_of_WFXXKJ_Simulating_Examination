@@ -62,6 +62,8 @@ fi
 step "[2/4] 探测可用的镜像加速站..."
 echo "      国内公共加速站关停频繁，这里逐个实测，只写入真正能用的。"
 
+# docker.1ms.run 排第一：2026-09 实测可用，作为默认首选。
+# 后面几个是备选，前面的不通时自动往下试。
 CANDIDATES=(
     "https://docker.1ms.run"
     "https://docker.m.daocloud.io"
