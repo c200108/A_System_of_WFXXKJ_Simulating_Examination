@@ -162,13 +162,42 @@ step "[4/6] 构建并启动（首次要下载约 1GB，需要几分钟）..."
 echo "      国内网络拉镜像容易中断，失败会自动重试。"
 
 BUILT=0
+BUILD_LOG="$(mktemp)"
+trap 'rm -f "$BUILD_LOG"' EXIT
+
 for i in 1 2 3; do
     echo
     echo "      第 $i 次尝试..."
-    if docker compose up -d --build 2>&1 | sed 's/^/        /'; then
+    if docker compose up -d --build 2>&1 | tee "$BUILD_LOG" | sed 's/^/        /'; then
         BUILT=1; break
     fi
-    [ "$i" -lt 3 ] && { warn "这次没成功（多半是拉镜像中断），10 秒后重试"; sleep 10; }
+
+    # 有些失败重试一百次也没用，识别出来就别白等。
+    # 最典型的是镜像加速站的域名已经不存在了（站点关停），DNS 直接解析失败。
+    if grep -q "no such host" "$BUILD_LOG"; then
+        DEAD="$(grep -o 'lookup [^ ]*' "$BUILD_LOG" | head -1 | cut -d' ' -f2)"
+        die "镜像加速站 ${DEAD:-（见上面日志）} 的域名解析不了，这个站已经没了。
+
+      国内公共加速站关停很频繁，换一个：
+
+        sudo bash scripts/setup-docker-cn.sh
+
+      它会逐个实测候选站，只写入真正能用的，并备份你现有的 daemon.json。
+
+      要手动指定也行：
+
+        sudo tee /etc/docker/daemon.json > /dev/null <<'"'"'EOF'"'"'
+        { \"registry-mirrors\": [\"https://docker.1ms.run\"] }
+        EOF
+        sudo systemctl restart docker"
+    fi
+
+    if grep -qE "unauthorized|authentication required" "$BUILD_LOG"; then
+        die "镜像仓库要求认证，多半是加速站限制了匿名拉取。换一个：
+        sudo bash scripts/setup-docker-cn.sh"
+    fi
+
+    [ "$i" -lt 3 ] && { warn "这次没成功，10 秒后重试"; sleep 10; }
 done
 [ "$BUILT" = 1 ] || die "镜像构建失败，试了 3 次。
 
