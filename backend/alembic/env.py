@@ -36,7 +36,9 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            render_as_batch=True,  # SQLite 改表也能走迁移
+            # 批处理模式是给 SQLite 用的（它不支持 ALTER COLUMN，只能重建表）。
+            # MySQL/PostgreSQL 支持原生 ALTER，用批处理反而会绕远路、还可能碰外键。
+            render_as_batch=connection.dialect.name == "sqlite",
         )
         with context.begin_transaction():
             context.run_migrations()

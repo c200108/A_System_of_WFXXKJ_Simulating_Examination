@@ -79,6 +79,13 @@ echo [3/6] 初始化数据库...
 pushd "%~dp0backend"
 if not exist "data" mkdir "data"
 rem 用 python -m 调用，这样项目文件夹改名或换台电脑都不会失效
+"%VENV%\python.exe" -m tools.ensure_db
+if errorlevel 1 (
+    echo.
+    echo        数据库没准备好，原因见上面一行。修好后重新运行本脚本。
+    pause
+    exit /b 1
+)
 "%VENV%\python.exe" -m alembic upgrade head
 if errorlevel 1 (
     echo [错误] 数据库迁移失败。

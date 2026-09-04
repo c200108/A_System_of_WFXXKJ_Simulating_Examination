@@ -19,6 +19,9 @@ else:
     sys.exit("数据库连不上，检查 DATABASE_URL")
 PY
 
+echo "[start] 准备数据库"
+python -m tools.ensure_db
+
 echo "[start] 执行数据库迁移"
 alembic upgrade head
 
