@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { siteConfig } from '../siteConfig'
 import { api, download } from '../api'
+import { loadPublicBase, studentLink } from '../publicUrl'
 
 const exams = ref([])
 const papers = ref([])
@@ -25,7 +26,7 @@ const detailDlg = ref(false)
 const detail = ref(null)
 
 function linkOf(exam) {
-  return `${location.origin}/take/${exam.token}`
+  return studentLink(`/take/${exam.token}`)
 }
 
 async function load() {
@@ -37,7 +38,10 @@ async function load() {
     loading.value = false
   }
 }
-onMounted(load)
+onMounted(async () => {
+  await loadPublicBase()
+  await load()
+})
 
 function openPublish() {
   if (!papers.value.length) {

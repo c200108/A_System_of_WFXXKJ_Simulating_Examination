@@ -6,6 +6,7 @@
 
 from fastapi import APIRouter
 
+from ..config import settings
 from ..siteconfig import site
 
 router = APIRouter(prefix="/api/config", tags=["配置"])
@@ -15,6 +16,8 @@ router = APIRouter(prefix="/api/config", tags=["配置"])
 def get_config():
     return {
         "school": site.school.name,
+        # 学生链接（考试、打字）拼这个前缀。为空时前端退回浏览器当前地址。
+        "public_base_url": settings.public_url,
         "paper": {
             "default_title": site.paper.default_title,
             "default_duration": site.paper.default_duration,

@@ -338,3 +338,39 @@ def test_import_csv(client, auth):
     body = client.post("/api/imports/questions", files=files, headers=auth).json()
     assert body["success"] == 1
     assert body["by_type"] == {"判断题": 1}
+
+
+# ---------- 对外地址 ----------
+def test_public_base_url_in_config(client):
+    """/api/config 要带对外地址字段，前端拼学生链接靠它。"""
+    cfg = client.get("/api/config").json()
+    assert "public_base_url" in cfg
+
+
+def test_public_url_only_accepts_explicit_valid_url():
+    """没配、配了非法值都返回空串，让前端退回 location.origin。
+
+    刻意不从 CORS_ORIGINS 推导：那一项可能是开发默认的 localhost，
+    也可能被手工改坏（少个冒号），拿它拼链接比用浏览器当前地址更不可靠。
+    """
+    import os
+
+    from app import config as C
+
+    cases = [
+        ("", ""),
+        ("   ", ""),
+        ("localhostw3315", ""),          # 少冒号的坏值，必须忽略
+        ("ftp://x", ""),                 # 不是 http(s)
+        ("http://1.2.3.4:8080/", "http://1.2.3.4:8080"),   # 尾斜杠剥掉
+        ("https://exam.school.edu.cn", "https://exam.school.edu.cn"),
+    ]
+    old = os.environ.get("PUBLIC_BASE_URL", "")
+    try:
+        for raw, want in cases:
+            os.environ["PUBLIC_BASE_URL"] = raw
+            C.get_settings.cache_clear()
+            assert C.get_settings().public_url == want, raw
+    finally:
+        os.environ["PUBLIC_BASE_URL"] = old
+        C.get_settings.cache_clear()

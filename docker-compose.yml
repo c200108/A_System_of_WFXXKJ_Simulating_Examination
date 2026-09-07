@@ -47,6 +47,7 @@ services:
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请先在 .env 里设置 ADMIN_PASSWORD}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
       TZ: Asia/Shanghai
     volumes:
       # 上传的图片和 Excel 原件挂到宿主机，容器重建数据不丢
