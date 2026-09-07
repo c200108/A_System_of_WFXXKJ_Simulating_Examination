@@ -26,6 +26,18 @@ class UserCreate(BaseModel):
     role: str = "teacher"
 
 
+class UserUpdate(BaseModel):
+    """管理员改教师资料。字段都可选，只传要改的那几个。
+
+    password 用来重置密码——系统里没存邮箱，老师忘了密码只能管理员帮着重置。
+    """
+
+    name: str | None = None
+    role: str | None = None
+    is_active: bool | None = None
+    password: str | None = Field(default=None, min_length=6, max_length=64)
+
+
 class PasswordChange(BaseModel):
     old_password: str
     new_password: str = Field(min_length=6, max_length=64)

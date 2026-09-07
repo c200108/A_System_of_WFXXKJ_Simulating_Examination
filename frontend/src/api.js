@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import router from './router'
+import { clearAuth } from './auth'
 
 const http = axios.create({ baseURL: '/api', timeout: 60000 })
 
@@ -17,8 +18,7 @@ http.interceptors.response.use(
     const status = err.response?.status
     const detail = err.response?.data?.detail
     if (status === 401) {
-      localStorage.removeItem('token')
-      localStorage.removeItem('user')
+      clearAuth() // 清 token 和响应式登录状态，顶栏同步变回未登录
       router.push('/login')
       ElMessage.error('登录已过期，请重新登录')
     } else {
@@ -61,6 +61,7 @@ export const api = {
   listUsers: () => http.get('/auth/users'),
   createUser: data => http.post('/auth/users', data),
   disableUser: id => http.delete(`/auth/users/${id}`),
+  updateUser: (id, data) => http.patch(`/auth/users/${id}`, data),
 
   dicts: category => http.get('/dicts', { params: { category } }),
   addDict: data => http.post('/dicts', data),
