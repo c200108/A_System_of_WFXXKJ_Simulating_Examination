@@ -105,6 +105,19 @@ export const api = {
   examStats: id => http.get(`/exams/${id}/stats`),
   exportScores: id => http.get(`/exams/${id}/export.xlsx`, { responseType: 'blob' }),
 
+  // 打字训练
+  typingConfig: () => http.get('/typing/config'),
+  typingPassage: (mode, difficulty) =>
+    http.get('/typing/passage', { params: { mode, difficulty } }),
+  typingSubmit: data => http.post('/typing/records', data),
+  typingRecords: params => http.get('/typing/records', { params }),
+  typingStats: () => http.get('/typing/stats'),
+  typingClasses: () => http.get('/typing/classes'),
+  typingExport: () => http.get('/typing/export.xlsx', { responseType: 'blob' }),
+  typingDelete: id => http.delete(`/typing/records/${id}`),
+  typingClear: student_class =>
+    http.delete('/typing/records', { params: { student_class } }),
+
   // 学生端（不需要登录）
   takePaper: token => http.get(`/take/${token}`),
   submitPaper: (token, data) => http.post(`/take/${token}/submit`, data)

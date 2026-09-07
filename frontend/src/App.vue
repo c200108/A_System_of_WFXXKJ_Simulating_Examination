@@ -59,6 +59,7 @@ async function logout() {
         <el-menu-item index="/bank">题库</el-menu-item>
         <el-menu-item index="/import">导入</el-menu-item>
         <el-menu-item index="/exams">考试</el-menu-item>
+        <el-menu-item index="/typing">打字</el-menu-item>
         <el-menu-item v-if="user?.role === 'admin'" index="/users">账号</el-menu-item>
       </el-menu>
       <div class="right">

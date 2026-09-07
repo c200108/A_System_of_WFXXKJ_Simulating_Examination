@@ -164,6 +164,27 @@ class ExamSubmission(Base):
     exam: Mapped[Exam] = relationship(back_populates="submissions")
 
 
+class TypingRecord(Base):
+    """一次打字练习的成绩。学生免登录提交，只填班级姓名。"""
+
+    __tablename__ = "typing_records"
+    __table_args__ = (Index("ix_typing_cls_name", "student_class", "student_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    student_name: Mapped[str] = mapped_column(String(64), index=True)
+    student_class: Mapped[str] = mapped_column(String(64), index=True)
+    module: Mapped[str] = mapped_column(String(16), index=True)  # 键盘 / 英文 / 中文
+    difficulty: Mapped[str] = mapped_column(String(16), default="")
+    speed: Mapped[int] = mapped_column(Integer, default=0)  # 字/分，键盘模块为 0
+    accuracy: Mapped[int] = mapped_column(Integer, default=0)  # 百分比
+    duration: Mapped[int] = mapped_column(Integer, default=0)  # 秒
+    typed_chars: Mapped[int] = mapped_column(Integer, default=0)  # 实际敲了多少
+    stars: Mapped[int] = mapped_column(Integer, default=0)  # 0~3
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), index=True
+    )
+
+
 class ImportLog(Base):
     """谁在什么时候导了什么文件、成功几条失败几条，出问题可追溯。"""
 

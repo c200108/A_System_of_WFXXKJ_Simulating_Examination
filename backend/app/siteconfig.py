@@ -75,6 +75,29 @@ class ImportConf(_Base):
     max_options: int = Field(default=4, ge=2, le=10)
 
 
+class TypingStarConf(_Base):
+    """星级门槛：正确率达到 base+12 且速度够快给三星，达到 base 给两星。"""
+
+    简单: int = 68
+    中等: int = 80
+    困难: int = 88
+
+
+class TypingConf(_Base):
+    enabled: bool = True
+    difficulties: list[str] = Field(default_factory=lambda: ["简单", "中等", "困难"])
+    time_limits: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 5])
+    default_difficulty: str = "简单"
+    default_limit: int = 0
+    # 每次练习从文本库里随机洗牌拼几段，保证限时练习有足够内容
+    passages_per_round: list[int] = Field(default_factory=lambda: [7, 9])
+    star_thresholds: TypingStarConf = Field(default_factory=TypingStarConf)
+    three_star_min_speed: int = 18  # 简单难度之外，三星还要求速度达到这个值
+    # 文本库：{难度: [段落, ...]}，改这里不用重新构建，restart backend 即可
+    english: dict[str, list[str]] = Field(default_factory=dict)
+    chinese: dict[str, list[str]] = Field(default_factory=dict)
+
+
 class UploadConf(_Base):
     max_mb: int = Field(default=20, ge=1, le=500)
     image_extensions: list[str] = Field(
@@ -89,6 +112,7 @@ class SiteConfig(_Base):
     bank: BankConf = Field(default_factory=BankConf)
     import_: ImportConf = Field(default_factory=ImportConf, alias="import")
     upload: UploadConf = Field(default_factory=UploadConf)
+    typing: TypingConf = Field(default_factory=TypingConf)
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
