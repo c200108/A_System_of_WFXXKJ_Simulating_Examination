@@ -1,3 +1,8 @@
+# 固定项目名。不写的话 compose 会用目录名当项目名，数据卷名也跟着变 ——
+# 从 GitHub 下载的 ZIP 解压出来是 xxx-main/，目录名一变卷名就变，
+# 数据库看起来就"空了"。写死之后，目录叫什么都不影响数据。
+name: exam-system
+
 # 三个容器：数据库 / 后端 / 前端。
 # 部署前先跑 python backend/tools/check_deploy.py 确认 .env 已改好。
 #
