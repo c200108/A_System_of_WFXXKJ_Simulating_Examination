@@ -83,3 +83,68 @@ import:
 upload:
   max_mb: 20 # 单个文件大小上限（图片和 Excel 都按这个）
   image_extensions: [".png", ".jpg", ".jpeg", ".gif", ".webp"]
+
+typing:
+  # 打字训练（学生页 /dazi，免登录；教师端在「打字」菜单看成绩）
+  enabled: true
+  difficulties: ["简单", "中等", "困难"]
+  time_limits: [0, 1, 2, 3, 5] # 0 表示不限时，单位分钟
+  default_difficulty: "简单"
+  default_limit: 0
+  passages_per_round: [7, 9] # 每次从文本库随机抽这么多段拼成长文
+  three_star_min_speed: 18 # 简单难度之外，三星还要求速度达到这个值
+  star_thresholds: # 正确率达到 base 给两星，base+12 给三星
+    简单: 68
+    中等: 80
+    困难: 88
+
+  # 文本库。改完 docker compose restart backend 即可生效，不用重新构建。
+  english:
+    简单:
+      - "the quick brown fox jumps over the lazy dog."
+      - "we learn typing every day and practice makes perfect."
+      - "a good habit is to sit up straight and look at the screen."
+      - "keep your fingers on the home row and type slowly at first."
+      - "practice a little each day and your speed will slowly grow."
+      - "the cat sat on the mat and watched the little red ball roll away."
+    中等:
+      - "information technology helps us learn and create. typing fast and correctly is a useful skill for students."
+      - "practice a little every day. soon your fingers will know where each key is without looking at the keyboard."
+      - "the computer is a powerful tool. we should use it wisely and keep our eyes safe from too much screen time."
+      - "learning to type well takes time. be patient, keep your hands in the right place, and do not look down."
+      - "a clean desk and a calm mind help you focus on the screen and type with steady, even rhythm."
+      - "when you finish a task, save your file and rest your eyes by looking far away for a short while."
+    困难:
+      - "the rapid development of artificial intelligence challenges us to think critically, type efficiently, and communicate clearly across digital platforms worldwide."
+      - "mastering keyboard shortcuts, proper finger placement, and consistent practice will significantly improve both your typing speed and overall accuracy over time."
+      - "in the information age, data, algorithms, and networks form the base of the digital world. learning to process information with computers is a key skill for everyone."
+      - "from word processing to presentations, from spreadsheets to simple coding, technology helps us turn ideas into works we can share with others."
+      - "good digital citizens respect others online, protect their own privacy, and think carefully before they post or send any message."
+      - "every key you press leaves a mark in the digital world, so type with care, write with kindness, and learn with an open mind."
+
+  chinese:
+    简单:
+      - "信息技术课真有趣。我们学会了用电脑打字。"
+      - "每天练习一点点，进步就会很大。"
+      - "键盘上的字母排列有规律，认真练就能记住。"
+      - "眼睛看屏幕，手指凭感觉找键，慢慢就快了。"
+      - "打字时坐姿要端正，手指自然放在基本键上。"
+      - "电脑是学习的好帮手，我们要好好使用它。"
+      - "先把正确的指法练熟，速度自然会慢慢提上来。"
+      - "课间休息时，记得远眺，让眼睛放松一下更好。"
+    中等:
+      - "打字是一项基础的信息素养。正确的指法和持续的练习，能让我们既快又准地完成文字输入任务。"
+      - "在信息技术课堂上，我们既要学会操作计算机，也要学会用文字清晰地表达自己的想法。"
+      - "规范的键盘指法把十个手指分配到不同区域，这样可以不必看键盘也能准确敲击。"
+      - "网络让我们看到更广阔的世界，但也要注意保护视力，合理安排用电脑的时间。"
+      - "一份好的电子小报，离不开清晰的文字、合理的排版和认真的输入。"
+      - "遇到不认识的汉字，可以用输入法的手写功能，也能查字典弄懂它的读音和意思。"
+      - "把每天练打字的成果记下来，过一段时间回头看，你会发现自己进步了很多。"
+      - "打字和写作可以一起练，先想清楚要说什么，再从容地把字打在屏幕上。"
+    困难:
+      - "随着人工智能的发展，信息科技课程越来越重要。熟练的键盘操作和准确的文字录入，是新时代学生必备的基本能力之一。"
+      - "良好的打字习惯包括坐姿端正、手指分工明确、眼睛看屏幕而非键盘。坚持每天十分钟，速度自然会提升。"
+      - "信息社会里，数据、算法与网络共同构成了数字世界的基础。学会用计算机处理信息，是现代公民的必修课。"
+      - "从文字处理到演示文稿，从电子表格到简单编程，信息技术帮助我们把想法变成可以分享的作品。"
+      - "做合格的网络小公民，要尊重他人、保护隐私，在发消息或留言之前先认真想一想。"
+      - "你敲下的每一个字符都在数字世界里留下痕迹，所以要认真输入、友善表达、带着开放的心态去学习。"

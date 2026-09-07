@@ -299,3 +299,60 @@ class StatsOut(BaseModel):
     with_image: int
     pinned: int = 0
     sources: list[str] = []               # 题库里出现过的「来源」，供筛选下拉用
+
+
+# ---------- 打字训练 ----------
+class TypingConfigOut(BaseModel):
+    """学生页开局要的配置。不含文本，文本按需从 /passage 取。"""
+
+    school: str = ""
+    difficulties: list[str] = []
+    time_limits: list[int] = []
+    default_difficulty: str = "简单"
+    default_limit: int = 0
+
+
+class TypingRecordIn(BaseModel):
+    """学生上报的原始量。速度/正确率/星级都由后端算，前端不参与。"""
+
+    student_name: str = Field(max_length=64)
+    student_class: str = Field(max_length=64)
+    module: str                      # 键盘 / 英文 / 中文
+    difficulty: str = ""
+    typed_chars: int = Field(ge=0)   # 实际敲了多少（键盘模块是按键次数）
+    correct_chars: int = Field(ge=0) # 其中对了多少
+    duration: float = Field(ge=0)    # 秒
+
+
+class TypingResultOut(BaseModel):
+    module: str
+    difficulty: str = ""
+    speed: int
+    accuracy: int
+    duration: int
+    stars: int
+
+
+class TypingRecordOut(ORMModel):
+    id: int
+    student_name: str
+    student_class: str
+    module: str
+    difficulty: str
+    speed: int
+    accuracy: int
+    duration: int
+    typed_chars: int
+    stars: int
+    created_at: datetime | None = None
+
+
+class TypingStatsOut(BaseModel):
+    total: int = 0
+    students: int = 0
+    avg_accuracy: int = 0
+    avg_speed: int = 0
+    avg_duration: int = 0
+    by_module: dict[str, int] = {}
+    accuracy_buckets: dict[str, int] = {}
+    by_class: list[dict] = []
