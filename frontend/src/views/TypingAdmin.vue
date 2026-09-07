@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download } from '../api'
+import { loadPublicBase, studentLink } from '../publicUrl'
 
 const rows = ref([])
 const stats = ref(null)
@@ -22,7 +23,11 @@ async function load() {
     loading.value = false
   }
 }
-onMounted(load)
+onMounted(async () => {
+  await loadPublicBase()
+  studentUrl.value = studentLink('/dazi')
+  await load()
+})
 
 /** 正确率分布：四档柱状图，高度按最大值归一 */
 const buckets = computed(() => {
@@ -68,16 +73,16 @@ async function clearClass() {
   ElMessage.success(`已删除 ${res.deleted} 条`)
 }
 
-// 学生练习页地址：跟着实际访问域名走，换服务器/域名不用改代码
-const studentUrl = `${location.origin}/dazi`
+// 学生练习页地址。默认跟着浏览器当前地址走；后端配了 PUBLIC_BASE_URL 就以它为准
+const studentUrl = ref(studentLink('/dazi'))
 
 async function copyUrl() {
   try {
-    await navigator.clipboard.writeText(studentUrl)
-    ElMessage.success('已复制：' + studentUrl)
+    await navigator.clipboard.writeText(studentUrl.value)
+    ElMessage.success('已复制：' + studentUrl.value)
   } catch {
     // 非 https 时浏览器不给用剪贴板，退回手动复制
-    ElMessageBox.alert(studentUrl, '手动复制这个链接', { confirmButtonText: '知道了' })
+    ElMessageBox.alert(studentUrl.value, '手动复制这个链接', { confirmButtonText: '知道了' })
   }
 }
 

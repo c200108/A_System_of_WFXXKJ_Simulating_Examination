@@ -144,6 +144,10 @@ ADMIN_PASSWORD=${ADMIN_PW}
 
 WEB_PORT=${PORT}
 CORS_ORIGINS=http://${HOST_ADDR}:${PORT}
+
+# 学生链接（考试、打字练习）用的对外地址。留空则用老师浏览器当前地址，
+# 但老师若从服务器本机 127.0.0.1 打开后台，复制的链接学生就打不开，所以这里填死。
+PUBLIC_BASE_URL=http://${HOST_ADDR}:${PORT}
 EOF
     chmod 600 .env
     ok "已生成 .env，所有口令都是随机的"
