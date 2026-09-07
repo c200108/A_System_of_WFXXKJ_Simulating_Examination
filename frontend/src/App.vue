@@ -2,6 +2,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
+import { api } from './api'
+import { clearAuth, currentUser, setUser } from './auth'
 
 const route = useRoute()
 const router = useRouter()
@@ -21,20 +23,27 @@ onMounted(() => {
   applyTheme()
 })
 
-const user = computed(() => {
-  try {
-    return JSON.parse(localStorage.getItem('user') || 'null')
-  } catch {
-    return null
-  }
-})
+// 用响应式的 currentUser，不要在 computed 里读 localStorage —— 那样不会更新
+const user = currentUser
+
 // 登录页和学生答题页不套教师界面的框
 const isBare = computed(() => route.path === '/login' || route.meta.bare === true)
 
+// 以服务端为准刷新一次身份：localStorage 里可能是旧的（比如管理员把某人
+// 降成了普通教师），登录状态下拉一次 /auth/me 就能纠正过来。
+onMounted(async () => {
+  if (!isBare.value && localStorage.getItem('token')) {
+    try {
+      setUser(await api.me())
+    } catch {
+      // 令牌失效时 api.js 的拦截器已经会跳登录页，这里不用再处理
+    }
+  }
+})
+
 async function logout() {
   await ElMessageBox.confirm('确定要退出登录吗？', '提示', { type: 'warning' })
-  localStorage.removeItem('token')
-  localStorage.removeItem('user')
+  clearAuth()
   router.push('/login')
 }
 </script>

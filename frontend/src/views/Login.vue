@@ -3,6 +3,7 @@ import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
+import { setUser } from '../auth'
 
 const router = useRouter()
 const loading = ref(false)
@@ -17,7 +18,7 @@ async function submit() {
   try {
     const res = await api.login(form.username, form.password)
     localStorage.setItem('token', res.access_token)
-    localStorage.setItem('user', JSON.stringify(res.user))
+    setUser(res.user) // 同时写 localStorage 和响应式状态，顶栏立刻就能显示
     ElMessage.success(`欢迎回来，${res.user.name || res.user.username}`)
     router.push('/paper')
   } finally {

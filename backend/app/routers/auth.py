@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..deps import get_current_user, require_admin
 from ..models import User
-from ..schemas import PasswordChange, TokenOut, UserCreate, UserOut
+from ..schemas import PasswordChange, TokenOut, UserCreate, UserOut, UserUpdate
 from ..security import create_access_token, hash_password, verify_password
 
 router = APIRouter(prefix="/api/auth", tags=["认证"])
@@ -63,6 +63,41 @@ def create_user(
         role=body.role,
     )
     db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.patch("/users/{user_id}", response_model=UserOut, summary="改教师资料或重置密码（管理员）")
+def update_user(
+    user_id: int,
+    body: UserUpdate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """老师忘了密码只能由管理员重置——系统里没有邮箱，找回不了。"""
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    data = body.model_dump(exclude_unset=True)
+
+    if "role" in data:
+        if data["role"] not in ("admin", "teacher"):
+            raise HTTPException(status_code=400, detail="角色只能是 admin 或 teacher")
+        # 把自己降级会立刻失去管理权限，且可能让系统一个管理员都不剩
+        if user_id == admin.id and data["role"] != "admin":
+            raise HTTPException(status_code=400, detail="不能取消自己的管理员身份")
+
+    if "is_active" in data and user_id == admin.id and not data["is_active"]:
+        raise HTTPException(status_code=400, detail="不能停用自己")
+
+    if data.pop("password", None):
+        user.password_hash = hash_password(body.password)
+
+    for k, v in data.items():
+        setattr(user, k, v)
+
     db.commit()
     db.refresh(user)
     return user
