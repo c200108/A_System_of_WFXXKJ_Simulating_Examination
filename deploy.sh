@@ -37,10 +37,26 @@ ok "Docker 就绪  $(docker --version | sed 's/Docker version //')"
 
 # 国内服务器直连 Docker Hub 基本拉不动，先确认镜像源是通的，
 # 免得等构建到一半才失败、白等好几分钟。
-if docker info 2>/dev/null | grep -q "Registry Mirrors"; then
-    ok "已配置镜像加速  $(docker info 2>/dev/null | grep -A1 'Registry Mirrors' | tail -1 | tr -d ' ')"
-elif [ -n "${REGISTRY:-}" ]; then
+# REGISTRY 可能写在 .env 里（compose 会自己读），这里提前看一眼，
+# 否则第 1 步会误报「没有配置镜像加速」。
+if [ -z "${REGISTRY:-}" ] && [ -f .env ]; then
+    REGISTRY="$(grep -E '^[[:space:]]*REGISTRY[[:space:]]*=' .env 2>/dev/null \
+        | head -1 | cut -d= -f2- | tr -d '[:space:]')"
+fi
+
+if [ -n "${REGISTRY:-}" ] && [ "$REGISTRY" != "docker.io" ]; then
     ok "使用指定的镜像仓库  $REGISTRY"
+    # 这种仓库通常要先 docker login，没登录的话构建时才会失败，提前提醒
+    LOGGED_IN=0
+    for cfg in /root/.docker/config.json "${HOME}/.docker/config.json"; do
+        grep -q "$REGISTRY" "$cfg" 2>/dev/null && LOGGED_IN=1
+    done
+    if [ "$LOGGED_IN" = 0 ]; then
+        warn "没检测到 $REGISTRY 的登录凭证。若该仓库需要鉴权，先执行："
+        warn "  docker login $REGISTRY"
+    fi
+elif docker info 2>/dev/null | grep -q "Registry Mirrors"; then
+    ok "已配置镜像加速  $(docker info 2>/dev/null | grep -A1 'Registry Mirrors' | tail -1 | tr -d ' ')"
 else
     warn "没有配置镜像加速，将直连 Docker Hub"
     warn "国内服务器多半拉不动。若下一步卡住或超时，先跑："
