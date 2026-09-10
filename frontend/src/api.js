@@ -57,6 +57,7 @@ export const api = {
     return http.post('/auth/login', form)
   },
   me: () => http.get('/auth/me'),
+  updateMe: data => http.patch('/auth/me', data),
   changePassword: data => http.post('/auth/password', data),
   listUsers: () => http.get('/auth/users'),
   createUser: data => http.post('/auth/users', data),
@@ -124,12 +125,15 @@ export const api = {
   typingTextCreate: data => http.post('/typing/texts', data),
   typingTextUpdate: (id, data) => http.put(`/typing/texts/${id}`, data),
   typingTextDelete: id => http.delete(`/typing/texts/${id}`),
+  typingTextBulk: (ids, action) => http.post('/typing/texts/bulk', { ids, action }),
 
   // 需求反馈（提交与浏览都不需要登录）
   feedbackList: params => http.get('/feedback', { params }),
   feedbackCreate: data => http.post('/feedback', data),
   feedbackAll: () => http.get('/feedback/all'),
   feedbackReply: (id, reply) => http.post(`/feedback/${id}/reply`, { reply }),
+  feedbackReplyDelete: rid => http.delete(`/feedback/replies/${rid}`),
+  feedbackLike: id => http.post(`/feedback/${id}/like`),
   feedbackVisibility: (id, is_public) =>
     http.patch(`/feedback/${id}/visibility`, null, { params: { is_public } }),
   feedbackDelete: id => http.delete(`/feedback/${id}`),

@@ -66,11 +66,11 @@ def test_reply_shows_up_publicly(client, auth):
     fid = client.get("/api/feedback").json()[0]["id"]
     res = client.post(f"/api/feedback/{fid}/reply", json={"reply": "已排入下个版本"}, headers=auth)
     assert res.status_code == 200
-    assert res.json()["reply"] == "已排入下个版本"
-    assert res.json()["replied_at"]
+    assert [r["content"] for r in res.json()["replies"]] == ["已排入下个版本"]
 
     shown = next(r for r in client.get("/api/feedback").json() if r["id"] == fid)
-    assert shown["reply"] == "已排入下个版本"
+    assert shown["replies"][0]["content"] == "已排入下个版本"
+    assert shown["replies"][0]["is_admin"] is True
 
 
 def test_hidden_feedback_disappears_from_public_list(client, auth):

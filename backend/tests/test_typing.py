@@ -27,7 +27,9 @@ def test_config_is_public(client):
     assert res.status_code == 200
     body = res.json()
     assert body["difficulties"] == ["简单", "中等", "困难"]
-    assert 0 in body["time_limits"]
+    # 「不限时」已经取消，档位必须全是正数（不限时交给自由打字模块）
+    assert body["time_limits"] and all(t > 0 for t in body["time_limits"])
+    assert body["default_limit"] in body["time_limits"]
 
 
 def test_passage_is_public_and_random(client):

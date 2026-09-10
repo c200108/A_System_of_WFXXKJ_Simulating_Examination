@@ -23,6 +23,7 @@ from ..deps import get_current_user
 from ..models import TypingRecord, TypingText, User
 from ..schemas import (
     TypingConfigOut,
+    TypingTextBulkIn,
     TypingTextIn,
     TypingTextOut,
     TypingTextUpdate,
@@ -384,6 +385,35 @@ def delete_text(
     db.delete(row)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/texts/bulk", summary="批量操作选中的文本（删除／启用／停用）")
+def bulk_texts(
+    body: TypingTextBulkIn,
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """界面上勾一批再一次性处理，省得一条条点。
+
+    action=delete 删除，enable/disable 改启用状态。
+    id 是前端勾出来的，不存在的直接忽略，不报错 —— 多半是别人已经删了。
+    """
+    ids = list(dict.fromkeys(body.ids))  # 去重且保持顺序
+    if not ids:
+        raise HTTPException(status_code=400, detail="没有选中任何文本")
+    if len(ids) > 2000:
+        raise HTTPException(status_code=400, detail="一次最多处理 2000 段")
+
+    rows = db.scalars(select(TypingText).where(TypingText.id.in_(ids))).all()
+    if body.action == "delete":
+        for r in rows:
+            db.delete(r)
+    else:
+        want = body.action == "enable"
+        for r in rows:
+            r.is_active = want
+    db.commit()
+    return {"action": body.action, "affected": len(rows), "requested": len(ids)}
 
 
 @router.post("/texts/import", summary="上传 txt 批量导入")

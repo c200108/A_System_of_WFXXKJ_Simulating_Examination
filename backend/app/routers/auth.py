@@ -6,7 +6,14 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..deps import get_current_user, require_admin
 from ..models import User
-from ..schemas import PasswordChange, TokenOut, UserCreate, UserOut, UserUpdate
+from ..schemas import (
+    PasswordChange,
+    ProfileUpdate,
+    TokenOut,
+    UserCreate,
+    UserOut,
+    UserUpdate,
+)
 from ..security import create_access_token, hash_password, verify_password
 
 router = APIRouter(prefix="/api/auth", tags=["认证"])
@@ -27,6 +34,21 @@ def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get
 
 @router.get("/me", response_model=UserOut, summary="当前登录人")
 def me(user: User = Depends(get_current_user)):
+    return user
+
+
+@router.patch("/me", response_model=UserOut, summary="改自己的资料（姓名、任教年级班级、联系方式）")
+def update_me(
+    body: ProfileUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """只能改这三项。用户名、角色、启停都得管理员来，避免有人给自己提权。"""
+    data = body.model_dump(exclude_unset=True)
+    for k, v in data.items():
+        setattr(user, k, (v or "").strip())
+    db.commit()
+    db.refresh(user)
     return user
 
 

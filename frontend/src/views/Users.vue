@@ -134,6 +134,18 @@ async function changePassword() {
       <el-table-column prop="id" label="ID" width="56" />
       <el-table-column prop="username" label="用户名" width="130" show-overflow-tooltip />
       <el-table-column prop="name" label="姓名" width="130" show-overflow-tooltip />
+      <el-table-column prop="grade_class" label="任教年级班级" min-width="130" show-overflow-tooltip>
+        <template #default="{ row }">
+          <span v-if="row.grade_class">{{ row.grade_class }}</span>
+          <span v-else class="blank">未填</span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="contact" label="联系方式" width="130" show-overflow-tooltip>
+        <template #default="{ row }">
+          <span v-if="row.contact">{{ row.contact }}</span>
+          <span v-else class="blank">未填</span>
+        </template>
+      </el-table-column>
       <el-table-column label="角色" width="96">
         <template #default="{ row }">
           <el-tag :type="row.role === 'admin' ? 'danger' : 'info'" size="small">
@@ -146,7 +158,7 @@ async function changePassword() {
           <span :class="row.is_active ? 'on' : 'off'">{{ row.is_active ? '正常' : '已停用' }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="创建时间" min-width="140">
+      <el-table-column label="创建时间" width="150">
         <template #default="{ row }">{{ String(row.created_at).replace('T', ' ').slice(0, 19) }}</template>
       </el-table-column>
       <el-table-column label="操作" width="230" fixed="right">
@@ -251,5 +263,9 @@ async function changePassword() {
   color: var(--el-text-color-secondary);
   font-size: 12px;
   margin: 10px 0 0;
+}
+.blank {
+  color: var(--el-text-color-placeholder);
+  font-size: 12px;
 }
 </style>

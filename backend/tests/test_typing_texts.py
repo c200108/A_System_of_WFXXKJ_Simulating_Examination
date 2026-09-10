@@ -153,3 +153,75 @@ def test_import_rejects_non_txt(client, auth):
 def test_import_empty_file(client, auth):
     res = _upload(client, auth, "   \n\n  ")
     assert res.status_code == 400
+
+
+# ---------- 批量操作 ----------
+def _seed_three(client, auth, tag: str):
+    """造三段文本，返回它们的 id。"""
+    ids = []
+    for i in range(3):
+        res = client.post(
+            "/api/typing/texts",
+            json={
+                "mode": "chinese",
+                "difficulty": "简单",
+                "content": f"{tag} 批量操作专用文本第 {i} 段，内容随便写够长就行。",
+            },
+            headers=auth,
+        )
+        assert res.status_code == 200, res.text
+        ids.append(res.json()["id"])
+    return ids
+
+
+def test_bulk_delete_removes_all_selected(client, auth):
+    ids = _seed_three(client, auth, "删除")
+    res = client.post(
+        "/api/typing/texts/bulk", json={"ids": ids, "action": "delete"}, headers=auth
+    )
+    assert res.status_code == 200
+    assert res.json()["affected"] == 3
+
+    left = {t["id"] for t in client.get("/api/typing/texts", headers=auth).json()}
+    assert not (set(ids) & left), "勾选的三段应该都没了"
+
+
+def test_bulk_disable_then_enable(client, auth):
+    ids = _seed_three(client, auth, "启停")
+
+    client.post("/api/typing/texts/bulk", json={"ids": ids, "action": "disable"}, headers=auth)
+    rows = {t["id"]: t for t in client.get("/api/typing/texts", headers=auth).json()}
+    assert all(rows[i]["is_active"] is False for i in ids)
+
+    client.post("/api/typing/texts/bulk", json={"ids": ids, "action": "enable"}, headers=auth)
+    rows = {t["id"]: t for t in client.get("/api/typing/texts", headers=auth).json()}
+    assert all(rows[i]["is_active"] is True for i in ids)
+
+    client.post("/api/typing/texts/bulk", json={"ids": ids, "action": "delete"}, headers=auth)
+
+
+def test_bulk_ignores_ids_that_are_gone(client, auth):
+    """别人已经删掉的 id 直接跳过，不要整批失败。"""
+    ids = _seed_three(client, auth, "残留")
+    client.delete(f"/api/typing/texts/{ids[0]}", headers=auth)
+
+    res = client.post(
+        "/api/typing/texts/bulk", json={"ids": ids + [99999999], "action": "delete"}, headers=auth
+    )
+    assert res.status_code == 200
+    assert res.json()["requested"] == 4 and res.json()["affected"] == 2
+
+
+def test_bulk_rejects_empty_and_unknown_action(client, auth):
+    assert client.post(
+        "/api/typing/texts/bulk", json={"ids": [], "action": "delete"}, headers=auth
+    ).status_code == 400
+    assert client.post(
+        "/api/typing/texts/bulk", json={"ids": [1], "action": "drop_table"}, headers=auth
+    ).status_code == 422
+
+
+def test_bulk_needs_login(client):
+    assert client.post(
+        "/api/typing/texts/bulk", json={"ids": [1], "action": "delete"}
+    ).status_code == 401
