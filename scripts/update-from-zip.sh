@@ -56,13 +56,33 @@ if [ -d "$TARGET" ]; then
         ok "已备份 data/uploads → $BACKUP_DIR/uploads-$STAMP.tar.gz"
     fi
 
-    # 数据库在 docker 卷里，不在目录中，本身不受影响；但升级前留一份更稳妥
-    if docker compose -f "$TARGET/docker-compose.yml" ps db 2>/dev/null | grep -q Up; then
+    # config.yaml 只备份、不还原：新版本常会加字段（比如 site、typing.time_limits），
+    # 把旧文件盖回去反而会缺键或触发启动校验。留一份是为了让你能 diff 出自己改过什么。
+    if [ -f "$TARGET/config.yaml" ]; then
+        cp "$TARGET/config.yaml" "$BACKUP_DIR/config-$STAMP.yaml"
+        ok "已备份 config.yaml → $BACKUP_DIR/config-$STAMP.yaml"
+    fi
+
+    # 数据库在 docker 卷里，不在目录中，本身不受影响；但升级前留一份更稳妥。
+    # 用 ps -q 判断而不是 grep "Up"：compose 各版本的 STATUS 文案不一样
+    # （有的写 Up 2 hours，有的写 running），按文案匹配迟早会漏判。
+    if [ -n "$(docker compose -f "$TARGET/docker-compose.yml" ps -q db 2>/dev/null)" ]; then
         if bash "$TARGET/backup/backup.sh" >/dev/null 2>&1; then
-            ok "数据库已备份（见 $TARGET/backup/）"
+            # backup.sh 把产物写在 $TARGET/backup/ 下，而 $TARGET 待会儿要被改名，
+            # 最后又会提示你删掉旧目录 —— 不搬出来的话，这份库备份会跟着一起没。
+            DUMP="$(find "$TARGET/backup" -name 'db_*.sql.gz' -newermt '-10 minutes' | sort | tail -1)"
+            if [ -n "$DUMP" ]; then
+                cp "$DUMP" "$BACKUP_DIR/db-$STAMP.sql.gz"
+                ok "数据库已备份 → $BACKUP_DIR/db-$STAMP.sql.gz（$(du -h "$BACKUP_DIR/db-$STAMP.sql.gz" | cut -f1)）"
+            else
+                warn "备份跑完了但没找到 db_*.sql.gz，请手工确认 $TARGET/backup/"
+            fi
         else
             warn "数据库备份没成功，继续更新（数据在 docker 卷里，不会被本脚本删掉）"
+            warn "但没有备份就更新是有风险的，介意的话现在 Ctrl+C，手工跑一次 backup/backup.sh"
         fi
+    else
+        warn "db 容器没在运行，跳过数据库备份（数据仍在 docker 卷里，不受影响）"
     fi
 else
     warn "$TARGET 不存在，按首次部署处理"
@@ -85,10 +105,16 @@ ok "项目根：${SRC#$TMP/}"
 # ---------------------------------------------------------------- 3 替换
 step "[3/5] 替换目录..."
 if [ "$HAS_OLD" = 1 ]; then
-    mv "$TARGET" "$TARGET.old-$STAMP"
+    mv "$TARGET" "$TARGET.old-$STAMP" || die "旧目录改名失败，什么都没动，原样还在 $TARGET"
     ok "旧目录改名为 $(basename "$TARGET.old-$STAMP")（确认没问题后可删）"
 fi
-mv "$SRC" "$TARGET"
+# 这一步失败最要命：旧目录已经改名，新的又没放上去。所以失败就地回滚。
+if ! mv "$SRC" "$TARGET"; then
+    if [ "$HAS_OLD" = 1 ]; then
+        mv "$TARGET.old-$STAMP" "$TARGET" && warn "已回滚到旧版本"
+    fi
+    die "新目录就位失败（$SRC → $TARGET）"
+fi
 
 # ---------------------------------------------------------------- 4 还原
 step "[4/5] 还原配置与上传目录..."
@@ -100,7 +126,15 @@ if [ "$HAS_OLD" = 1 ]; then
     if [ -d "$TARGET.old-$STAMP/data/uploads" ]; then
         mkdir -p "$TARGET/data"
         cp -r "$TARGET.old-$STAMP/data/uploads" "$TARGET/data/"
-        ok "题目配图已还原（$(find "$TARGET/data/uploads" -type f | wc -l) 个文件）"
+        ok "题目配图与导入原件已还原（$(find "$TARGET/data/uploads" -type f | wc -l) 个文件）"
+    fi
+
+    # config.yaml 用的是新版本那份。如果你在服务器上改过它（平台名称、
+    # 知识范围、打字文本……），这里把差异指出来，别让改动无声无息地没掉。
+    if ! diff -q "$BACKUP_DIR/config-$STAMP.yaml" "$TARGET/config.yaml" >/dev/null 2>&1; then
+        warn "config.yaml 和你原来那份不一样，已改用新版本的。"
+        warn "  想看差在哪：diff $BACKUP_DIR/config-$STAMP.yaml $TARGET/config.yaml"
+        warn "  确认后把自己的改动手工挪回去，然后 docker compose restart backend"
     fi
 else
     warn "首次部署：稍后 deploy.sh 会引导你生成 .env"
@@ -119,5 +153,9 @@ echo
 echo "  旧目录：$TARGET.old-$STAMP"
 echo "  确认新版本一切正常后再删：sudo rm -rf $TARGET.old-$STAMP"
 echo
-echo "  备份保留在 $BACKUP_DIR/"
+echo "  备份（在 $TARGET 之外，删旧目录不影响）："
+ls -1sh "$BACKUP_DIR"/*-"$STAMP"* 2>/dev/null | sed 's/^/    /'
+echo
+echo "  题库、成绩、账号都在 docker 卷 exam-system_db_data 里，本次没动过。"
+echo "  验一下：题库页题目数、考试页成绩条数和更新前对得上就没问题。"
 echo "=================================================="
