@@ -118,6 +118,29 @@ export const api = {
   typingClear: student_class =>
     http.delete('/typing/records', { params: { student_class } }),
 
+  // 打字文本库
+  typingTexts: params => http.get('/typing/texts', { params }),
+  typingTextStats: () => http.get('/typing/texts/stats'),
+  typingTextCreate: data => http.post('/typing/texts', data),
+  typingTextUpdate: (id, data) => http.put(`/typing/texts/${id}`, data),
+  typingTextDelete: id => http.delete(`/typing/texts/${id}`),
+
+  // 需求反馈（提交与浏览都不需要登录）
+  feedbackList: params => http.get('/feedback', { params }),
+  feedbackCreate: data => http.post('/feedback', data),
+  feedbackAll: () => http.get('/feedback/all'),
+  feedbackReply: (id, reply) => http.post(`/feedback/${id}/reply`, { reply }),
+  feedbackVisibility: (id, is_public) =>
+    http.patch(`/feedback/${id}/visibility`, null, { params: { is_public } }),
+  feedbackDelete: id => http.delete(`/feedback/${id}`),
+
+  // 更新日志
+  changelog: () => http.get('/changelog'),
+  changelogTypes: () => http.get('/changelog/types'),
+  changelogLatest: () => http.get('/changelog/latest'),
+  changelogCreate: data => http.post('/changelog', data),
+  changelogDelete: id => http.delete(`/changelog/${id}`),
+
   // 学生端（不需要登录）
   takePaper: token => http.get(`/take/${token}`),
   submitPaper: (token, data) => http.post(`/take/${token}/submit`, data)

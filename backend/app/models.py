@@ -1,7 +1,8 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -198,4 +199,58 @@ class ImportLog(Base):
     skipped: Mapped[int] = mapped_column(Integer, default=0)
     detail_json: Mapped[str] = mapped_column(Text, default="[]")
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class TypingText(Base):
+    """打字练习文本。原来写在 config.yaml 里，挪进数据库后老师能在界面上增删改。
+
+    首次启动时会把 config.yaml 的内置文本灌进来（见 seed.py），
+    之后以数据库为准 —— 界面上加的、导入的都不会被启动流程覆盖。
+    """
+
+    __tablename__ = "typing_texts"
+    __table_args__ = (Index("ix_typing_texts_pick", "mode", "difficulty", "is_active"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    mode: Mapped[str] = mapped_column(String(16), index=True)  # english / chinese
+    difficulty: Mapped[str] = mapped_column(String(16), index=True)
+    content: Mapped[str] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(String(64), unique=True)  # 查重
+    source: Mapped[str] = mapped_column(String(32), default="自定义")  # 内置 / 自定义 / 导入
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class Feedback(Base):
+    """需求反馈。学生和老师都能提，公开展示在反馈区。"""
+
+    __tablename__ = "feedbacks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    author: Mapped[str] = mapped_column(String(64))
+    contact: Mapped[str] = mapped_column(String(64), default="")  # 选填，方便回访
+    category: Mapped[str] = mapped_column(String(16), default="建议", index=True)
+    content: Mapped[str] = mapped_column(Text)
+    # 公开展示，所以要能下架不当言论；不物理删除，留痕可追溯
+    is_public: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    reply: Mapped[str] = mapped_column(Text, default="")  # 管理员答复
+    replied_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+
+class ChangelogEntry(Base):
+    """更新日志的一条。按 Keep a Changelog 规范：一个版本下按变动类型分组。"""
+
+    __tablename__ = "changelog_entries"
+    __table_args__ = (Index("ix_changelog_version", "version", "sort_order"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    version: Mapped[str] = mapped_column(String(32), index=True)  # 语义化版本，如 1.3.0
+    released_on: Mapped[date] = mapped_column(Date, index=True)
+    # Added / Changed / Deprecated / Removed / Fixed / Security
+    change_type: Mapped[str] = mapped_column(String(16), index=True)
+    content: Mapped[str] = mapped_column(Text)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

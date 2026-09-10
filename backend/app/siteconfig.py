@@ -19,6 +19,14 @@ class _Base(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SiteMeta(_Base):
+    """平台的门面文案。改这里不用动代码，重启后端即可。"""
+
+    title: str = "信息科技教学平台"
+    brand: str = "信息科技教学平台"
+    footer: str = ""
+
+
 class SchoolConf(_Base):
     name: str = ""
 
@@ -106,6 +114,7 @@ class UploadConf(_Base):
 
 
 class SiteConfig(_Base):
+    site: SiteMeta = Field(default_factory=SiteMeta)
     school: SchoolConf = Field(default_factory=SchoolConf)
     paper: PaperConf = Field(default_factory=PaperConf)
     exam: ExamConf = Field(default_factory=ExamConf)

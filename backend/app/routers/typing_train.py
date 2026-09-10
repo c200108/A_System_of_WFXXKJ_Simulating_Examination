@@ -11,24 +11,27 @@
 """
 
 import io
-import random
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from openpyxl import Workbook
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..deps import get_current_user
-from ..models import TypingRecord, User
+from ..models import TypingRecord, TypingText, User
 from ..schemas import (
     TypingConfigOut,
+    TypingTextIn,
+    TypingTextOut,
+    TypingTextUpdate,
     TypingRecordIn,
     TypingRecordOut,
     TypingResultOut,
     TypingStatsOut,
 )
+from ..services.typing_texts import add_texts, build_passage, parse_txt, text_hash
 from ..siteconfig import site
 
 router = APIRouter(prefix="/api/typing", tags=["打字训练"])
@@ -73,20 +76,17 @@ def get_config():
 def get_passage(
     mode: str = Query(..., pattern="^(english|chinese)$"),
     difficulty: str = Query(...),
+    db: Session = Depends(get_db),
 ):
-    """每次随机洗牌拼几段，保证限时练习有足够内容，且两次不会完全一样。"""
+    """文本来自数据库，老师可在「打字」页增删改或上传 txt 批量导入。"""
     _enabled()
-    c = site.typing
-    lib = (c.english if mode == "english" else c.chinese).get(difficulty)
-    if not lib:
-        raise HTTPException(status_code=404, detail=f"「{difficulty}」难度下没有配置{mode}文本")
-
-    pool = list(lib)
-    random.shuffle(pool)
-    lo, hi = (c.passages_per_round + [7, 9])[:2]
-    count = min(len(pool), random.randint(min(lo, hi), max(lo, hi)))
-    sep = " " if mode == "english" else ""
-    return {"text": sep.join(pool[:count]).rstrip()}
+    text = build_passage(db, mode, difficulty)
+    if not text:
+        raise HTTPException(
+            status_code=404,
+            detail=f"「{difficulty}」难度下还没有{'英文' if mode == 'english' else '中文'}文本，请老师先在打字页添加",
+        )
+    return {"text": text}
 
 
 @router.post("/records", response_model=TypingResultOut, summary="学生交成绩（公开）")
@@ -279,3 +279,138 @@ def clear_records(
     n = db.execute(stmt).rowcount
     db.commit()
     return {"ok": True, "deleted": n}
+
+
+# ---------------------------------------------------------------- 文本库管理（要登录）
+@router.get("/texts", response_model=list[TypingTextOut], summary="文本列表")
+def list_texts(
+    mode: str | None = None,
+    difficulty: str | None = None,
+    keyword: str | None = None,
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    stmt = select(TypingText)
+    if mode:
+        stmt = stmt.where(TypingText.mode == mode)
+    if difficulty:
+        stmt = stmt.where(TypingText.difficulty == difficulty)
+    if keyword:
+        stmt = stmt.where(TypingText.content.like(f"%{keyword}%"))
+    return list(db.scalars(stmt.order_by(TypingText.id.desc()).limit(500)))
+
+
+@router.get("/texts/stats", summary="每种模式各难度有多少段")
+def text_stats(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    rows = db.execute(
+        select(TypingText.mode, TypingText.difficulty, func.count())
+        .where(TypingText.is_active.is_(True))
+        .group_by(TypingText.mode, TypingText.difficulty)
+    ).all()
+    out: dict[str, dict[str, int]] = {"english": {}, "chinese": {}}
+    for mode, diff, n in rows:
+        out.setdefault(mode, {})[diff] = n
+    return out
+
+
+@router.post("/texts", response_model=TypingTextOut, summary="新增一段文本")
+def create_text(
+    body: TypingTextIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    content = body.content.strip()
+    if len(content) < 5:
+        raise HTTPException(status_code=400, detail="文本太短，至少 5 个字符")
+
+    h = text_hash(content)
+    if db.scalar(select(TypingText).where(TypingText.content_hash == h)):
+        raise HTTPException(status_code=409, detail="这段文本已经在库里了")
+
+    row = TypingText(
+        mode=body.mode,
+        difficulty=body.difficulty,
+        content=content,
+        content_hash=h,
+        source="自定义",
+        created_by=user.id,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.put("/texts/{text_id}", response_model=TypingTextOut, summary="改一段文本")
+def update_text(
+    text_id: int,
+    body: TypingTextUpdate,
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = db.get(TypingText, text_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="文本不存在")
+
+    data = body.model_dump(exclude_unset=True)
+    if "content" in data:
+        content = data["content"].strip()
+        if len(content) < 5:
+            raise HTTPException(status_code=400, detail="文本太短，至少 5 个字符")
+        h = text_hash(content)
+        other = db.scalar(
+            select(TypingText).where(TypingText.content_hash == h, TypingText.id != text_id)
+        )
+        if other:
+            raise HTTPException(status_code=409, detail="改成的内容和库里另一段重复了")
+        row.content = content
+        row.content_hash = h
+        data.pop("content")
+
+    for k, v in data.items():
+        setattr(row, k, v)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.delete("/texts/{text_id}", summary="删一段文本")
+def delete_text(
+    text_id: int, _: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    row = db.get(TypingText, text_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="文本不存在")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/texts/import", summary="上传 txt 批量导入")
+async def import_texts(
+    mode: str = Query(..., pattern="^(english|chinese)$"),
+    difficulty: str = Query(...),
+    split: str = Query("line", pattern="^(line|blank)$"),
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """split=line 一行一段（默认）；split=blank 空行分段。重复的自动跳过。"""
+    if not (file.filename or "").lower().endswith(".txt"):
+        raise HTTPException(status_code=400, detail="只支持 .txt 文件")
+
+    raw = await file.read()
+    if len(raw) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="文件不能超过 2 MB")
+
+    try:
+        chunks = parse_txt(raw, split)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if not chunks:
+        raise HTTPException(status_code=400, detail="这个文件里没读到内容")
+
+    res = add_texts(db, mode, difficulty, chunks, source="导入", created_by=user.id)
+    res["total"] = len(chunks)
+    return res

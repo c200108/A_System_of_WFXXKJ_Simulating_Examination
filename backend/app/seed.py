@@ -14,6 +14,8 @@ from .constants import DICT_SCOPE, DICT_TYPE
 from .database import SessionLocal
 from .models import DictItem, User
 from .security import hash_password
+from .changelog_seed import seed_changelog
+from .services.typing_texts import seed_from_config
 from .siteconfig import site
 
 
@@ -56,6 +58,16 @@ def seed() -> None:
 
         db.commit()
         print("[seed] 字典初始化完成" + ("（已按配置文件同步）" if sync else ""))
+
+        # 打字文本只在空库时从 config.yaml 灌一次，之后以界面上的修改为准
+        n = seed_from_config(db)
+        if n:
+            print(f"[seed] 打字文本已导入 {n} 段")
+
+        # 更新日志按内容去重，可反复执行；新版本追加到 changelog_seed.py 即可
+        n = seed_changelog(db)
+        if n:
+            print(f"[seed] 更新日志新增 {n} 条")
     finally:
         db.close()
 
