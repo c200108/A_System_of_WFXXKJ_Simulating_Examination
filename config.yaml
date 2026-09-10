@@ -14,6 +14,12 @@
 #   拼错键名或类型不对，后端启动时会直接报错并指出是哪一项，不会静默失效。
 # ============================================================================
 
+site:
+  # 平台名称。改完 docker compose restart backend，刷新页面即生效，不用重新构建。
+  title: "昌邑市实验中学信息科技教学平台" # 浏览器标签页、登录页大标题
+  brand: "信息科技教学平台" # 顶栏左上角，短一点更好看
+  footer: "" # 页脚备注，留空则不显示
+
 school:
   # 印在卷头上的学校名，也是组卷页"学校"一栏的默认值
   name: "昌邑市实验中学"
@@ -107,6 +113,12 @@ typing:
       - "keep your fingers on the home row and type slowly at first."
       - "practice a little each day and your speed will slowly grow."
       - "the cat sat on the mat and watched the little red ball roll away."
+      - "my hand rests on the home row and my eyes stay on the screen."
+      - "type slowly at first, then let your speed grow on its own."
+      - "a short rest for the eyes keeps the mind clear and calm."
+      - "she opened the file, saved her work, and closed the laptop."
+      - "we write, we read, we share, and we learn something new."
+      - "the small brown bird sang a simple song by the open window."
     中等:
       - "information technology helps us learn and create. typing fast and correctly is a useful skill for students."
       - "practice a little every day. soon your fingers will know where each key is without looking at the keyboard."
@@ -114,6 +126,12 @@ typing:
       - "learning to type well takes time. be patient, keep your hands in the right place, and do not look down."
       - "a clean desk and a calm mind help you focus on the screen and type with steady, even rhythm."
       - "when you finish a task, save your file and rest your eyes by looking far away for a short while."
+      - "good posture matters as much as finger placement. sit up, relax your shoulders, and let your wrists float above the keys."
+      - "save your work often. a sudden power cut should never cost you an hour of careful writing."
+      - "reading the sentence before you type it helps your fingers move in smooth groups instead of one slow letter at a time."
+      - "a file name that describes the content will save you minutes every time you search for it later."
+      - "when the screen feels tiring, look at something far away for twenty seconds and let your eyes reset."
+      - "the keyboard is a tool for thinking out loud, so keep your ideas clear and your typing will follow."
     困难:
       - "the rapid development of artificial intelligence challenges us to think critically, type efficiently, and communicate clearly across digital platforms worldwide."
       - "mastering keyboard shortcuts, proper finger placement, and consistent practice will significantly improve both your typing speed and overall accuracy over time."
@@ -122,6 +140,12 @@ typing:
       - "good digital citizens respect others online, protect their own privacy, and think carefully before they post or send any message."
       - "every key you press leaves a mark in the digital world, so type with care, write with kindness, and learn with an open mind."
 
+      - "digital literacy is no longer optional; it shapes how students gather evidence, evaluate sources, and present arguments in nearly every subject they study."
+      - "an algorithm is simply a sequence of clear steps, yet the discipline of writing one teaches precision that carries far beyond the computer lab."
+      - "before sharing a file, consider who can open it, whether it contains personal information, and how long it should remain available online."
+      - "network protocols agree on a common language so that machines built by different companies in different decades can still exchange information reliably."
+      - "the difference between memorising shortcuts and understanding a program is the difference between following a map and knowing the city."
+      - "responsible technology use means asking not only whether something can be built, but also whether it should be, and who might be affected."
   chinese:
     简单:
       - "信息技术课真有趣。我们学会了用电脑打字。"
@@ -132,6 +156,12 @@ typing:
       - "电脑是学习的好帮手，我们要好好使用它。"
       - "先把正确的指法练熟，速度自然会慢慢提上来。"
       - "课间休息时，记得远眺，让眼睛放松一下更好。"
+      - "上课认真听讲，课后动手练习，进步就在其中。"
+      - "先看清屏幕上的字，再从容地敲下去，不必着急。"
+      - "手指放在基本键上，眼睛不用往下看，慢慢就熟练了。"
+      - "文件要及时保存，起个好名字，下次才找得到。"
+      - "同学之间互相帮助，学习会变得轻松很多。"
+      - "写完一段文字，读一遍再改一改，会更通顺。"
     中等:
       - "打字是一项基础的信息素养。正确的指法和持续的练习，能让我们既快又准地完成文字输入任务。"
       - "在信息技术课堂上，我们既要学会操作计算机，也要学会用文字清晰地表达自己的想法。"
@@ -141,6 +171,12 @@ typing:
       - "遇到不认识的汉字，可以用输入法的手写功能，也能查字典弄懂它的读音和意思。"
       - "把每天练打字的成果记下来，过一段时间回头看，你会发现自己进步了很多。"
       - "打字和写作可以一起练，先想清楚要说什么，再从容地把字打在屏幕上。"
+      - "指法练熟之后，注意力就能从「键在哪里」转到「我要写什么」，这才是打字真正的意义。"
+      - "整理素材、组织语言、检查错别字，是完成一篇电子文稿必经的三步。"
+      - "遇到不会打的字，可以用拼音的前几个字母试试，多数输入法都能猜出你要的词。"
+      - "保存文件时选一个有意义的名字，加上日期，过一个月你也能一眼认出它。"
+      - "在网上查资料要留意来源是否可靠，不能看到什么就信什么。"
+      - "键盘敲得快不等于表达得好，把话说清楚永远排在速度前面。"
     困难:
       - "随着人工智能的发展，信息科技课程越来越重要。熟练的键盘操作和准确的文字录入，是新时代学生必备的基本能力之一。"
       - "良好的打字习惯包括坐姿端正、手指分工明确、眼睛看屏幕而非键盘。坚持每天十分钟，速度自然会提升。"
@@ -148,3 +184,9 @@ typing:
       - "从文字处理到演示文稿，从电子表格到简单编程，信息技术帮助我们把想法变成可以分享的作品。"
       - "做合格的网络小公民，要尊重他人、保护隐私，在发消息或留言之前先认真想一想。"
       - "你敲下的每一个字符都在数字世界里留下痕迹，所以要认真输入、友善表达、带着开放的心态去学习。"
+      - "信息技术课不只是学会操作软件，更重要的是培养用技术解决问题的思路，以及面对新工具时自己摸索的能力。"
+      - "算法是一组清晰有序的步骤。把一件事拆解成计算机能执行的步骤，这个过程本身就是很好的思维训练。"
+      - "在社交平台上发言前，先想一想这段话会被谁看到、会不会伤害到别人，这是数字时代的基本素养。"
+      - "云存储让文件随处可取，但也意味着数据离开了自己的电脑。了解服务商如何保管这些数据，是每个使用者应有的警觉。"
+      - "人工智能能生成流畅的文字，却不能替你判断内容是否正确。学会核实，比学会提问更重要。"
+      - "从收集信息、处理信息到呈现信息，每一步都需要判断力。技术负责效率，判断力决定方向。"

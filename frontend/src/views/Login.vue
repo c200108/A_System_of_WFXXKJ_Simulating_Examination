@@ -1,12 +1,25 @@
 <script setup>
-import { reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { setUser } from '../auth'
 
 const router = useRouter()
+const title = ref('信息科技教学平台')
 const loading = ref(false)
+
+onMounted(async () => {
+  try {
+    const cfg = await api.siteConfig()
+    if (cfg.site?.title) {
+      title.value = cfg.site.title
+      document.title = cfg.site.title
+    }
+  } catch {
+    /* 取不到就用内置默认名 */
+  }
+})
 const form = reactive({ username: '', password: '' })
 
 async function submit() {
@@ -30,7 +43,7 @@ async function submit() {
 <template>
   <div class="login-wrap">
     <el-card class="login-card">
-      <h2 class="title">信息技术组卷台</h2>
+      <h2 class="title">{{ title }}</h2>
       <p class="sub">教师登录后可以组卷、维护题库、导入模板</p>
       <el-form label-position="top" @submit.prevent="submit">
         <el-form-item label="用户名">

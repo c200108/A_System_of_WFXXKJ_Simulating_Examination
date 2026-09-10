@@ -9,6 +9,12 @@ const route = useRoute()
 const router = useRouter()
 
 // 深色模式：Element Plus 认 <html class="dark">，记在本机
+// 平台名称走 config.yaml，改完 restart backend 刷新即生效
+const title = ref('信息科技教学平台')
+const brand = ref('信息科技教学平台')
+const footer = ref('')
+const version = ref('')
+
 const dark = ref(false)
 function applyTheme() {
   document.documentElement.classList.toggle('dark', dark.value)
@@ -32,6 +38,23 @@ const isBare = computed(() => route.path === '/login' || route.meta.bare === tru
 // 以服务端为准刷新一次身份：localStorage 里可能是旧的（比如管理员把某人
 // 降成了普通教师），登录状态下拉一次 /auth/me 就能纠正过来。
 onMounted(async () => {
+  try {
+    const cfg = await api.siteConfig()
+    if (cfg.site) {
+      title.value = cfg.site.title || title.value
+      brand.value = cfg.site.brand || title.value
+      footer.value = cfg.site.footer || ''
+      document.title = title.value
+    }
+  } catch {
+    /* 配置取不到就用内置默认名，不影响使用 */
+  }
+  try {
+    version.value = (await api.changelogLatest()).version || ''
+  } catch {
+    /* 没有日志就不显示版本号 */
+  }
+
   if (!isBare.value && localStorage.getItem('token')) {
     try {
       setUser(await api.me())
@@ -53,27 +76,43 @@ async function logout() {
 
   <el-container v-else class="app">
     <el-header class="header">
-      <div class="brand">信息技术组卷台</div>
+      <div class="brand">{{ brand }}</div>
       <el-menu :default-active="route.path" mode="horizontal" router :ellipsis="false" class="nav">
-        <el-menu-item index="/paper">组卷</el-menu-item>
-        <el-menu-item index="/bank">题库</el-menu-item>
-        <el-menu-item index="/import">导入</el-menu-item>
-        <el-menu-item index="/exams">考试</el-menu-item>
-        <el-menu-item index="/typing">打字</el-menu-item>
+        <template v-if="user">
+          <el-menu-item index="/paper">组卷</el-menu-item>
+          <el-menu-item index="/bank">题库</el-menu-item>
+          <el-menu-item index="/import">导入</el-menu-item>
+          <el-menu-item index="/exams">考试</el-menu-item>
+          <el-menu-item index="/typing">打字</el-menu-item>
+          <el-menu-item index="/typing-texts">练习文本</el-menu-item>
+        </template>
+        <el-menu-item index="/feedback">反馈</el-menu-item>
+        <el-menu-item index="/changelog">更新日志</el-menu-item>
         <el-menu-item v-if="user?.role === 'admin'" index="/users">账号</el-menu-item>
       </el-menu>
       <div class="right">
         <el-button link :title="dark ? '切换到浅色' : '切换到深色'" @click="toggleTheme">
           {{ dark ? '☀' : '◐' }}
         </el-button>
-        <span class="who">{{ user?.name || user?.username }}</span>
-        <el-button link type="primary" @click="logout">退出</el-button>
+        <template v-if="user">
+          <span class="who">{{ user.name || user.username }}</span>
+          <el-button link type="primary" @click="logout">退出</el-button>
+        </template>
+        <el-button v-else link type="primary" @click="router.push('/login')">教师登录</el-button>
       </div>
     </el-header>
 
     <el-main class="main">
       <router-view />
     </el-main>
+
+    <el-footer class="footer">
+      <span>{{ title }}</span>
+      <span v-if="version" class="ver">
+        <router-link to="/changelog">v{{ version }}</router-link>
+      </span>
+      <span v-if="footer">{{ footer }}</span>
+    </el-footer>
   </el-container>
 </template>
 
@@ -116,6 +155,23 @@ body {
 .main {
   padding: 20px 24px;
 }
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  height: 46px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  border-top: 1px solid var(--el-border-color-lighter);
+  background: var(--el-bg-color);
+}
+.footer .ver a {
+  color: var(--el-color-primary);
+  text-decoration: none;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
 .page-card {
   margin-bottom: 16px;
 }

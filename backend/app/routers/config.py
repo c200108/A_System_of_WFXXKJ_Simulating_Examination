@@ -16,6 +16,8 @@ router = APIRouter(prefix="/api/config", tags=["配置"])
 def get_config():
     return {
         "school": site.school.name,
+        # 平台名称等门面文案，改 config.yaml 重启后端即生效，前端不用重新构建
+        "site": site.site.model_dump(),
         # 学生链接（考试、打字）拼这个前缀。为空时前端退回浏览器当前地址。
         "public_base_url": settings.public_url,
         "paper": {

@@ -156,3 +156,12 @@ def test_config_endpoint_is_public_and_has_no_secrets(client):
     raw = res.text.lower()
     for leak in ("secret", "password", "token", "database", "jwt"):
         assert leak not in raw, f"/api/config 里不该出现 {leak}"
+
+
+def test_config_endpoint_exposes_site_title(client):
+    """平台名称必须由接口发下去，前端才能不重新构建就换标题。"""
+    body = client.get("/api/config").json()
+    site_meta = body["site"]
+    assert site_meta["title"] == "昌邑市实验中学信息科技教学平台"
+    # brand / footer 也要在，前端顶栏和页脚直接用
+    assert set(site_meta) == {"title", "brand", "footer"}

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -356,3 +356,75 @@ class TypingStatsOut(BaseModel):
     by_module: dict[str, int] = {}
     accuracy_buckets: dict[str, int] = {}
     by_class: list[dict] = []
+
+
+class TypingTextIn(BaseModel):
+    mode: str = Field(pattern="^(english|chinese)$")
+    difficulty: str
+    content: str
+
+
+class TypingTextUpdate(BaseModel):
+    difficulty: str | None = None
+    content: str | None = None
+    is_active: bool | None = None
+
+
+class TypingTextOut(ORMModel):
+    id: int
+    mode: str
+    difficulty: str
+    content: str
+    source: str
+    is_active: bool
+    created_at: datetime | None = None
+
+
+# ---------- 需求反馈 ----------
+class FeedbackIn(BaseModel):
+    author: str = Field(max_length=64)
+    contact: str = Field(default="", max_length=64)
+    category: str = "建议"
+    content: str = Field(max_length=2000)
+
+
+class FeedbackOut(ORMModel):
+    """公开展示用。**故意不含 contact** —— 联系方式只给管理端看。"""
+
+    id: int
+    author: str
+    category: str
+    content: str
+    reply: str = ""
+    replied_at: datetime | None = None
+    created_at: datetime | None = None
+
+
+class FeedbackReplyIn(BaseModel):
+    reply: str = Field(default="", max_length=2000)
+
+
+# ---------- 更新日志 ----------
+class ChangelogEntryIn(BaseModel):
+    version: str = Field(max_length=32)
+    released_on: date | None = None
+    change_type: str                 # Added / Changed / Deprecated / Removed / Fixed / Security
+    content: str = Field(max_length=1000)
+    sort_order: int = 0
+
+
+class ChangelogEntryOut(ORMModel):
+    id: int
+    version: str
+    released_on: date
+    change_type: str
+    content: str
+    sort_order: int
+
+
+class ChangelogVersionOut(BaseModel):
+    """一个版本一组，组内再按变动类型分。"""
+
+    version: str
+    released_on: date
+    groups: list[dict] = []
