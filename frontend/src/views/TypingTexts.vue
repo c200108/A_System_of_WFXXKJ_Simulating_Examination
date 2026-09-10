@@ -24,6 +24,10 @@ const importDlg = ref(false)
 const imp = reactive({ mode: 'chinese', difficulty: '简单', split: 'line' })
 const importing = ref(false)
 
+// 勾选。切换筛选条件后表格会重建，选中项跟着清掉，免得误删看不见的那些
+const selected = ref([])
+const tableRef = ref(null)
+
 async function load() {
   loading.value = true
   try {
@@ -31,6 +35,8 @@ async function load() {
     Object.keys(params).forEach(k => params[k] === '' && delete params[k])
     rows.value = await api.typingTexts(params)
     stats.value = await api.typingTextStats()
+    selected.value = []
+    tableRef.value?.clearSelection()
   } finally {
     loading.value = false
   }
@@ -91,6 +97,35 @@ async function remove(row) {
   await api.typingTextDelete(row.id)
   await load()
   ElMessage.success('已删除')
+}
+
+// ---------- 批量操作 ----------
+const BULK_LABEL = { delete: '删除', enable: '启用', disable: '停用' }
+
+async function bulk(action) {
+  const ids = selected.value.map(r => r.id)
+  if (!ids.length) return ElMessage.warning('先勾选要处理的文本')
+
+  if (action === 'delete') {
+    await ElMessageBox.confirm(
+      `确定删除选中的 ${ids.length} 段文本？删掉就找不回来了。`,
+      '批量删除',
+      { type: 'warning', confirmButtonText: `删除 ${ids.length} 段`, confirmButtonClass: 'el-button--danger' }
+    )
+  }
+
+  const res = await api.typingTextBulk(ids, action)
+  await load()
+  ElMessage.success(`已${BULK_LABEL[action]} ${res.affected} 段`)
+}
+
+/** 把当前筛选出来的整页全勾上 —— 「全选」按钮和表头那个勾一个意思，放这儿更好找 */
+function selectAll() {
+  rows.value.forEach(r => tableRef.value?.toggleRowSelection(r, true))
+}
+
+function clearSelection() {
+  tableRef.value?.clearSelection()
 }
 
 async function doImport(opt) {
@@ -169,8 +204,33 @@ async function doImport(opt) {
   </el-card>
 
   <el-card shadow="never">
+    <!-- 勾选后浮出来的操作条，没勾就不占地方 -->
+    <div v-if="selected.length" class="bulkbar">
+      <span class="bcount">已选 <b>{{ selected.length }}</b> 段</span>
+      <el-button size="small" @click="selectAll">全选当前 {{ rows.length }} 段</el-button>
+      <el-button size="small" @click="clearSelection">取消选择</el-button>
+      <span class="grow" />
+      <el-button size="small" @click="bulk('enable')">批量启用</el-button>
+      <el-button size="small" @click="bulk('disable')">批量停用</el-button>
+      <el-button size="small" type="danger" @click="bulk('delete')">批量删除</el-button>
+    </div>
+    <div v-else-if="rows.length" class="bulkhint">
+      勾选左侧方框可批量处理；点表头的方框一次选中当前 {{ rows.length }} 段。
+    </div>
+
     <el-empty v-if="!rows.length && !loading" description="这个筛选条件下还没有文本" :image-size="70" />
-    <el-table v-else :data="rows" v-loading="loading" border size="small" max-height="560">
+    <el-table
+      v-else
+      ref="tableRef"
+      :data="rows"
+      v-loading="loading"
+      border
+      size="small"
+      max-height="560"
+      row-key="id"
+      @selection-change="selected = $event"
+    >
+      <el-table-column type="selection" width="44" />
       <el-table-column prop="difficulty" label="难度" width="76" />
       <el-table-column prop="content" label="内容" min-width="380" show-overflow-tooltip />
       <el-table-column label="字数" width="70">
@@ -297,6 +357,34 @@ async function doImport(opt) {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+.bulkbar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 9px 13px;
+  border-radius: 9px;
+  background: var(--el-color-primary-light-9);
+  border: 1px solid var(--el-color-primary-light-7);
+}
+.bcount {
+  font-size: 13px;
+  color: var(--el-color-primary);
+}
+.bcount b {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 15px;
+  margin: 0 2px;
+}
+.bulkbar .grow {
+  flex: 1;
+}
+.bulkhint {
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 .hint-inline {
   margin-left: 12px;

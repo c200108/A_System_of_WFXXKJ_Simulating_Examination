@@ -1,4 +1,10 @@
-"""教师端：发布考试、查成绩、导出。全部需要登录。"""
+"""教师端：发布考试、查成绩、导出。全部需要登录。
+
+**考试是按人隔离的**：老师只看得到自己发布的考试和上面的成绩，
+管理员看得到所有人的。隔离在 `_visible` / `_get` 两个函数里，
+每个接口都得从它们拿考试对象，不要再自己 db.get(Exam, ...)。
+访问别人的考试一律回 404 而不是 403 —— 连"这个 id 存在"都不告诉。
+"""
 
 import io
 import json
@@ -28,9 +34,14 @@ def _to_out(exam: Exam) -> ExamOut:
     return item
 
 
-def _get(db: Session, exam_id: int) -> Exam:
+def _visible(stmt, user: User):
+    """管理员不加限制，老师只看自己发布的。"""
+    return stmt if user.role == "admin" else stmt.where(Exam.created_by == user.id)
+
+
+def _get(db: Session, exam_id: int, user: User) -> Exam:
     exam = db.get(Exam, exam_id)
-    if not exam:
+    if not exam or (user.role != "admin" and exam.created_by != user.id):
         raise HTTPException(status_code=404, detail="考试不存在")
     return exam
 
@@ -62,24 +73,41 @@ def create_exam(
 
 
 @router.get("", response_model=list[ExamOut], summary="考试列表")
-def list_exams(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    rows = db.scalars(select(Exam).order_by(Exam.id.desc())).all()
-    return [_to_out(e) for e in rows]
+def list_exams(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    rows = db.scalars(_visible(select(Exam), user).order_by(Exam.id.desc())).all()
+
+    # 管理员看的是全校的考试，得标出每场是谁发的；老师只看得到自己的，不用标
+    names: dict[int, str] = {}
+    if user.role == "admin":
+        owner_ids = {e.created_by for e in rows if e.created_by}
+        if owner_ids:
+            names = {
+                u.id: (u.name or u.username)
+                for u in db.scalars(select(User).where(User.id.in_(owner_ids)))
+            }
+
+    out = []
+    for e in rows:
+        item = _to_out(e)
+        if user.role == "admin":
+            item.owner_name = names.get(e.created_by or 0, "未知")
+        out.append(item)
+    return out
 
 
 @router.get("/{exam_id}", response_model=ExamOut, summary="考试详情")
-def get_exam(exam_id: int, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return _to_out(_get(db, exam_id))
+def get_exam(exam_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return _to_out(_get(db, exam_id, user))
 
 
 @router.patch("/{exam_id}", response_model=ExamOut, summary="改考试设置（开关、是否给学生看分数等）")
 def update_exam(
     exam_id: int,
     body: ExamUpdate,
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    exam = _get(db, exam_id)
+    exam = _get(db, exam_id, user)
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(exam, k, v)
     db.commit()
@@ -88,17 +116,17 @@ def update_exam(
 
 
 @router.delete("/{exam_id}", summary="删除考试（连同答卷）")
-def delete_exam(exam_id: int, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    db.delete(_get(db, exam_id))
+def delete_exam(exam_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    db.delete(_get(db, exam_id, user))
     db.commit()
     return {"ok": True}
 
 
 @router.get("/{exam_id}/submissions", response_model=list[SubmissionOut], summary="成绩列表")
 def list_submissions(
-    exam_id: int, _: User = Depends(get_current_user), db: Session = Depends(get_db)
+    exam_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
-    exam = _get(db, exam_id)
+    exam = _get(db, exam_id, user)
     return sorted(exam.submissions, key=lambda s: (-s.score, s.student_no))
 
 
@@ -106,14 +134,13 @@ def list_submissions(
 def submission_detail(
     exam_id: int,
     sub_id: int,
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    exam = _get(db, exam_id, user)  # 先校验这场考试归不归你，再取答卷
     sub = db.get(ExamSubmission, sub_id)
     if not sub or sub.exam_id != exam_id:
         raise HTTPException(status_code=404, detail="答卷不存在")
-
-    exam = _get(db, exam_id)
     items = {it["id"]: it for it in load_items(db, exam.paper)}
     detail = json.loads(sub.detail_json or "[]")
     for d in detail:
@@ -137,8 +164,8 @@ def submission_detail(
 
 
 @router.get("/{exam_id}/stats", summary="题目分析：每题正确率")
-def exam_stats(exam_id: int, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    exam = _get(db, exam_id)
+def exam_stats(exam_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    exam = _get(db, exam_id, user)
     items = load_items(db, exam.paper)
     subs = exam.submissions
     scores = [s.score for s in subs]
@@ -153,9 +180,9 @@ def exam_stats(exam_id: int, _: User = Depends(get_current_user), db: Session = 
 
 @router.get("/{exam_id}/export.xlsx", summary="成绩汇总导出 Excel")
 def export_scores(
-    exam_id: int, _: User = Depends(get_current_user), db: Session = Depends(get_db)
+    exam_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
-    exam = _get(db, exam_id)
+    exam = _get(db, exam_id, user)
     items = load_items(db, exam.paper)
     groups = group_items(items)
     ordered = [it for g in groups for it in g["items"]]

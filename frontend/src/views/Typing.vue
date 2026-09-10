@@ -2,7 +2,10 @@
 /**
  * 学生打字训练页（/dazi，免登录）。
  *
- * 三个模块：认识键盘、英文打字、中文打字。
+ * 四个模块：认识键盘、英文打字、中文打字、自由打字。
+ * 前三个计时评分；自由打字是个练手的空板子 —— 不限时、不计分、不上报，
+ * 敲什么键就在键盘图上亮什么键，用来熟悉键位和输入法。
+ *
  * 速度/正确率/星级都由后端算，这里只上报"敲了多少、对了多少、用了多久"
  * 三个原始量 —— 改评分标准不用重新构建前端。
  */
@@ -30,8 +33,18 @@ const KB_NAMES = ['数字符号排', '字母 QWERTY 排', '字母 ASDF 排', '�
 const LS_KEY = 'typingStudent'
 
 const conf = ref(null)
-const mode = ref('keyboard') // keyboard | english | chinese
-const me = reactive({ student_name: '', student_class: '', difficulty: '简单', limit: 0 })
+const mode = ref('keyboard') // keyboard | english | chinese | free
+const me = reactive({ student_name: '', student_class: '', difficulty: '简单', limit: 3 })
+
+const MODE_TABS = [
+  { k: 'keyboard', t: '认识键盘' },
+  { k: 'english', t: '英文打字' },
+  { k: 'chinese', t: '中文打字' },
+  { k: 'free', t: '自由打字' }
+]
+
+// 自由打字不计时不评分，所以班级姓名、难度、限时这些对它都没意义
+const isFree = computed(() => mode.value === 'free')
 
 const running = ref(false)
 const result = ref(null)
@@ -89,6 +102,46 @@ function onKeydown(e) {
     kb.status[kb.row][kb.ci] = 'wrong'
     kbTip.value = `按错了，本应输入 ${KB_LABEL[kb.row][kb.ci]} 键，请重试。`
   }
+}
+
+// ---------- 自由打字 ----------
+// 空板子：敲什么键就在键盘图上亮什么键，敲的内容原样显示出来。
+// 不计时、不评分、不上报成绩，纯粹用来熟悉键位和输入法。
+const free = reactive({ text: '', keys: 0, lastKey: '', lastCode: '' })
+const freeLit = ref('') // 当前亮着的那个键，松开就灭
+const freeRef = ref(null)
+let freeLitTimer = null
+
+/** 键盘事件里的 key 换算成键盘图上的那一格 */
+function keyToCell(e) {
+  if (e.key === ' ' || e.code === 'Space') return ' '
+  return e.key.length === 1 ? e.key.toLowerCase() : ''
+}
+
+function freeKeydown(e) {
+  const cell = keyToCell(e)
+  free.keys++
+  free.lastKey = e.key === ' ' ? '空格' : e.key
+  free.lastCode = e.code
+
+  if (cell) {
+    freeLit.value = cell
+    clearTimeout(freeLitTimer)
+    // 松开事件不一定收得到（比如按住不放又切了窗口），定时熄灯更稳
+    freeLitTimer = setTimeout(() => (freeLit.value = ''), 180)
+  }
+}
+
+function freeKeyClass(ch) {
+  return freeLit.value === ch ? 'lit' : 'idle'
+}
+
+function clearFree() {
+  free.text = ''
+  free.keys = 0
+  free.lastKey = ''
+  free.lastCode = ''
+  freeRef.value?.focus()
 }
 
 // ---------- 文本打字 ----------
@@ -208,6 +261,7 @@ function switchMode(m) {
   mode.value = m
   result.value = null
   if (m === 'keyboard') resetKb()
+  if (m === 'free') nextTick(() => freeRef.value?.focus())
 }
 
 onMounted(async () => {
@@ -232,6 +286,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   clearInterval(timer)
+  clearTimeout(freeLitTimer)
   window.removeEventListener('keydown', onKeydown)
 })
 </script>
@@ -242,7 +297,7 @@ onUnmounted(() => {
     <div class="panel top">
       <h1>
         <span class="logo">⌨</span>
-        学生打字训练<small>认识键盘 · 英文 · 中文</small>
+        学生打字训练<small>认识键盘 · 英文 · 中文 · 自由打字</small>
       </h1>
       <div class="setrow">
         <div class="field">
@@ -255,28 +310,24 @@ onUnmounted(() => {
         </div>
         <div class="field">
           <label>难度</label>
-          <el-select v-model="me.difficulty" style="width: 110px">
+          <el-select v-model="me.difficulty" :disabled="isFree" style="width: 110px">
             <el-option v-for="d in conf?.difficulties || []" :key="d" :label="d" :value="d" />
           </el-select>
         </div>
         <div class="field">
           <label>限时</label>
-          <el-select v-model="me.limit" style="width: 120px">
+          <el-select v-model="me.limit" :disabled="isFree" style="width: 120px">
             <el-option
               v-for="t in conf?.time_limits || []"
               :key="t"
-              :label="t ? `${t} 分钟` : '不限时'"
+              :label="`${t} 分钟`"
               :value="t"
             />
           </el-select>
         </div>
         <div class="modes">
           <button
-            v-for="m in [
-              { k: 'keyboard', t: '认识键盘' },
-              { k: 'english', t: '英文打字' },
-              { k: 'chinese', t: '中文打字' }
-            ]"
+            v-for="m in MODE_TABS"
             :key="m.k"
             class="mbtn"
             :class="{ on: mode === m.k }"
@@ -284,35 +335,77 @@ onUnmounted(() => {
           >{{ m.t }}</button>
         </div>
       </div>
-      <p class="note">班级、姓名必填。完成后成绩<b>自动提交给老师</b>，不用另外交。</p>
+      <p v-if="isFree" class="note">
+        自由打字<b>不限时、不计分、也不会提交成绩</b>，随便敲，敲到的键会在下面的键盘上亮起来。
+      </p>
+      <p v-else class="note">班级、姓名必填。完成后成绩<b>自动提交给老师</b>，不用另外交。</p>
     </div>
 
     <!-- 实时状态条 -->
     <div class="panel">
       <div class="livebar">
-        <template v-if="mode === 'keyboard'">
-          <div class="seg"><span>状态</span><b>{{ running ? '进行中' : result ? '已完成' : '未开始' }}</b></div>
-          <div class="seg"><span>进度</span><b>{{ kb.row }} / 5 排（{{ kbDoneCount }}/{{ kbTotalKeys }} 键）</b></div>
-          <div class="seg"><span>正确率</span><b>{{ kb.total ? Math.round((kb.correct / kb.total) * 100) + '%' : '—' }}</b></div>
+        <template v-if="isFree">
+          <div class="seg"><span>已敲</span><b>{{ free.keys }}</b> 次</div>
+          <div class="seg"><span>输入</span><b>{{ free.text.length }}</b> 字</div>
+          <div class="seg">
+            <span>最后按键</span>
+            <b class="lastkey">{{ free.lastKey || '—' }}</b>
+          </div>
+          <div class="grow" />
+          <el-button @click="clearFree">清空重来</el-button>
         </template>
         <template v-else>
-          <div class="seg"><span>速度</span><b>{{ liveSpeed }}</b> 字/分</div>
-          <div class="seg"><span>正确率</span><b>{{ liveAcc }}%</b></div>
-          <div class="seg"><span>进度</span><b>{{ progress }}%</b></div>
+          <template v-if="mode === 'keyboard'">
+            <div class="seg"><span>状态</span><b>{{ running ? '进行中' : result ? '已完成' : '未开始' }}</b></div>
+            <div class="seg"><span>进度</span><b>{{ kb.row }} / 5 排（{{ kbDoneCount }}/{{ kbTotalKeys }} 键）</b></div>
+            <div class="seg"><span>正确率</span><b>{{ kb.total ? Math.round((kb.correct / kb.total) * 100) + '%' : '—' }}</b></div>
+          </template>
+          <template v-else>
+            <div class="seg"><span>速度</span><b>{{ liveSpeed }}</b> 字/分</div>
+            <div class="seg"><span>正确率</span><b>{{ liveAcc }}%</b></div>
+            <div class="seg"><span>进度</span><b>{{ progress }}%</b></div>
+          </template>
+          <div class="seg"><span>剩余</span><b>{{ fmt(leftSec) }}</b></div>
+          <div class="grow" />
+          <el-button type="primary" :disabled="running" @click="start">
+            {{ result ? '再练一次' : '开始' }}
+          </el-button>
+          <el-button v-if="running" @click="finish">结束并交成绩</el-button>
         </template>
-        <div class="seg">
-          <span>{{ me.limit ? '剩余' : '用时' }}</span>
-          <b>{{ me.limit ? fmt(leftSec) : fmt(elapsed) }}</b>
+      </div>
+
+      <!-- 自由打字：不限时的空板子，敲到的键会亮 -->
+      <div v-if="isFree" class="body">
+        <el-input
+          ref="freeRef"
+          v-model="free.text"
+          type="textarea"
+          :rows="4"
+          class="ta"
+          placeholder="点这里开始随便敲。中英文都行，想练输入法就切到中文输入法。"
+          @keydown="freeKeydown"
+        />
+        <div class="kb freekb">
+          <div v-for="(row, i) in KB_ROWS" :key="i" class="krow">
+            <div
+              v-for="(ch, j) in row"
+              :key="j"
+              class="key"
+              :class="[freeKeyClass(ch), { space: ch === ' ' }]"
+            >{{ KB_LABEL[i][j] }}</div>
+          </div>
         </div>
-        <div class="grow" />
-        <el-button type="primary" :disabled="running" @click="start">
-          {{ result ? '再练一次' : '开始' }}
-        </el-button>
-        <el-button v-if="running" @click="finish">结束并交成绩</el-button>
+        <div class="tip">
+          <template v-if="free.lastCode">
+            刚才按的是 <b>{{ free.lastKey }}</b>
+            <span class="code">（{{ free.lastCode }}）</span>
+          </template>
+          <template v-else>按任意键试试 —— 键盘图上对应的那一格会亮一下。</template>
+        </div>
       </div>
 
       <!-- 认识键盘 -->
-      <div v-if="mode === 'keyboard'" class="body">
+      <div v-else-if="mode === 'keyboard'" class="body">
         <div class="rowtabs">
           <span
             v-for="(n, i) in KB_NAMES"
@@ -562,6 +655,29 @@ h1 small {
 }
 .key.dim {
   opacity: 0.45;
+}
+/* 自由打字：平时是暗的，敲到哪个键哪个键亮一下 */
+.key.idle {
+  opacity: 0.5;
+}
+.key.lit {
+  opacity: 1;
+  border-color: var(--el-color-primary);
+  background: var(--el-color-primary);
+  color: #fff;
+  transform: translateY(2px);
+  box-shadow: 0 0 0 4px var(--el-color-primary-light-8);
+}
+.freekb {
+  margin-top: 18px;
+}
+.lastkey {
+  font-family: ui-monospace, Consolas, monospace;
+}
+.tip .code {
+  color: var(--el-text-color-secondary);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12.5px;
 }
 .tip {
   margin-top: 16px;

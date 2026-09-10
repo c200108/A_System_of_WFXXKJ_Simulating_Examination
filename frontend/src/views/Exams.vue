@@ -4,6 +4,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { siteConfig } from '../siteConfig'
 import { api, download } from '../api'
 import { loadPublicBase, studentLink } from '../publicUrl'
+import { currentUser } from '../auth'
+
+// 管理员看得到全校的考试，得多一列「发布人」；老师只看得到自己的，不用这列
+const isAdmin = computed(() => currentUser.value?.role === 'admin')
 
 const exams = ref([])
 const papers = ref([])
@@ -133,11 +137,18 @@ const hardest = computed(() => {
     <el-alert type="info" :closable="false" class="hint">
       把存档的试卷发布成考试，学生打开链接直接答题，<b>不需要账号</b>。
       题目发给学生时<b>不带答案</b>，判分在服务器上做，成绩自动汇总。
+      <template v-if="isAdmin">
+        <br />你是管理员，这里列的是<b>全校所有老师</b>发布的考试。
+      </template>
+      <template v-else>
+        <br />这里只列<b>你自己发布的</b>考试，别的老师看不到，你也看不到他们的。
+      </template>
     </el-alert>
 
     <el-empty v-if="!exams.length && !loading" description="还没有发布过考试" />
     <el-table v-else :data="exams" v-loading="loading" border size="small">
       <el-table-column prop="title" label="考试" min-width="160" show-overflow-tooltip />
+      <el-table-column v-if="isAdmin" prop="owner_name" label="发布人" width="92" show-overflow-tooltip />
       <el-table-column label="学生链接" min-width="230">
         <template #default="{ row }">
           <el-input :model-value="linkOf(row)" readonly size="small">

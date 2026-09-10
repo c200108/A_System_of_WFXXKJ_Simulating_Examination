@@ -47,3 +47,25 @@ def auth(client):
     res = client.post("/api/auth/login", data={"username": "admin", "password": "admin123"})
     assert res.status_code == 200, res.text
     return {"Authorization": f"Bearer {res.json()['access_token']}"}
+
+
+def _make_teacher(client, admin_auth, username: str, name: str):
+    """建一个普通教师账号并登录，返回它的请求头。用来验各种权限隔离。"""
+    client.post(
+        "/api/auth/users",
+        json={"username": username, "password": "teacher123", "name": name, "role": "teacher"},
+        headers=admin_auth,
+    )
+    res = client.post("/api/auth/login", data={"username": username, "password": "teacher123"})
+    assert res.status_code == 200, res.text
+    return {"Authorization": f"Bearer {res.json()['access_token']}"}
+
+
+@pytest.fixture(scope="session")
+def teacher_auth(client, auth):
+    return _make_teacher(client, auth, "teacher_a", "甲老师")
+
+
+@pytest.fixture(scope="session")
+def teacher2_auth(client, auth):
+    return _make_teacher(client, auth, "teacher_b", "乙老师")

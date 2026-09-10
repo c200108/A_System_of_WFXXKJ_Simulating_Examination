@@ -1,20 +1,21 @@
 """需求反馈 + 更新日志。
 
 反馈：学生和老师都能提，**不需要登录**；提交后公开展示在反馈区。
-      公开意味着可能出现不当内容，所以管理端能下架（不物理删除，留痕可查）。
+      老师登录后能在评论下回复、点赞；**下架和删除只有管理员能做** ——
+      这两个动作会让内容从公开区消失，权限收在一个人手里，出了事查得清。
 更新日志：公开可看，按 Keep a Changelog 规范组织 —— 一个版本一组，
       组内按 Added / Changed / Fixed 等变动类型再分。
 """
 
-from datetime import date, datetime
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps import get_current_user
-from ..models import ChangelogEntry, Feedback, User
+from ..deps import get_current_user, get_optional_user, require_admin
+from ..models import ChangelogEntry, Feedback, FeedbackLike, FeedbackReply, User
 from ..schemas import (
     ChangelogEntryIn,
     ChangelogEntryOut,
@@ -22,6 +23,7 @@ from ..schemas import (
     FeedbackIn,
     FeedbackOut,
     FeedbackReplyIn,
+    FeedbackReplyOut,
 )
 
 router = APIRouter(prefix="/api", tags=["反馈与日志"])
@@ -38,6 +40,20 @@ CHANGE_TYPE_LABELS = {
     "Fixed": "修复",
     "Security": "安全",
 }
+
+
+def _out(row: Feedback, me: User | None) -> FeedbackOut:
+    """一条反馈的公开视图。contact 不在 FeedbackOut 里，构造不出来也就漏不出去。"""
+    return FeedbackOut(
+        id=row.id,
+        author=row.author,
+        category=row.category,
+        content=row.content,
+        replies=[FeedbackReplyOut.model_validate(r) for r in row.replies],
+        like_count=len(row.likes),
+        liked_by_me=bool(me) and any(lk.user_id == me.id for lk in row.likes),
+        created_at=row.created_at,
+    )
 
 
 # ================================================================ 需求反馈
@@ -57,7 +73,7 @@ def create_feedback(body: FeedbackIn, db: Session = Depends(get_db)):
         select(Feedback).where(Feedback.author == author, Feedback.content == content)
     )
     if dup:
-        return dup
+        return _out(dup, None)
 
     row = Feedback(
         author=author[:64],
@@ -68,66 +84,111 @@ def create_feedback(body: FeedbackIn, db: Session = Depends(get_db)):
     db.add(row)
     db.commit()
     db.refresh(row)
-    return row
+    return _out(row, None)
 
 
 @router.get("/feedback", response_model=list[FeedbackOut], summary="反馈列表（公开）")
 def list_feedback(
     category: str | None = None,
     limit: int = Query(100, ge=1, le=500),
+    me: User | None = Depends(get_optional_user),
     db: Session = Depends(get_db),
 ):
-    """公开接口只返回没被下架的。联系方式不在响应模型里，不会外泄。"""
+    """公开接口只返回没被下架的。联系方式不在响应模型里，不会外泄。
+
+    带令牌访问时会顺带标出哪几条是自己点过赞的（liked_by_me）；不带令牌照常返回。
+    """
     stmt = select(Feedback).where(Feedback.is_public.is_(True))
     if category:
         stmt = stmt.where(Feedback.category == category)
-    return list(db.scalars(stmt.order_by(Feedback.created_at.desc()).limit(limit)))
+    rows = db.scalars(stmt.order_by(Feedback.created_at.desc()).limit(limit)).all()
+    return [_out(r, me) for r in rows]
 
 
-@router.get("/feedback/all", summary="全部反馈，含已下架和联系方式（教师）")
+@router.get("/feedback/all", summary="全部反馈，含已下架和联系方式（管理员）")
 def list_feedback_all(
-    _: User = Depends(get_current_user),
+    me: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    """联系方式和已下架的内容只给管理员看，普通老师用公开列表就够了。"""
     rows = db.scalars(select(Feedback).order_by(Feedback.created_at.desc()).limit(500)).all()
     return [
-        {
-            "id": r.id,
-            "author": r.author,
-            "contact": r.contact,
-            "category": r.category,
-            "content": r.content,
-            "is_public": r.is_public,
-            "reply": r.reply,
-            "replied_at": r.replied_at,
-            "created_at": r.created_at,
-        }
+        {**_out(r, me).model_dump(), "contact": r.contact, "is_public": r.is_public}
         for r in rows
     ]
 
 
-@router.post("/feedback/{fid}/reply", response_model=FeedbackOut, summary="答复反馈（教师）")
+@router.post("/feedback/{fid}/reply", response_model=FeedbackOut, summary="在反馈下回复（教师）")
 def reply_feedback(
     fid: int,
     body: FeedbackReplyIn,
-    _: User = Depends(get_current_user),
+    me: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """每位老师各回各的，互相不覆盖；回复公开显示，署老师的名字。"""
     row = db.get(Feedback, fid)
     if not row:
         raise HTTPException(status_code=404, detail="反馈不存在")
-    row.reply = body.reply.strip()
-    row.replied_at = datetime.now() if row.reply else None
+    content = body.reply.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="回复内容不能为空")
+
+    db.add(
+        FeedbackReply(
+            feedback_id=row.id,
+            user_id=me.id,
+            author=(me.name or me.username)[:64],
+            is_admin=me.role == "admin",
+            content=content,
+        )
+    )
     db.commit()
     db.refresh(row)
-    return row
+    return _out(row, me)
 
 
-@router.patch("/feedback/{fid}/visibility", response_model=FeedbackOut, summary="上架/下架（教师）")
+@router.delete("/feedback/replies/{rid}", summary="撤回一条回复（本人或管理员）")
+def delete_reply(
+    rid: int, me: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    row = db.get(FeedbackReply, rid)
+    if not row:
+        raise HTTPException(status_code=404, detail="回复不存在")
+    if me.role != "admin" and row.user_id != me.id:
+        raise HTTPException(status_code=403, detail="只能撤回自己的回复")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/feedback/{fid}/like", response_model=FeedbackOut, summary="点赞/取消点赞（教师）")
+def toggle_like(
+    fid: int, me: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    """再点一次就是取消。一人一条，唯一约束保证点不重。"""
+    row = db.get(Feedback, fid)
+    if not row:
+        raise HTTPException(status_code=404, detail="反馈不存在")
+
+    existing = db.scalar(
+        select(FeedbackLike).where(
+            FeedbackLike.feedback_id == fid, FeedbackLike.user_id == me.id
+        )
+    )
+    if existing:
+        db.delete(existing)
+    else:
+        db.add(FeedbackLike(feedback_id=fid, user_id=me.id))
+    db.commit()
+    db.refresh(row)
+    return _out(row, me)
+
+
+@router.patch("/feedback/{fid}/visibility", response_model=FeedbackOut, summary="上架/下架（管理员）")
 def toggle_feedback(
     fid: int,
     is_public: bool,
-    _: User = Depends(get_current_user),
+    me: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     row = db.get(Feedback, fid)
@@ -136,12 +197,12 @@ def toggle_feedback(
     row.is_public = is_public
     db.commit()
     db.refresh(row)
-    return row
+    return _out(row, me)
 
 
-@router.delete("/feedback/{fid}", summary="删除反馈（教师）")
+@router.delete("/feedback/{fid}", summary="删除反馈（管理员）")
 def delete_feedback(
-    fid: int, _: User = Depends(get_current_user), db: Session = Depends(get_db)
+    fid: int, _: User = Depends(require_admin), db: Session = Depends(get_db)
 ):
     row = db.get(Feedback, fid)
     if not row:

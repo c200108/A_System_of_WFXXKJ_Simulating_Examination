@@ -27,6 +27,9 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(128))
     name: Mapped[str] = mapped_column(String(64), default="")
     role: Mapped[str] = mapped_column(String(16), default="teacher")  # admin / teacher
+    # 老师自己维护的资料，只用于校内联系，不参与任何鉴权
+    grade_class: Mapped[str] = mapped_column(String(128), default="")  # 任教年级班级
+    contact: Mapped[str] = mapped_column(String(64), default="")  # 联系方式
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -235,9 +238,48 @@ class Feedback(Base):
     content: Mapped[str] = mapped_column(Text)
     # 公开展示，所以要能下架不当言论；不物理删除，留痕可追溯
     is_public: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
-    reply: Mapped[str] = mapped_column(Text, default="")  # 管理员答复
-    replied_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+    replies: Mapped[list["FeedbackReply"]] = relationship(
+        back_populates="feedback", cascade="all, delete-orphan", lazy="selectin",
+        order_by="FeedbackReply.id",
+    )
+    likes: Mapped[list["FeedbackLike"]] = relationship(
+        cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class FeedbackReply(Base):
+    """一条回复。老师各回各的，不会互相覆盖；作者姓名冗余存一份，
+    这样改了名或停用了账号，历史回复的署名仍然对得上。"""
+
+    __tablename__ = "feedback_replies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    feedback_id: Mapped[int] = mapped_column(
+        ForeignKey("feedbacks.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    author: Mapped[str] = mapped_column(String(64), default="")
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)  # 回复时是不是管理员
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    feedback: Mapped[Feedback] = relationship(back_populates="replies")
+
+
+class FeedbackLike(Base):
+    """一个老师给一条反馈点的赞。唯一约束保证点不重，再点一次就是取消。"""
+
+    __tablename__ = "feedback_likes"
+    __table_args__ = (UniqueConstraint("feedback_id", "user_id", name="uq_feedback_like"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    feedback_id: Mapped[int] = mapped_column(
+        ForeignKey("feedbacks.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class ChangelogEntry(Base):

@@ -32,6 +32,7 @@ const routes = [
   { path: '/exams', component: () => import('./views/Exams.vue'), meta: { title: '考试' } },
   { path: '/typing', component: () => import('./views/TypingAdmin.vue'), meta: { title: '打字' } },
   { path: '/typing-texts', component: () => import('./views/TypingTexts.vue'), meta: { title: '练习文本' } },
+  { path: '/profile', component: () => import('./views/Profile.vue'), meta: { title: '我的账号' } },
   { path: '/users', component: () => import('./views/Users.vue'), meta: { title: '账号', admin: true } }
 ]
 

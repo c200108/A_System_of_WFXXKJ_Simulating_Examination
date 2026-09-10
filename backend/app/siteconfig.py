@@ -11,7 +11,7 @@ import os
 import sys
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 
 class _Base(BaseModel):
@@ -94,9 +94,11 @@ class TypingStarConf(_Base):
 class TypingConf(_Base):
     enabled: bool = True
     difficulties: list[str] = Field(default_factory=lambda: ["简单", "中等", "困难"])
-    time_limits: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 5])
+    # 限时档位，单位分钟。都必须大于 0 —— "不限时"的需求由自由打字模块承担，
+    # 那个模块本来就不计时不评分，不用在这里配一个 0 出来。
+    time_limits: list[int] = Field(default_factory=lambda: [1, 2, 3, 5, 10])
     default_difficulty: str = "简单"
-    default_limit: int = 0
+    default_limit: int = 3
     # 每次练习从文本库里随机洗牌拼几段，保证限时练习有足够内容
     passages_per_round: list[int] = Field(default_factory=lambda: [7, 9])
     star_thresholds: TypingStarConf = Field(default_factory=TypingStarConf)
@@ -104,6 +106,22 @@ class TypingConf(_Base):
     # 文本库：{难度: [段落, ...]}，改这里不用重新构建，restart backend 即可
     english: dict[str, list[str]] = Field(default_factory=dict)
     chinese: dict[str, list[str]] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check_limits(self):
+        """限时配错了要在启动时就喊出来，别等学生点开页面才发现选不了时间。"""
+        bad = [t for t in self.time_limits if t <= 0]
+        if bad:
+            raise ValueError(f"typing.time_limits 里不能有 0 或负数（发现 {bad}）；不限时请用自由打字模块")
+        if self.time_limits and self.default_limit not in self.time_limits:
+            raise ValueError(
+                f"typing.default_limit={self.default_limit} 不在 time_limits {self.time_limits} 里"
+            )
+        if self.default_difficulty not in self.difficulties:
+            raise ValueError(
+                f"typing.default_difficulty={self.default_difficulty!r} 不在 difficulties {self.difficulties} 里"
+            )
+        return self
 
 
 class UploadConf(_Base):

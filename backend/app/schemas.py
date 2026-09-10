@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -15,6 +16,8 @@ class UserOut(ORMModel):
     username: str
     name: str
     role: str
+    grade_class: str = ""
+    contact: str = ""
     is_active: bool
     created_at: datetime | None = None
 
@@ -35,7 +38,17 @@ class UserUpdate(BaseModel):
     name: str | None = None
     role: str | None = None
     is_active: bool | None = None
+    grade_class: str | None = Field(default=None, max_length=128)
+    contact: str | None = Field(default=None, max_length=64)
     password: str | None = Field(default=None, min_length=6, max_length=64)
+
+
+class ProfileUpdate(BaseModel):
+    """老师改自己的资料。只有这三项 —— 用户名、角色、启停都得管理员来。"""
+
+    name: str | None = Field(default=None, max_length=64)
+    grade_class: str | None = Field(default=None, max_length=128)
+    contact: str | None = Field(default=None, max_length=64)
 
 
 class PasswordChange(BaseModel):
@@ -192,6 +205,8 @@ class ExamOut(ORMModel):
     created_at: datetime | None = None
     submission_count: int = 0
     avg_score: float | None = None
+    # 只有管理员看列表时才填，老师看到的都是自己的，不需要这一列
+    owner_name: str = ""
 
 
 class TakeQuestionOut(BaseModel):
@@ -380,12 +395,29 @@ class TypingTextOut(ORMModel):
     created_at: datetime | None = None
 
 
+class TypingTextBulkIn(BaseModel):
+    """批量处理勾选的文本。action 限死这三个，别的一律拒绝。"""
+
+    ids: list[int] = Field(default_factory=list)
+    action: Literal["delete", "enable", "disable"]
+
+
 # ---------- 需求反馈 ----------
 class FeedbackIn(BaseModel):
     author: str = Field(max_length=64)
     contact: str = Field(default="", max_length=64)
     category: str = "建议"
     content: str = Field(max_length=2000)
+
+
+class FeedbackReplyOut(ORMModel):
+    """一条回复。is_admin 用来在界面上给管理员的回复加个标记。"""
+
+    id: int
+    author: str
+    is_admin: bool = False
+    content: str
+    created_at: datetime | None = None
 
 
 class FeedbackOut(ORMModel):
@@ -395,8 +427,9 @@ class FeedbackOut(ORMModel):
     author: str
     category: str
     content: str
-    reply: str = ""
-    replied_at: datetime | None = None
+    replies: list[FeedbackReplyOut] = []
+    like_count: int = 0
+    liked_by_me: bool = False
     created_at: datetime | None = None
 
 

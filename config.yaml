@@ -94,9 +94,9 @@ typing:
   # 打字训练（学生页 /dazi，免登录；教师端在「打字」菜单看成绩）
   enabled: true
   difficulties: ["简单", "中等", "困难"]
-  time_limits: [0, 1, 2, 3, 5] # 0 表示不限时，单位分钟
+  time_limits: [1, 2, 3, 5, 10] # 单位分钟，必须都大于 0（自由打字模块不限时，不走这里）
   default_difficulty: "简单"
-  default_limit: 0
+  default_limit: 3
   passages_per_round: [7, 9] # 每次从文本库随机抽这么多段拼成长文
   three_star_min_speed: 18 # 简单难度之外，三星还要求速度达到这个值
   star_thresholds: # 正确率达到 base 给两星，base+12 给三星

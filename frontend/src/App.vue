@@ -69,6 +69,11 @@ async function logout() {
   clearAuth()
   router.push('/login')
 }
+
+function onUserCommand(cmd) {
+  if (cmd === 'profile') router.push('/profile')
+  if (cmd === 'logout') logout()
+}
 </script>
 
 <template>
@@ -94,10 +99,19 @@ async function logout() {
         <el-button link :title="dark ? '切换到浅色' : '切换到深色'" @click="toggleTheme">
           {{ dark ? '☀' : '◐' }}
         </el-button>
-        <template v-if="user">
-          <span class="who">{{ user.name || user.username }}</span>
-          <el-button link type="primary" @click="logout">退出</el-button>
-        </template>
+        <el-dropdown v-if="user" trigger="click" @command="onUserCommand">
+          <span class="who">
+            {{ user.name || user.username }}
+            <el-tag v-if="user.role === 'admin'" size="small" type="danger" effect="plain">管理员</el-tag>
+            <i class="caret">▾</i>
+          </span>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="profile">我的账号</el-dropdown-item>
+              <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-button v-else link type="primary" @click="router.push('/login')">教师登录</el-button>
       </div>
     </el-header>
@@ -149,8 +163,21 @@ body {
   gap: 12px;
 }
 .who {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   color: var(--el-text-color-regular);
   font-size: 14px;
+  cursor: pointer;
+  outline: none;
+}
+.who:hover {
+  color: var(--el-color-primary);
+}
+.caret {
+  font-style: normal;
+  font-size: 11px;
+  opacity: 0.6;
 }
 .main {
   padding: 20px 24px;
