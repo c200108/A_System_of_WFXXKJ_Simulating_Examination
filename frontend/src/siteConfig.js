@@ -9,7 +9,14 @@ import { reactive } from 'vue'
 export const siteConfig = reactive({
   school: '',
   // 平台门面：名称、标签页图标、页脚备注。改 config.yaml 重启后端即生效。
-  site: { title: '信息科技教学平台', brand: '信息科技教学平台', footer: '', favicon: '' },
+  site: {
+    title: '信息科技教学平台',
+    brand: '信息科技教学平台',
+    footer: '',
+    favicon: '',
+    student_title: '昌邑市实验中学信息科技学生实践平台',
+    student_brand: '学生实践平台'
+  },
   // 最新版本号，页脚显示。来自更新日志，不在 config.yaml 里。
   version: '',
   paper: {
@@ -49,6 +56,9 @@ export function setSiteConfig(data) {
   Object.assign(siteConfig, data)
   // 标题和图标在挂载前就设好，学生的答题页、打字页也跟着生效 ——
   // 那两个页面不套教师界面的框，放在 App.vue 里做就漏掉了。
-  if (siteConfig.site?.title) document.title = siteConfig.site.title
+  // 学生侧显示学生平台的名字，教师后台显示教学平台的名字
+  const onTeacherSide = window.location.pathname.startsWith('/js')
+  const t = onTeacherSide ? siteConfig.site?.title : siteConfig.site?.student_title
+  if (t) document.title = t
   applyFavicon(siteConfig.site?.favicon)
 }

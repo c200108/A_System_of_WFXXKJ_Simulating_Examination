@@ -39,3 +39,36 @@ export function clearAuth() {
 }
 
 export const isAdmin = () => currentUser.value?.role === 'admin'
+
+// ---------------------------------------------------------------- 学生侧
+/**
+ * 学生的登录状态和教师的完全分开存：令牌、用户信息、清除逻辑都是两套。
+ *
+ * 这样做不只是为了干净 —— 机房里同一台电脑老师和学生轮流用很常见，
+ * 共用一个 key 的话谁登录都会把对方挤掉。
+ */
+const STUDENT_KEY = 'student'
+
+function readStudent() {
+  try {
+    return JSON.parse(localStorage.getItem(STUDENT_KEY) || 'null')
+  } catch {
+    return null
+  }
+}
+
+export const currentStudent = ref(readStudent())
+
+export function setStudent(student) {
+  currentStudent.value = student || null
+  if (student) {
+    localStorage.setItem(STUDENT_KEY, JSON.stringify(student))
+  } else {
+    localStorage.removeItem(STUDENT_KEY)
+  }
+}
+
+export function clearStudentAuth() {
+  localStorage.removeItem('studentToken')
+  setStudent(null)
+}

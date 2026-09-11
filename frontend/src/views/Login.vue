@@ -23,7 +23,7 @@ async function submit() {
     localStorage.setItem('token', res.access_token)
     setUser(res.user) // 同时写 localStorage 和响应式状态，顶栏立刻就能显示
     ElMessage.success(`欢迎回来，${res.user.name || res.user.username}`)
-    router.push('/paper')
+    router.push('/js/paper')
   } finally {
     loading.value = false
   }

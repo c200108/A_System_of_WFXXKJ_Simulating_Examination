@@ -26,6 +26,9 @@ class SiteMeta(_Base):
     brand: str = "信息科技教学平台"
     footer: str = ""
     favicon: str = ""  # 标签页图标路径，如 /uploads/校徽.png；留空用内置默认图标
+    # 学生实践平台（/）的名称；教师后台（/js）用上面的 title / brand
+    student_title: str = "昌邑市实验中学信息科技学生实践平台"
+    student_brand: str = "学生实践平台"
 
 
 class SchoolConf(_Base):

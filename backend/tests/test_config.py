@@ -164,4 +164,13 @@ def test_config_endpoint_exposes_site_title(client):
     site_meta = body["site"]
     assert site_meta["title"] == "昌邑市实验中学信息科技教学平台"
     # brand / footer 也要在，前端顶栏和页脚直接用
-    assert set(site_meta) == {"title", "brand", "footer", "favicon"}
+    assert set(site_meta) == {
+        "title",
+        "brand",
+        "footer",
+        "favicon",
+        "student_title",
+        "student_brand",
+    }
+    # 学生平台的名字也要发下去，学生登录页和侧边栏靠它
+    assert "学生实践平台" in site_meta["student_title"]

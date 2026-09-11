@@ -1,13 +1,31 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import router from './router'
-import { clearAuth } from './auth'
+import { clearAuth, clearStudentAuth } from './auth'
 
 const http = axios.create({ baseURL: '/api', timeout: 60000 })
 
-// 每个请求自动带上登录令牌
+/**
+ * 该带哪个令牌：教师端和学生端是两套身份，各存各的。
+ *
+ * - /student/* 永远用学生令牌，不看在哪个页面；
+ * - 其余接口看当前在哪一侧：/js 开头算教师端，别的算学生端。
+ *
+ * 公开页面（/take/xxx、/dazi）没登录时两个令牌都没有，就不带 Authorization，
+ * 后端按匿名处理 —— 这正是那两个页面要的效果。
+ */
+function pickToken(url) {
+  // 必须带上末尾的斜杠：学生平台是 /student/xxx，教师端的学生管理是 /students，
+  // 只写 '/student' 的话 '/students' 也会命中，教师接口就被塞进学生令牌了。
+  if (String(url || '').startsWith('/student/')) {
+    return localStorage.getItem('studentToken')
+  }
+  const onTeacherSide = window.location.pathname.startsWith('/js')
+  return localStorage.getItem(onTeacherSide ? 'token' : 'studentToken')
+}
+
 http.interceptors.request.use(config => {
-  const token = localStorage.getItem('token')
+  const token = pickToken(config.url)
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
@@ -79,8 +97,14 @@ http.interceptors.response.use(
   res => res.data,
   err => {
     if (err.response?.status === 401) {
-      clearAuth() // 清 token 和响应式登录状态，顶栏同步变回未登录
-      router.push('/login')
+      // 在哪一侧就清哪一侧的登录状态，别把另一边的人也踢下线
+      if (window.location.pathname.startsWith('/js')) {
+        clearAuth()
+        router.push('/js/login')
+      } else {
+        clearStudentAuth()
+        router.push('/login')
+      }
       ElMessage.error('登录已过期，请重新登录')
     } else {
       ElMessage.error(explainError(err))
@@ -207,7 +231,26 @@ export const api = {
   changelogCreate: data => http.post('/changelog', data),
   changelogDelete: id => http.delete(`/changelog/${id}`),
 
-  // 学生端（不需要登录）
+  // 学生平台（认学生令牌）
+  studentLogin: (student_no, password) =>
+    http.post('/student/login', null, { params: { student_no, password } }),
+  studentMe: () => http.get('/student/me'),
+  studentChangePassword: data => http.post('/student/password', data),
+  studentHome: () => http.get('/student/home'),
+  studentExams: () => http.get('/student/exams'),
+  studentPaper: id => http.get(`/student/exams/${id}/paper`),
+  studentSubmit: (id, answers) => http.post(`/student/exams/${id}/submit`, { answers }),
+  studentTypingRecords: () => http.get('/student/typing/records'),
+
+  // 学生账号管理（教师端）
+  students: params => http.get('/students', { params }),
+  studentClasses: () => http.get('/students/classes'),
+  studentCreate: data => http.post('/students', data),
+  studentBatch: data => http.post('/students/batch', data),
+  studentUpdate: (id, data) => http.patch(`/students/${id}`, data),
+  studentBulk: (ids, action) => http.post('/students/bulk', { ids, action }),
+
+  // 凭链接答题（不需要登录）
   takePaper: token => http.get(`/take/${token}`),
   submitPaper: (token, data) => http.post(`/take/${token}/submit`, data)
 }
