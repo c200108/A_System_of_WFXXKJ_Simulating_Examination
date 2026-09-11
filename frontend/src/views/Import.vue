@@ -71,7 +71,7 @@ async function downloadTemplate() {
             <el-table-column prop="row" label="行号" width="80" />
             <el-table-column prop="reason" label="原因" />
           </el-table>
-          <el-button type="primary" link @click="$router.push('/bank')">去题库查看新题</el-button>
+          <el-button type="primary" link @click="$router.push('/js/bank')">去题库查看新题</el-button>
         </div>
       </el-card>
 
