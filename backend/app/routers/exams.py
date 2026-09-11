@@ -64,6 +64,7 @@ def create_exam(
         allow_retake=body.allow_retake,
         show_score=body.show_score,
         show_answer=body.show_answer,
+        target_classes=body.target_classes.strip(),
         created_by=user.id,
     )
     db.add(exam)

@@ -15,10 +15,11 @@ ROOT="$(pwd)"
 # cron 的环境变量几乎是空的，必须自己把 .env 读进来。
 # 不读的话下面会退回 .env.example 里的默认密码，认证失败却又被管道吞掉。
 if [ -f "$ROOT/.env" ]; then
-    set -a
+    # 不能直接 source：口令里带 & | ; 空格时会被当成 shell 语法，
+    # 结果是读进半截口令、认证失败，而错误又被管道吞掉。
     # shellcheck disable=SC1091
-    . "$ROOT/.env"
-    set +a
+    . "$ROOT/scripts/lib-env.sh"
+    load_env_file "$ROOT/.env"
 else
     echo "[错误] 找不到 $ROOT/.env，无法取得数据库口令" >&2
     exit 1

@@ -15,6 +15,7 @@ from .routers import (
     imports,
     papers,
     questions,
+    students,
     take,
     typing_train,
 )
@@ -44,9 +45,11 @@ app.include_router(questions.router)
 app.include_router(imports.router)
 app.include_router(papers.router)
 app.include_router(exams.router)
-app.include_router(take.router)  # 学生端，公开访问
-app.include_router(typing_train.router)
-app.include_router(community.router)  # 反馈与更新日志  # 打字训练：学生端公开，教师端要登录
+app.include_router(take.router)  # 凭链接答题，公开访问
+app.include_router(students.student_api)  # 学生平台，认学生令牌
+app.include_router(students.admin_api)  # 学生账号管理，认教师令牌
+app.include_router(typing_train.router)  # 打字训练：学生端公开，教师端要登录
+app.include_router(community.router)  # 反馈与更新日志
 
 
 @app.get("/api/health", tags=["运维"], summary="健康检查")

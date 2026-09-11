@@ -16,6 +16,11 @@ data/
 backup/*.sql*
 backup/*.tar.gz
 
+# data-export.sh 的产物：整库数据 + 明文口令，绝不能进版本库
+exam-data/
+*.sql.gz
+env.secrets
+
 # 配置里有密钥和密码，只提交 .env.example
 .env
 
