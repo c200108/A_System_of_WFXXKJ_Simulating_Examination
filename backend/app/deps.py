@@ -107,3 +107,21 @@ def get_optional_student(
         return None
     row = db.get(Student, student_id)
     return row if row and row.is_active else None
+
+
+def require_delete_permission(user: User = Depends(get_current_user)) -> User:
+    """删除公共资源要这个权限。
+
+    题库、练习文本、更新日志、打字成绩是全校共用的，误删一条所有人都受影响，
+    所以普通教师默认删不了，得管理员在「账号」页面给开。管理员自己不受限制。
+
+    注意这里挡的只是**删除**：增、改、查都不需要这个权限，
+    老师照常维护题库，只是删不掉。
+    """
+    if user.role == "admin" or user.can_delete:
+        return user
+    raise HTTPException(
+        status_code=403,
+        detail="你还没有删除权限。题库、练习文本、更新日志这些是全校共用的，"
+        "需要请管理员在「账号」页面给你开通「删除权」后再操作。",
+    )

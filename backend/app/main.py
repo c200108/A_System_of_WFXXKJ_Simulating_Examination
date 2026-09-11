@@ -8,6 +8,7 @@ from .config import settings
 from .siteconfig import site
 from .routers import (
     auth,
+    classes,
     community,
     config,
     dicts,
@@ -40,6 +41,7 @@ app.mount("/uploads", StaticFiles(directory=settings.upload_dir), name="uploads"
 
 app.include_router(config.router)  # 公开，前端启动时读
 app.include_router(auth.router)
+app.include_router(classes.router)  # 班级：老师能看，增删改要管理员
 app.include_router(dicts.router)
 app.include_router(questions.router)
 app.include_router(imports.router)

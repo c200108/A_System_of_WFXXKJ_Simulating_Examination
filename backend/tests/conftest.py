@@ -49,13 +49,24 @@ def auth(client):
     return {"Authorization": f"Bearer {res.json()['access_token']}"}
 
 
-def _make_teacher(client, admin_auth, username: str, name: str):
-    """建一个普通教师账号并登录，返回它的请求头。用来验各种权限隔离。"""
-    client.post(
+def _make_teacher(client, admin_auth, username: str, name: str, grade: str, cls: str):
+    """建一个普通教师账号、分一个班、登录，返回它的请求头。
+
+    **必须带班**：老师只能给自己名下的班发考试，名下没班的话连考试都发不出去。
+    这里造的是一位配置完整的老师，和实际用起来的状态一致。
+    """
+    res = client.post(
         "/api/auth/users",
         json={"username": username, "password": "teacher123", "name": name, "role": "teacher"},
         headers=admin_auth,
     )
+    uid = res.json()["id"]
+
+    cid = client.post(
+        "/api/classes", json={"grade": grade, "name": cls}, headers=admin_auth
+    ).json()["id"]
+    client.patch(f"/api/auth/users/{uid}", json={"class_ids": [cid]}, headers=admin_auth)
+
     res = client.post("/api/auth/login", data={"username": username, "password": "teacher123"})
     assert res.status_code == 200, res.text
     return {"Authorization": f"Bearer {res.json()['access_token']}"}
@@ -63,9 +74,9 @@ def _make_teacher(client, admin_auth, username: str, name: str):
 
 @pytest.fixture(scope="session")
 def teacher_auth(client, auth):
-    return _make_teacher(client, auth, "teacher_a", "甲老师")
+    return _make_teacher(client, auth, "teacher_a", "甲老师", "七年级", "1班")
 
 
 @pytest.fixture(scope="session")
 def teacher2_auth(client, auth):
-    return _make_teacher(client, auth, "teacher_b", "乙老师")
+    return _make_teacher(client, auth, "teacher_b", "乙老师", "七年级", "2班")

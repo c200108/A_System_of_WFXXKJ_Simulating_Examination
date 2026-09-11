@@ -48,10 +48,24 @@ def exam(client, auth):
     return res.json()
 
 
-def _mk_student(client, auth, no="20260101", name="张三", cls="七(1)班"):
+def _class_id(client, auth, grade="七年级", name="1班"):
+    """拿一个班的 id，没有就建。班级现在是一张表，学生从下拉里选。"""
+    for c in client.get("/api/classes", headers=auth).json():
+        if c["grade"] == grade and c["name"] == name:
+            return c["id"]
+    res = client.post("/api/classes", json={"grade": grade, "name": name}, headers=auth)
+    assert res.status_code == 200, res.text
+    return res.json()["id"]
+
+
+def _mk_student(client, auth, no="20260101", name="张三", grade="七年级", cls="1班"):
     res = client.post(
         "/api/students",
-        json={"student_no": no, "name": name, "student_class": cls},
+        json={
+            "student_no": no,
+            "name": name,
+            "class_id": _class_id(client, auth, grade, cls),
+        },
         headers=auth,
     )
     assert res.status_code == 200, res.text
@@ -62,8 +76,8 @@ def _slogin(client, no, pwd):
     return client.post("/api/student/login", params={"student_no": no, "password": pwd})
 
 
-def _stoken(client, auth, no="20260101", cls="七(1)班"):
-    _mk_student(client, auth, no=no, cls=cls)
+def _stoken(client, auth, no="20260101", grade="七年级", cls="1班"):
+    _mk_student(client, auth, no=no, grade=grade, cls=cls)
     res = _slogin(client, no, no)  # 初始密码就是学号
     assert res.status_code == 200, res.text
     return {"Authorization": f"Bearer {res.json()['access_token']}"}
@@ -83,7 +97,7 @@ def test_duplicate_student_no_rejected(client, auth):
     _mk_student(client, auth, no="20260002")
     res = client.post(
         "/api/students",
-        json={"student_no": "20260002", "name": "重名", "student_class": "七(2)班"},
+        json={"student_no": "20260002", "name": "重名", "class_id": _class_id(client, auth)},
         headers=auth,
     )
     assert res.status_code == 400
@@ -106,7 +120,7 @@ def test_batch_create(client, auth):
     text = "20260011 王五\n20260012 赵六\n\n20260013  钱 七\nbadline\n"
     res = client.post(
         "/api/students/batch",
-        json={"student_class": "八(3)班", "text": text},
+        json={"class_id": _class_id(client, auth, "八年级", "3班"), "text": text},
         headers=auth,
     )
     assert res.status_code == 200, res.text
@@ -114,7 +128,7 @@ def test_batch_create(client, auth):
     assert body["added"] == 3
     assert body["error_count"] == 1  # badline 只有一段
     # 姓名里的空格要保住
-    rows = client.get("/api/students", params={"student_class": "八(3)班"}, headers=auth).json()
+    rows = client.get("/api/students", params={"student_class": "八年级3班"}, headers=auth).json()
     assert {r["name"] for r in rows} == {"王五", "赵六", "钱 七"}
 
 
@@ -216,14 +230,14 @@ def test_exam_targeting_by_class(client, auth, exam):
     ).json()["paper_id"]
     targeted = client.post(
         "/api/exams",
-        json={"paper_id": paper_id, "target_classes": "九(9)班"},
+        json={"paper_id": paper_id, "target_class_ids": [_class_id(client, auth, "九年级", "9班")]},
         headers=auth,
     ).json()
 
     def sees(hdr):
         return {e["id"] for e in client.get("/api/student/exams", headers=hdr).json()}
 
-    outsider = _stoken(client, auth, no="20260081", cls="七(1)班")
+    outsider = _stoken(client, auth, no="20260081", grade="七年级", cls="1班")
     assert targeted["id"] not in sees(outsider), "别班的学生不该看到这场考试"
     # 连取卷都进不去，不只是列表里看不到
     assert (
@@ -231,14 +245,14 @@ def test_exam_targeting_by_class(client, auth, exam):
         == 404
     )
 
-    insider = _stoken(client, auth, no="20260082", cls="九(9)班")
+    insider = _stoken(client, auth, no="20260082", grade="九年级", cls="9班")
     assert targeted["id"] in sees(insider), "本班学生该看得到"
     assert client.get(f"/api/student/exams/{targeted['id']}/paper", headers=insider).status_code == 200
 
 
 def test_submit_records_identity_from_account(client, auth, exam):
     """姓名班级学号从账号来，学生改不了，成绩不会张冠李戴。"""
-    hdr = _stoken(client, auth, no="20260091", cls="七(5)班")
+    hdr = _stoken(client, auth, no="20260091", grade="七年级", cls="5班")
     res = client.post(
         f"/api/student/exams/{exam['id']}/submit",
         json={"answers": {}, "student_name": "我改成别人"},  # 多塞的字段应被忽略
@@ -250,7 +264,7 @@ def test_submit_records_identity_from_account(client, auth, exam):
     mine = [r for r in rows if r["student_no"] == "20260091"]
     assert len(mine) == 1
     assert mine[0]["student_name"] == "张三"
-    assert mine[0]["student_class"] == "七(5)班"
+    assert mine[0]["student_class"] == "七年级5班"
 
 
 def test_cannot_submit_twice(client, auth, exam):
@@ -305,7 +319,7 @@ def test_cannot_set_password_to_student_no(client, auth):
 
 # ---------- 打字 ----------
 def test_typing_record_links_to_account(client, auth):
-    hdr = _stoken(client, auth, no="20260141", cls="七(7)班")
+    hdr = _stoken(client, auth, no="20260141", grade="七年级", cls="7班")
     res = client.post(
         "/api/typing/records",
         json={
@@ -325,7 +339,7 @@ def test_typing_record_links_to_account(client, auth):
     assert len(mine) == 1 and mine[0]["accuracy"] == 95
 
     rows = client.get("/api/typing/records", headers=auth).json()
-    rec = [r for r in rows if r["student_class"] == "七(7)班"]
+    rec = [r for r in rows if r["student_class"] == "七年级7班"]
     assert len(rec) == 1
     assert rec[0]["student_name"] == "张三", "带令牌时姓名该以账号为准"
 

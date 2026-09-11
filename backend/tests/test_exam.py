@@ -11,7 +11,7 @@ XLSX_MAGIC = b"PK\x03\x04"
 @pytest.fixture(scope="module")
 def exam(client, auth):
     """发布一场考试。题量按题库实际存量走，断言里用 total/objective 而不是写死数字。"""
-    paper = client.post(
+    res = client.post(
         "/api/papers/generate",
         json={
             "title": "期末测验",
@@ -21,7 +21,9 @@ def exam(client, auth):
             "save": True,
         },
         headers=auth,
-    ).json()
+    )
+    assert res.status_code == 200, res.text
+    paper = res.json()
     assert paper["paper_id"], "组卷要先存档才能发布考试"
 
     objective = [q for q in paper["questions"] if q["type"] != "操作题"]

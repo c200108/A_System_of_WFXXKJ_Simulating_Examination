@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..constants import DICT_SCOPE, DICT_TYPE
 from ..database import get_db
-from ..deps import get_current_user
+from ..deps import get_current_user, require_delete_permission
 from ..models import Option, Question, User
 from ..schemas import QuestionCreate, QuestionOut, QuestionPage, QuestionUpdate, StatsOut
 from ..services.export import questions_to_xlsx
@@ -226,7 +226,7 @@ def update_question(
 
 
 @router.delete("/{qid}", summary="删除题目（软删除，可恢复）")
-def delete_question(qid: int, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def delete_question(qid: int, _: User = Depends(require_delete_permission), db: Session = Depends(get_db)):
     q = db.get(Question, qid)
     if not q:
         raise HTTPException(status_code=404, detail="题目不存在")

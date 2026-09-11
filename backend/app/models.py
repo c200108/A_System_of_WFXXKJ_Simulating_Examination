@@ -31,7 +31,48 @@ class User(Base):
     grade_class: Mapped[str] = mapped_column(String(128), default="")  # 任教年级班级
     contact: Mapped[str] = mapped_column(String(64), default="")  # 联系方式
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 删除公共资源（题库、练习文本、更新日志、打字成绩）的权限。
+    # 默认关着：这些东西全校共用，误删一条题目所有人都受影响，
+    # 要删得先找管理员开权限。管理员天然有这个权限，不看这个字段。
+    can_delete: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    classes: Mapped[list["SchoolClass"]] = relationship(
+        back_populates="owner", lazy="selectin"
+    )
+
+
+class SchoolClass(Base):
+    """一个教学班。
+
+    原来班级只是 users.grade_class 和 students.student_class 里的一串文字，
+    谁都能手打，"七(3)班"和"七3班"就成了两个班。改成一张表之后：
+    - 老师和学生都从下拉里选，选出来的是同一个 id，对得上；
+    - 班级能明确归属到某位老师，老师只给自己的班发考试。
+
+    一位老师可以带多个班（owner_id 在班这边），换老师只改这一个字段。
+    """
+
+    __tablename__ = "classes"
+    __table_args__ = (UniqueConstraint("grade", "name", name="uq_class_grade_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    grade: Mapped[str] = mapped_column(String(16), index=True)  # 七年级 / 八年级 ...
+    name: Mapped[str] = mapped_column(String(32))  # 1班 / 2班 ...
+    # 班主任／任课老师。为空表示还没分配，只有管理员管得到
+    owner_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    owner: Mapped["User | None"] = relationship(back_populates="classes")
+
+    @property
+    def display(self) -> str:
+        """界面和历史数据里用的班级名，如「七年级1班」。"""
+        return f"{self.grade}{self.name}"
 
 
 class Student(Base):
@@ -52,6 +93,12 @@ class Student(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     student_no: Mapped[str] = mapped_column(String(32), unique=True, index=True)  # 学号，登录用
     name: Mapped[str] = mapped_column(String(64), index=True)
+    # class_id 是正主；student_class 是它的显示名，冗余存一份 ——
+    # 成绩单、打字记录、导出的 Excel 都直接用这个字符串，
+    # 而且班级改名或删班之后，历史数据里的班级名不该跟着变。
+    class_id: Mapped[int | None] = mapped_column(
+        ForeignKey("classes.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     student_class: Mapped[str] = mapped_column(String(64), index=True, default="")
     password_hash: Mapped[str] = mapped_column(String(128))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
