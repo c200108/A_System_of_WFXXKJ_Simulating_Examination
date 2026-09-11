@@ -61,8 +61,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_feedback_likes_user_id", table_name="feedback_likes")
-    op.drop_index("ix_feedback_likes_feedback_id", table_name="feedback_likes")
+    # 不要单独 drop_index：这两列上的索引各自被指向 feedbacks / users 的外键
+    # 占着，MySQL 会报 1553 Cannot drop index ... needed in a foreign key
+    # constraint。drop_table 会把索引和外键一并带走。
     op.drop_table("feedback_likes")
 
     op.add_column("feedbacks", sa.Column("reply", sa.Text, nullable=True))
@@ -82,7 +83,7 @@ def downgrade() -> None:
             )
         """
     )
-    op.drop_index("ix_feedback_replies_feedback_id", table_name="feedback_replies")
+    # 同理，索引被外键占着，交给 drop_table 一起带走
     op.drop_table("feedback_replies")
 
     op.drop_column("users", "contact")

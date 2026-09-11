@@ -138,14 +138,16 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_students_class_id", table_name="students")
+    # 三步都放在 batch 里，顺序不能改（和 0007 是同一个坑）：
+    # MySQL 按顺序发 ALTER —— 外键还在时删不掉它依赖的索引，报 1553；
+    # SQLite 是整表重建 —— 索引不先摘掉，重建时会引用一个已经没有的列。
     with op.batch_alter_table("students") as batch:
         batch.drop_constraint("fk_student_class", type_="foreignkey")
+        batch.drop_index("ix_students_class_id")
         batch.drop_column("class_id")
 
     op.drop_column("users", "can_delete")
 
-    op.drop_index("ix_classes_is_active", table_name="classes")
-    op.drop_index("ix_classes_owner_id", table_name="classes")
-    op.drop_index("ix_classes_grade", table_name="classes")
+    # 不要单独 drop_index：classes.owner_id 上的索引被它自己那个指向 users 的
+    # 外键占着，MySQL 会报 1553。drop_table 会把索引和外键一起带走。
     op.drop_table("classes")
