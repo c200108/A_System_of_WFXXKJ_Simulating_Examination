@@ -19,6 +19,11 @@ site:
   title: "昌邑市实验中学信息科技教学平台" # 浏览器标签页、登录页大标题
   brand: "信息科技教学平台" # 顶栏左上角，短一点更好看
   footer: "" # 页脚备注，留空则不显示
+  # 浏览器标签页图标（校徽）。留空用内置的默认图标。
+  # 换成校徽：把图片文件放进 data/uploads/（比如 data/uploads/校徽.png），
+  # 这里填 "/uploads/校徽.png"，然后 docker compose restart backend 即可，
+  # 不用重新构建前端。png / jpg / svg / ico 都行，建议正方形、不小于 64×64。
+  favicon: ""
 
 school:
   # 印在卷头上的学校名，也是组卷页"学校"一栏的默认值

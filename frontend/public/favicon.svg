@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="信息科技教学平台">
+  <!-- 占位图标，不是真校徽。把校徽图片放进 data/uploads/ 并在 config.yaml 的
+       site.favicon 里填上路径即可替换，不用重新构建前端。 -->
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5b7cfa"/>
+      <stop offset="1" stop-color="#3f5bd8"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#g)"/>
+  <!-- 键盘剪影，呼应打字训练 -->
+  <rect x="13" y="22" width="38" height="24" rx="4" fill="#fff" opacity=".95"/>
+  <g fill="#3f5bd8">
+    <rect x="17.5" y="26.5" width="5" height="5" rx="1.4"/>
+    <rect x="25" y="26.5" width="5" height="5" rx="1.4"/>
+    <rect x="32.5" y="26.5" width="5" height="5" rx="1.4"/>
+    <rect x="40" y="26.5" width="6.5" height="5" rx="1.4"/>
+    <rect x="17.5" y="34" width="6.5" height="5" rx="1.4"/>
+    <rect x="26.5" y="34" width="5" height="5" rx="1.4"/>
+    <rect x="34" y="34" width="12.5" height="5" rx="1.4"/>
+  </g>
+</svg>

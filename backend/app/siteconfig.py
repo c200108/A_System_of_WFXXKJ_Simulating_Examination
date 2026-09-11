@@ -25,6 +25,7 @@ class SiteMeta(_Base):
     title: str = "信息科技教学平台"
     brand: str = "信息科技教学平台"
     footer: str = ""
+    favicon: str = ""  # 标签页图标路径，如 /uploads/校徽.png；留空用内置默认图标
 
 
 class SchoolConf(_Base):

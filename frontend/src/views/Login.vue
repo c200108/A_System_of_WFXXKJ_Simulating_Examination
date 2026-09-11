@@ -1,25 +1,15 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { setUser } from '../auth'
+import { siteConfig, year } from '../siteConfig'
 
 const router = useRouter()
-const title = ref('信息科技教学平台')
+// main.js 启动时已经把 config.yaml 取回来了，这里直接读
+const title = computed(() => siteConfig.site?.title || '信息科技教学平台')
 const loading = ref(false)
-
-onMounted(async () => {
-  try {
-    const cfg = await api.siteConfig()
-    if (cfg.site?.title) {
-      title.value = cfg.site.title
-      document.title = cfg.site.title
-    }
-  } catch {
-    /* 取不到就用内置默认名 */
-  }
-})
 const form = reactive({ username: '', password: '' })
 
 async function submit() {
@@ -64,6 +54,7 @@ async function submit() {
         </el-button>
       </el-form>
       <p class="tip">首次部署的默认账号见 .env 里的 ADMIN_USERNAME / ADMIN_PASSWORD，登录后请立刻改密码。</p>
+      <p class="copy">© {{ year }} {{ title }}</p>
     </el-card>
   </div>
 </template>
@@ -91,6 +82,12 @@ async function submit() {
 }
 .btn {
   width: 100%;
+}
+.copy {
+  margin: 14px 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: #c0c4cc;
 }
 .tip {
   margin-top: 16px;
