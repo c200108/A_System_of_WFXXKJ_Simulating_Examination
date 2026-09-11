@@ -76,6 +76,83 @@ class TokenOut(BaseModel):
     user: UserOut
 
 
+# ---------- 学生账号 ----------
+class StudentOut(ORMModel):
+    id: int
+    student_no: str
+    name: str
+    student_class: str = ""
+    is_active: bool
+    created_at: datetime | None = None
+
+
+class StudentCreate(BaseModel):
+    """学号和密码的规则在接口里用中文判，这里只卡住结构上的长度上限。"""
+
+    student_no: str = Field(max_length=32)
+    name: str = Field(max_length=64)
+    student_class: str = Field(default="", max_length=64)
+    password: str = Field(default="", max_length=64)  # 留空则用学号当初始密码
+
+
+class StudentUpdate(BaseModel):
+    """老师改学生资料。学号不在里面 —— 学号是身份，要换只能删了重建。"""
+
+    name: str | None = Field(default=None, max_length=64)
+    student_class: str | None = Field(default=None, max_length=64)
+    is_active: bool | None = None
+    password: str | None = Field(default=None, max_length=64)
+
+
+class StudentBulkIn(BaseModel):
+    ids: list[int] = Field(default_factory=list)
+    action: Literal["delete", "disable", "enable", "reset_password"]
+
+
+class StudentBatchIn(BaseModel):
+    """按班级粘一批学生进来，一行一个「学号 姓名」。"""
+
+    student_class: str = Field(default="", max_length=64)
+    text: str = Field(max_length=100_000)
+
+
+class StudentTokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    student: StudentOut
+
+
+class StudentPasswordChange(BaseModel):
+    old_password: str
+    new_password: str = Field(max_length=64)
+
+
+class StudentExamOut(BaseModel):
+    """学生平台考试列表里的一场考试。没有 token 以外的任何答案线索。"""
+
+    id: int
+    title: str
+    token: str
+    total: int = 0
+    submitted: bool = False
+    score: int | None = None          # 没交或老师关了看分数就是 None
+    show_score: bool = True
+    allow_retake: bool = False
+    submitted_at: datetime | None = None
+    created_at: datetime | None = None
+
+
+class StudentHomeOut(BaseModel):
+    """学生首页要的一小把数字，省得前端串好几个接口。"""
+
+    student: StudentOut
+    exam_total: int = 0
+    exam_done: int = 0
+    typing_count: int = 0
+    typing_best_speed: int = 0
+    typing_avg_accuracy: int = 0
+
+
 # ---------- 题目 ----------
 class OptionIn(BaseModel):
     label: str
@@ -193,6 +270,8 @@ class PaperOut(ORMModel):
 class ExamCreate(BaseModel):
     paper_id: int
     title: str | None = None              # 不填就用试卷标题
+    # 逗号分隔的班级名，留空 = 所有班都能在学生平台看到
+    target_classes: str = Field(default="", max_length=255)
     is_open: bool = Field(default_factory=lambda: site.exam.defaults.is_open)
     allow_retake: bool = Field(default_factory=lambda: site.exam.defaults.allow_retake)
     show_score: bool = Field(default_factory=lambda: site.exam.defaults.show_score)
@@ -201,6 +280,7 @@ class ExamCreate(BaseModel):
 
 class ExamUpdate(BaseModel):
     title: str | None = None
+    target_classes: str | None = Field(default=None, max_length=255)
     is_open: bool | None = None
     allow_retake: bool | None = None
     show_score: bool | None = None
@@ -216,6 +296,7 @@ class ExamOut(ORMModel):
     allow_retake: bool
     show_score: bool
     show_answer: bool
+    target_classes: str = ""
     created_at: datetime | None = None
     submission_count: int = 0
     avg_score: float | None = None

@@ -34,6 +34,31 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class Student(Base):
+    """学生账号。
+
+    和教师账号（users）**刻意分成两张表**：两边字段不一样，权限也完全不同。
+    合在一张表里靠 role 区分的话，任何一处忘了判角色，学生就能调到教师接口 ——
+    分表之后这种错误在类型层面就发生不了。
+    令牌里也带了身份类型（见 security.create_access_token），学生的令牌
+    过不了教师接口的鉴权。
+
+    登录用学号，不是用户名 —— 学号本来就是学校里的唯一标识，学生记得住。
+    """
+
+    __tablename__ = "students"
+    __table_args__ = (Index("ix_students_class_no", "student_class", "student_no"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    student_no: Mapped[str] = mapped_column(String(32), unique=True, index=True)  # 学号，登录用
+    name: Mapped[str] = mapped_column(String(64), index=True)
+    student_class: Mapped[str] = mapped_column(String(64), index=True, default="")
+    password_hash: Mapped[str] = mapped_column(String(128))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class DictItem(Base):
     """枚举配置表：知识范围、题型都放这里，加一类不用改代码。"""
 
@@ -139,6 +164,9 @@ class Exam(Base):
     allow_retake: Mapped[bool] = mapped_column(Boolean, default=False)  # 同一学号能否重考
     show_score: Mapped[bool] = mapped_column(Boolean, default=True)  # 交卷后给不给学生看分数
     show_answer: Mapped[bool] = mapped_column(Boolean, default=False)  # 交卷后给不给看对错和答案
+    # 哪些班能在学生平台上看到这场考试，逗号分隔；留空表示所有班都能看。
+    # 只影响学生平台的列表，凭链接直接答题的老路子不受它限制。
+    target_classes: Mapped[str] = mapped_column(String(255), default="")
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -155,6 +183,10 @@ class ExamSubmission(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     exam_id: Mapped[int] = mapped_column(ForeignKey("exams.id", ondelete="CASCADE"), index=True)
+    # 学生平台上交的卷子会记到账号上；凭链接匿名交的仍然是 None，两条路都保留
+    student_id: Mapped[int | None] = mapped_column(
+        ForeignKey("students.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     student_name: Mapped[str] = mapped_column(String(64), default="")
     student_class: Mapped[str] = mapped_column(String(64), default="")
     student_no: Mapped[str] = mapped_column(String(64), default="", index=True)
@@ -169,12 +201,20 @@ class ExamSubmission(Base):
 
 
 class TypingRecord(Base):
-    """一次打字练习的成绩。学生免登录提交，只填班级姓名。"""
+    """一次打字练习的成绩。
+
+    两条来路：学生平台上练完自动记到账号（student_id 有值），
+    或者从公开的 /dazi 页面免登录练完手填班级姓名（student_id 为空）。
+    班级姓名两边都存一份，这样导表和统计不用关心是哪条路来的。
+    """
 
     __tablename__ = "typing_records"
     __table_args__ = (Index("ix_typing_cls_name", "student_class", "student_name"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    student_id: Mapped[int | None] = mapped_column(
+        ForeignKey("students.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     student_name: Mapped[str] = mapped_column(String(64), index=True)
     student_class: Mapped[str] = mapped_column(String(64), index=True)
     module: Mapped[str] = mapped_column(String(16), index=True)  # 键盘 / 英文 / 中文

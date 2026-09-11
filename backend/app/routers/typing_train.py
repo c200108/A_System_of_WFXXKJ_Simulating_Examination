@@ -19,8 +19,8 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps import get_current_user
-from ..models import TypingRecord, TypingText, User
+from ..deps import get_current_user, get_optional_student
+from ..models import Student, TypingRecord, TypingText, User
 from ..schemas import (
     TypingConfigOut,
     TypingTextBulkIn,
@@ -91,8 +91,16 @@ def get_passage(
 
 
 @router.post("/records", response_model=TypingResultOut, summary="学生交成绩（公开）")
-def submit_record(body: TypingRecordIn, db: Session = Depends(get_db)):
+def submit_record(
+    body: TypingRecordIn,
+    me: Student | None = Depends(get_optional_student),
+    db: Session = Depends(get_db),
+):
     _enabled()
+    # 学生平台上带着令牌来的，班级姓名一律以账号为准，前端填什么都不算数，
+    # 免得改个输入框就把成绩记到别人头上。公开页面来的还是手填。
+    if me:
+        body.student_name, body.student_class = me.name, me.student_class
     if not body.student_name.strip() or not body.student_class.strip():
         raise HTTPException(status_code=400, detail="请填写班级和姓名")
     if body.module not in MODULES:
@@ -108,6 +116,7 @@ def submit_record(body: TypingRecordIn, db: Session = Depends(get_db)):
     stars = _stars(accuracy, speed, body.difficulty)
 
     rec = TypingRecord(
+        student_id=me.id if me else None,
         student_name=body.student_name.strip()[:64],
         student_class=body.student_class.strip()[:64],
         module=body.module,

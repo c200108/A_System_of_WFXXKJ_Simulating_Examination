@@ -17,11 +17,18 @@ def verify_password(raw: str, hashed: str) -> bool:
         return False
 
 
-def create_access_token(user_id: int, role: str) -> str:
+# 令牌里的身份类型。教师和学生是两张表，同一个 id 在两边指的是不同的人，
+# 所以令牌必须说清楚"这个 id 该去哪张表查"，否则学生令牌会被当成教师令牌。
+TOKEN_TEACHER = "t"
+TOKEN_STUDENT = "s"
+
+
+def create_access_token(user_id: int, role: str, typ: str = TOKEN_TEACHER) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
         "role": role,
+        "typ": typ,
         "iat": now,
         "exp": now + timedelta(minutes=settings.jwt_expire_minutes),
     }
