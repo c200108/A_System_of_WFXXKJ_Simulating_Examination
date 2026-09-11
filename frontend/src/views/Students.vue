@@ -7,31 +7,35 @@
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { api } from '../api'
+import { api, download } from '../api'
 
 const rows = ref([])
 const classes = ref([])
 const loading = ref(false)
 const picked = ref([])
 
-const query = reactive({ student_class: '', keyword: '' })
+const query = reactive({ class_id: null, keyword: '' })
 
 const dialog = ref(false)
 const editing = ref(null)
-const form = reactive({ student_no: '', name: '', student_class: '', password: '' })
+const form = reactive({ student_no: '', name: '', class_id: null, password: '' })
 
 const batchDlg = ref(false)
-const batch = reactive({ student_class: '', text: '' })
+const batch = reactive({ class_id: null, text: '' })
 const batching = ref(false)
+
+const importDlg = ref(false)
+const imp = reactive({ class_id: null })
+const importing = ref(false)
 
 async function load() {
   loading.value = true
   try {
     const params = {}
-    if (query.student_class) params.student_class = query.student_class
+    if (query.class_id) params.class_id = query.class_id
     if (query.keyword.trim()) params.keyword = query.keyword.trim()
     rows.value = await api.students(params)
-    classes.value = await api.studentClasses()
+    classes.value = await api.classes()
   } finally {
     loading.value = false
   }
@@ -46,7 +50,7 @@ function openCreate() {
   Object.assign(form, {
     student_no: '',
     name: '',
-    student_class: query.student_class || '',
+    class_id: query.class_id || null,
     password: ''
   })
   dialog.value = true
@@ -57,7 +61,7 @@ function openEdit(row) {
   Object.assign(form, {
     student_no: row.student_no,
     name: row.name,
-    student_class: row.student_class,
+    class_id: row.class_id,
     password: ''
   })
   dialog.value = true
@@ -65,7 +69,7 @@ function openEdit(row) {
 
 async function save() {
   if (editing.value) {
-    const data = { name: form.name, student_class: form.student_class }
+    const data = { name: form.name, class_id: form.class_id }
     if (form.password) data.password = form.password
     await api.studentUpdate(editing.value.id, data)
   } else {
@@ -101,6 +105,48 @@ async function doBatch() {
     )
   } finally {
     batching.value = false
+  }
+}
+
+// ---------- Excel / CSV 导入导出 ----------
+const className = id => classes.value.find(c => c.id === id)?.display || '全部'
+
+async function downloadTemplate() {
+  await download(api.studentTemplate(), '学生导入模板.xlsx')
+  ElMessage.success('模板已下载，两列：学号、姓名')
+}
+
+async function exportList() {
+  const params = {}
+  if (query.class_id) params.class_id = query.class_id
+  if (query.keyword.trim()) params.keyword = query.keyword.trim()
+  await download(api.studentExport(params), `学生名单_${className(query.class_id)}.xlsx`)
+  ElMessage.success('已导出当前筛选结果')
+}
+
+async function doImport(opt) {
+  importing.value = true
+  try {
+    const res = await api.studentImport(opt.file, imp.class_id)
+    importDlg.value = false
+    await load()
+
+    const lines = [
+      `新建 ${res.added} 个账号`,
+      res.skipped ? `${res.skipped} 个学号已存在，跳过` : '',
+      res.error_count ? `${res.error_count} 行没导进来` : ''
+    ].filter(Boolean)
+
+    await ElMessageBox.alert(
+      lines.join('，') +
+        (res.student_class ? `，都归到「${res.student_class}」。` : '。') +
+        '\n\n初始密码就是学号，请提醒学生登录后到「首页」改密码。' +
+        (res.errors?.length ? '\n\n有问题的行：\n' + res.errors.join('\n') : ''),
+      '导入完成',
+      { confirmButtonText: '知道了' }
+    )
+  } finally {
+    importing.value = false
   }
 }
 
@@ -160,7 +206,10 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
       <div class="head">
         <span>学生账号</span>
         <div>
-          <el-button size="small" @click="batchDlg = true">按班级批量建号</el-button>
+          <el-button size="small" @click="downloadTemplate">下载模板</el-button>
+          <el-button size="small" @click="importDlg = true">导入 Excel/CSV</el-button>
+          <el-button size="small" @click="exportList">导出名单</el-button>
+          <el-button size="small" @click="batchDlg = true">粘贴名单</el-button>
           <el-button size="small" type="primary" @click="openCreate">添加一个</el-button>
         </div>
       </div>
@@ -169,11 +218,12 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
     <el-alert type="info" :closable="false" class="hint">
       学生用<b>学号</b>登录学生平台（网站首页），初始密码就是学号。
       系统里没有邮箱，学生忘了密码只能由老师重置。
+      班级要先在「班级」页面建好，这里从下拉里选。
     </el-alert>
 
     <div class="bar">
-      <el-select v-model="query.student_class" placeholder="全部班级" clearable style="width: 160px" @change="load">
-        <el-option v-for="c in classes" :key="c" :label="c" :value="c" />
+      <el-select v-model="query.class_id" placeholder="全部班级" clearable style="width: 170px" @change="load">
+        <el-option v-for="c in classes" :key="c.id" :label="c.display" :value="c.id" />
       </el-select>
       <el-input
         v-model="query.keyword"
@@ -249,7 +299,9 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
         <el-input v-model="form.name" placeholder="学生姓名" />
       </el-form-item>
       <el-form-item label="班级">
-        <el-input v-model="form.student_class" placeholder="如 七(3)班" />
+        <el-select v-model="form.class_id" placeholder="选择班级" clearable style="width: 100%">
+          <el-option v-for="c in classes" :key="c.id" :label="c.display" :value="c.id" />
+        </el-select>
       </el-form-item>
       <el-form-item :label="editing ? '重置密码' : '初始密码'">
         <el-input v-model="form.password" :placeholder="editing ? '留空则不改密码' : '留空则用学号当密码'" />
@@ -261,11 +313,39 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
     </template>
   </el-dialog>
 
-  <!-- 批量建号 -->
-  <el-dialog v-model="batchDlg" title="按班级批量建号" width="560px">
+  <!-- Excel / CSV 导入 -->
+  <el-dialog v-model="importDlg" title="从 Excel / CSV 导入学生" width="540px">
+    <el-form label-width="80px">
+      <el-form-item label="导入到">
+        <el-select v-model="imp.class_id" placeholder="选择班级（留空则不分班）" clearable style="width: 260px">
+          <el-option v-for="c in classes" :key="c.id" :label="c.display" :value="c.id" />
+        </el-select>
+      </el-form-item>
+    </el-form>
+
+    <div class="tip">
+      表格<b>两列：学号、姓名</b>，第一行写表头会自动跳过。班级在上面统一选，表里不用写。<br />
+      支持 <b>.xlsx</b> 和 <b>.csv</b>（UTF-8 或 GBK 编码都认）。<br />
+      已存在的学号会跳过，不会覆盖原有账号。<b>初始密码就是学号</b>。
+      <el-button link type="primary" size="small" @click="downloadTemplate">下载空白模板</el-button>
+    </div>
+
+    <el-upload drag :http-request="doImport" :show-file-list="false" accept=".xlsx,.csv" :disabled="importing">
+      <div class="up">
+        <div class="upicon">📊</div>
+        <div>把 Excel 或 CSV 拖到这里，或点击选择</div>
+        <div class="uphint">单个文件不超过 5 MB</div>
+      </div>
+    </el-upload>
+  </el-dialog>
+
+  <!-- 粘贴名单 -->
+  <el-dialog v-model="batchDlg" title="粘贴名单批量建号" width="560px">
     <el-form label-width="80px">
       <el-form-item label="班级">
-        <el-input v-model="batch.student_class" placeholder="如 七(3)班，这一批都归到这个班" style="width: 240px" />
+        <el-select v-model="batch.class_id" placeholder="选择班级（留空则不分班）" clearable style="width: 260px">
+          <el-option v-for="c in classes" :key="c.id" :label="c.display" :value="c.id" />
+        </el-select>
       </el-form-item>
     </el-form>
 
@@ -361,6 +441,18 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
   border-radius: 8px;
   padding: 10px 14px;
   margin-bottom: 12px;
+}
+.up {
+  padding: 24px 0;
+}
+.upicon {
+  font-size: 32px;
+  margin-bottom: 8px;
+}
+.uphint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-top: 6px;
 }
 .mono :deep(textarea) {
   font-family: ui-monospace, Consolas, monospace;

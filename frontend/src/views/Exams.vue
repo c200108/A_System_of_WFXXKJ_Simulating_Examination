@@ -13,10 +13,14 @@ const exams = ref([])
 const papers = ref([])
 const loading = ref(false)
 
+// 能发给哪些班：老师只列自己名下的，管理员列全校
+const myClasses = ref([])
+
 const publishDlg = ref(false)
 const form = reactive({
   paper_id: null,
   title: '',
+  target_class_ids: [],
   is_open: siteConfig.exam.defaults.is_open,
   allow_retake: siteConfig.exam.defaults.allow_retake,
   show_score: siteConfig.exam.defaults.show_score,
@@ -38,6 +42,8 @@ async function load() {
   try {
     exams.value = await api.exams()
     papers.value = await api.papers()
+    // 老师只能发给自己的班，所以下拉里只列自己的；管理员列全校
+    myClasses.value = await api.classes(isAdmin.value ? {} : { mine: true })
   } finally {
     loading.value = false
   }
@@ -55,6 +61,7 @@ function openPublish() {
   Object.assign(form, {
     paper_id: papers.value[0].id,
     title: '',
+    target_class_ids: [],
     is_open: siteConfig.exam.defaults.is_open,
     allow_retake: siteConfig.exam.defaults.allow_retake,
     show_score: siteConfig.exam.defaults.show_score,
@@ -274,6 +281,23 @@ const hardest = computed(() => {
       </el-form-item>
       <el-form-item label="考试名称">
         <el-input v-model="form.title" placeholder="留空就用试卷标题" />
+      </el-form-item>
+      <el-form-item label="发给哪些班">
+        <el-select
+          v-model="form.target_class_ids"
+          multiple
+          collapse-tags
+          collapse-tags-tooltip
+          :placeholder="isAdmin ? '不选 = 全体学生' : '不选 = 我带的全部班'"
+          style="width: 100%"
+        >
+          <el-option v-for="c in myClasses" :key="c.id" :label="c.display" :value="c.id" />
+        </el-select>
+        <span class="fh">
+          <template v-if="isAdmin">不选就是<b>全体学生</b>；选了就只发给这几个班。</template>
+          <template v-else>只能选自己带的班。不选就是<b>我带的全部班</b>。</template>
+          学生在平台上只看得到发给自己班的考试；<b>凭链接答题不受影响</b>。
+        </span>
       </el-form-item>
       <el-form-item label="立即开放">
         <el-switch v-model="form.is_open" />

@@ -38,6 +38,7 @@ const teacherRoutes = {
     { path: 'import', component: () => import('./views/Import.vue'), meta: { title: '导入' } },
     { path: 'exams', component: () => import('./views/Exams.vue'), meta: { title: '考试' } },
     { path: 'students', component: () => import('./views/Students.vue'), meta: { title: '学生' } },
+    { path: 'classes', component: () => import('./views/Classes.vue'), meta: { title: '班级' } },
     { path: 'typing', component: () => import('./views/TypingAdmin.vue'), meta: { title: '打字' } },
     {
       path: 'typing-texts',

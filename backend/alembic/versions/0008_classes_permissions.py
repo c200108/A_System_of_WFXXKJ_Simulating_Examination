@@ -19,24 +19,56 @@ down_revision = "0007"
 branch_labels = None
 depends_on = None
 
-# 从"七年级1班""七(3)班""8年级二班"里把年级和班号拆出来
-GRADE_RE = re.compile(r"^\s*([一二三四五六七八九十\d]+\s*年级|[一二三四五六七八九十\d]+)\s*(.*)$")
+# 学校里班级名的写法五花八门：七年级1班 / 七(3)班 / 七3班 / 初一2班 / 八年级二班。
+# 下面按"年级标志"来判，不靠"开头是不是数字"——"三班"是班名不是三年级。
+
+# 明确写了年级的：xx年级
+_WITH_GRADE = re.compile(r"^\s*(?P<grade>.{1,4}?年级)\s*(?P<rest>.*)$")
+# 初一/初二/初三、高一/高二/高三 这种写法
+_JUNIOR = re.compile(r"^\s*(?P<grade>[初高][一二三])\s*(?P<rest>.*)$")
+# 简写：七3班 / 七(3)班 —— 单个年级字 + 班号。
+# 班号必须带「班」字或者括号，不然纯数字串 "123" 会被拆成「1年级23班」。
+_NUM = r"[0-9]{1,2}|[一二三四五六七八九十]{1,3}"
+_SHORT = re.compile(
+    r"^\s*(?P<grade>[一二三四五六七八九1-9])\s*"
+    rf"(?:[(（]\s*(?P<paren>{_NUM})\s*[)）]\s*班?"   # 七(3)班、七(3)
+    rf"|(?P<plain>{_NUM})\s*班)\s*$"                 # 七3班
+)
+
+
+def _clean_class(rest: str) -> str:
+    """把班号部分收拾干净：去掉括号，补上「班」字。"""
+    name = re.sub(r"[(（)）\[\]【】\s]", "", rest or "").strip()
+    if not name:
+        return ""
+    if not name.endswith("班"):
+        name += "班"
+    return name[:32]
 
 
 def _split(display: str) -> tuple[str, str]:
-    """把班级全名拆成（年级, 班名）。拆不动就整个当班名，年级留空。"""
+    """把班级全名拆成（年级, 班名）。
+
+    拆不出年级就整个当班名、年级留空 —— 宁可少猜，也不要把"三班"
+    变成"三年级"，那会把一个班凭空拆成年级下面的一个空班。
+    """
     text = (display or "").strip()
     if not text:
         return "", ""
-    m = GRADE_RE.match(text)
-    if not m:
-        return "", text[:32]
-    grade, rest = m.group(1).strip(), m.group(2).strip()
-    if not grade.endswith("年级"):
-        grade += "年级"
-    # 去掉包在外面的括号：七(3)班 → 3班
-    rest = rest.strip("()（）").strip() or "未命名"
-    return grade[:16], rest[:32]
+
+    for pattern in (_WITH_GRADE, _JUNIOR):
+        m = pattern.match(text)
+        if m:
+            name = _clean_class(m.group("rest")) or "未命名班"
+            return m.group("grade").strip()[:16], name
+
+    m = _SHORT.match(text)
+    if m:
+        num = m.group("paren") or m.group("plain")
+        return f"{m.group('grade')}年级"[:16], _clean_class(num)
+
+    # 认不出年级：整串当班名。管理员在界面上一眼就能看出来，改一下即可。
+    return "", text[:32]
 
 
 def upgrade() -> None:

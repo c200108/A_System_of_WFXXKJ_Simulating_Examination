@@ -150,6 +150,14 @@ export const api = {
   bulkUsers: (ids, action) => http.post('/auth/users/bulk', { ids, action }),
   updateUser: (id, data) => http.patch(`/auth/users/${id}`, data),
 
+  // 班级：老师能看列表（发考试要选班），增删改要管理员
+  classes: params => http.get('/classes', { params }),
+  classGrades: () => http.get('/classes/grades'),
+  classCreate: data => http.post('/classes', data),
+  classBatch: data => http.post('/classes/batch', data),
+  classUpdate: (id, data) => http.patch(`/classes/${id}`, data),
+  classDelete: (id, force) => http.delete(`/classes/${id}`, { params: { force } }),
+
   dicts: category => http.get('/dicts', { params: { category } }),
   addDict: data => http.post('/dicts', data),
 
@@ -249,6 +257,14 @@ export const api = {
   studentBatch: data => http.post('/students/batch', data),
   studentUpdate: (id, data) => http.patch(`/students/${id}`, data),
   studentBulk: (ids, action) => http.post('/students/bulk', { ids, action }),
+  studentTemplate: () => http.get('/students/template.xlsx', { responseType: 'blob' }),
+  studentExport: params =>
+    http.get('/students/export.xlsx', { params, responseType: 'blob' }),
+  studentImport(file, class_id) {
+    const fd = new FormData()
+    fd.append('file', file)
+    return http.post('/students/import', fd, { params: { class_id } })
+  },
 
   // 凭链接答题（不需要登录）
   takePaper: token => http.get(`/take/${token}`),
