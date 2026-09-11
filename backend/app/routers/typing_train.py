@@ -19,7 +19,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps import get_current_user, get_optional_student
+from ..deps import get_current_user, get_optional_student, require_delete_permission
 from ..models import Student, TypingRecord, TypingText, User
 from ..schemas import (
     TypingConfigOut,
@@ -265,9 +265,11 @@ def export_xlsx(_: User = Depends(get_current_user), db: Session = Depends(get_d
     )
 
 
-@router.delete("/records/{record_id}", summary="删除一条成绩")
+@router.delete("/records/{record_id}", summary="删除一条成绩（需要删除权）")
 def delete_record(
-    record_id: int, _: User = Depends(get_current_user), db: Session = Depends(get_db)
+    record_id: int,
+    _: User = Depends(require_delete_permission),
+    db: Session = Depends(get_db),
 ):
     rec = db.get(TypingRecord, record_id)
     if not rec:
@@ -277,10 +279,10 @@ def delete_record(
     return {"ok": True}
 
 
-@router.delete("/records", summary="清空成绩（可按班级）")
+@router.delete("/records", summary="清空成绩（需要删除权）")
 def clear_records(
     student_class: str | None = None,
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_delete_permission),
     db: Session = Depends(get_db),
 ):
     stmt = delete(TypingRecord)
@@ -386,7 +388,7 @@ def update_text(
 
 @router.delete("/texts/{text_id}", summary="删一段文本")
 def delete_text(
-    text_id: int, _: User = Depends(get_current_user), db: Session = Depends(get_db)
+    text_id: int, _: User = Depends(require_delete_permission), db: Session = Depends(get_db)
 ):
     row = db.get(TypingText, text_id)
     if not row:
@@ -399,7 +401,7 @@ def delete_text(
 @router.post("/texts/bulk", summary="批量操作选中的文本（删除／启用／停用）")
 def bulk_texts(
     body: TypingTextBulkIn,
-    _: User = Depends(get_current_user),
+    me: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """界面上勾一批再一次性处理，省得一条条点。
@@ -412,6 +414,15 @@ def bulk_texts(
         raise HTTPException(status_code=400, detail="没有选中任何文本")
     if len(ids) > 2000:
         raise HTTPException(status_code=400, detail="一次最多处理 2000 段")
+
+    # 启停谁都能做，删除要权限 —— 在这里判而不是挂依赖，
+    # 因为同一个接口三种动作，权限要求不一样
+    if body.action == "delete" and me.role != "admin" and not me.can_delete:
+        raise HTTPException(
+            status_code=403,
+            detail="你还没有删除权限。练习文本是全校共用的，"
+            "需要请管理员在「账号」页面给你开通「删除权」后再操作。",
+        )
 
     rows = db.scalars(select(TypingText).where(TypingText.id.in_(ids))).all()
     if body.action == "delete":

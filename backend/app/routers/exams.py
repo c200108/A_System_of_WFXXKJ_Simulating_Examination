@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..deps import get_current_user
-from ..models import Exam, ExamSubmission, Paper, User
+from ..models import Exam, ExamSubmission, Paper, SchoolClass, User
+from ..routers.classes import owned_class_ids
 from ..schemas import ExamCreate, ExamOut, ExamUpdate, SubmissionOut
 from ..services.exam import group_items, load_items, new_token, question_stats
 
@@ -26,12 +27,59 @@ router = APIRouter(prefix="/api/exams", tags=["考试"])
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
-def _to_out(exam: Exam) -> ExamOut:
+def _to_out(exam: Exam, db: Session | None = None) -> ExamOut:
     item = ExamOut.model_validate(exam)
     subs = exam.submissions
     item.submission_count = len(subs)
     item.avg_score = round(sum(s.score for s in subs) / len(subs), 1) if subs else None
+
+    # 存的是班级名（历史数据不受改名影响），界面上要回填下拉得换成 id
+    names = [c.strip() for c in (exam.target_classes or "").split(",") if c.strip()]
+    if names and db is not None:
+        rows = db.scalars(select(SchoolClass)).all()
+        by_name = {c.display: c.id for c in rows}
+        item.target_class_ids = [by_name[n] for n in names if n in by_name]
     return item
+
+
+def _resolve_targets(db: Session, user: User, class_ids: list[int]) -> str:
+    """把要发的班算成一串班级名存起来。
+
+    规则：
+    - 管理员不选班 = 发给全体学生（存空串）；
+    - 老师不选班 = 发给自己名下的全部班；
+    - 老师选了班，必须都是自己名下的，选到别人的班直接拒绝。
+
+    存班级名而不是 id，是为了让历史考试不受班级改名／删班的影响 ——
+    这一点和成绩单里冗余存班级名是同一个道理。
+    """
+    owned = owned_class_ids(db, user)
+
+    if user.role != "admin":
+        if not owned:
+            raise HTTPException(
+                status_code=400,
+                detail="你名下还没有班级，没法发考试。请管理员在「班级」页面把班分给你。",
+            )
+        wanted = set(class_ids) if class_ids else set(owned)
+        outside = wanted - owned
+        if outside:
+            rows = db.scalars(select(SchoolClass).where(SchoolClass.id.in_(outside))).all()
+            names = "、".join(c.display for c in rows) or "某些班"
+            raise HTTPException(
+                status_code=403, detail=f"「{names}」不是你带的班，只能给自己的班发考试"
+            )
+    else:
+        if not class_ids:
+            return ""  # 管理员不选 = 全体学生
+        wanted = set(class_ids)
+
+    rows = db.scalars(
+        select(SchoolClass).where(SchoolClass.id.in_(wanted))
+    ).all()
+    if not rows:
+        raise HTTPException(status_code=400, detail="选中的班级都不存在了，刷新看看")
+    return ",".join(sorted(c.display for c in rows))
 
 
 def _visible(stmt, user: User):
@@ -64,13 +112,13 @@ def create_exam(
         allow_retake=body.allow_retake,
         show_score=body.show_score,
         show_answer=body.show_answer,
-        target_classes=body.target_classes.strip(),
+        target_classes=_resolve_targets(db, user, body.target_class_ids),
         created_by=user.id,
     )
     db.add(exam)
     db.commit()
     db.refresh(exam)
-    return _to_out(exam)
+    return _to_out(exam, db)
 
 
 @router.get("", response_model=list[ExamOut], summary="考试列表")
@@ -89,7 +137,7 @@ def list_exams(user: User = Depends(get_current_user), db: Session = Depends(get
 
     out = []
     for e in rows:
-        item = _to_out(e)
+        item = _to_out(e, db)
         if user.role == "admin":
             item.owner_name = names.get(e.created_by or 0, "未知")
         out.append(item)
@@ -98,7 +146,7 @@ def list_exams(user: User = Depends(get_current_user), db: Session = Depends(get
 
 @router.get("/{exam_id}", response_model=ExamOut, summary="考试详情")
 def get_exam(exam_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return _to_out(_get(db, exam_id, user))
+    return _to_out(_get(db, exam_id, user), db)
 
 
 @router.patch("/{exam_id}", response_model=ExamOut, summary="改考试设置（开关、是否给学生看分数等）")
@@ -109,11 +157,17 @@ def update_exam(
     db: Session = Depends(get_db),
 ):
     exam = _get(db, exam_id, user)
-    for k, v in body.model_dump(exclude_unset=True).items():
+    data = body.model_dump(exclude_unset=True)
+
+    # 改发放范围要重新走一遍归属校验，别让人绕过创建时的限制
+    if "target_class_ids" in data:
+        exam.target_classes = _resolve_targets(db, user, data.pop("target_class_ids") or [])
+
+    for k, v in data.items():
         setattr(exam, k, v)
     db.commit()
     db.refresh(exam)
-    return _to_out(exam)
+    return _to_out(exam, db)
 
 
 @router.delete("/{exam_id}", summary="删除考试（连同答卷）")

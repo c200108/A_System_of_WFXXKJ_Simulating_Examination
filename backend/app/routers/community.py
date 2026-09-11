@@ -14,7 +14,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps import get_current_user, get_optional_user, require_admin
+from ..deps import (
+    get_current_user,
+    get_optional_user,
+    require_admin,
+    require_delete_permission,
+)
 from ..models import ChangelogEntry, Feedback, FeedbackLike, FeedbackReply, User
 from ..schemas import (
     ChangelogEntryIn,
@@ -287,9 +292,9 @@ def create_entry(
     return row
 
 
-@router.delete("/changelog/{eid}", summary="删除一条日志（教师）")
+@router.delete("/changelog/{eid}", summary="删除一条日志（需要删除权）")
 def delete_entry(
-    eid: int, _: User = Depends(get_current_user), db: Session = Depends(get_db)
+    eid: int, _: User = Depends(require_delete_permission), db: Session = Depends(get_db)
 ):
     row = db.get(ChangelogEntry, eid)
     if not row:

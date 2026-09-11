@@ -13,6 +13,7 @@ from ..models import (
     ImportLog,
     Paper,
     Question,
+    SchoolClass,
     TypingText,
     User,
 )
@@ -28,6 +29,15 @@ from ..schemas import (
 from ..security import create_access_token, hash_password, verify_password
 
 router = APIRouter(prefix="/api/auth", tags=["认证"])
+
+
+def _user_out(user: User) -> UserOut:
+    """出参里带上名下的班，前端一次就能把「这位老师带哪几个班」显示出来。"""
+    item = UserOut.model_validate(user)
+    item.class_ids = [c.id for c in user.classes]
+    item.class_names = [c.display for c in user.classes]
+    return item
+
 
 # 用户名只允许字母、数字、下划线、点、减号，且必须字母或数字开头。
 # 限制这一圈是为了避免空格、中文、引号进到登录框里，出问题时不好排查。
@@ -101,13 +111,13 @@ def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get
         raise HTTPException(status_code=403, detail="账号已停用，请联系管理员")
     return TokenOut(
         access_token=create_access_token(user.id, user.role),
-        user=UserOut.model_validate(user),
+        user=_user_out(user),
     )
 
 
 @router.get("/me", response_model=UserOut, summary="当前登录人")
 def me(user: User = Depends(get_current_user)):
-    return user
+    return _user_out(user)
 
 
 @router.patch("/me", response_model=UserOut, summary="改自己的资料（姓名、任教年级班级、联系方式）")
@@ -122,7 +132,7 @@ def update_me(
         setattr(user, k, (v or "").strip())
     db.commit()
     db.refresh(user)
-    return user
+    return _user_out(user)
 
 
 @router.post("/password", summary="修改自己的密码")
@@ -143,7 +153,7 @@ def change_password(
 
 @router.get("/users", response_model=list[UserOut], summary="教师列表（管理员）")
 def list_users(_: User = Depends(require_admin), db: Session = Depends(get_db)):
-    return list(db.scalars(select(User).order_by(User.id)))
+    return [_user_out(u) for u in db.scalars(select(User).order_by(User.id))]
 
 
 @router.post("/users", response_model=UserOut, summary="新增教师（管理员）")
@@ -170,7 +180,7 @@ def create_user(
     db.add(user)
     db.commit()
     db.refresh(user)
-    return user
+    return _user_out(user)
 
 
 @router.patch("/users/{user_id}", response_model=UserOut, summary="改教师资料或重置密码（管理员）")
@@ -200,12 +210,27 @@ def update_user(
     if data.pop("password", None):
         user.password_hash = hash_password(check_password(body.password))
 
+    # 班级分配是「整体替换」：传来的这批归他，原来有、这批没有的解绑。
+    # 一位老师带哪几个班是个集合，增量改法在界面上很难表达清楚。
+    if "class_ids" in data:
+        wanted = set(data.pop("class_ids") or [])
+        for c in db.scalars(select(SchoolClass).where(SchoolClass.owner_id == user.id)):
+            if c.id not in wanted:
+                c.owner_id = None
+        if wanted:
+            rows = list(db.scalars(select(SchoolClass).where(SchoolClass.id.in_(wanted))))
+            missing = wanted - {c.id for c in rows}
+            if missing:
+                raise HTTPException(status_code=404, detail="有班级不存在，刷新页面重试")
+            for c in rows:
+                c.owner_id = user.id
+
     for k, v in data.items():
         setattr(user, k, v)
 
     db.commit()
     db.refresh(user)
-    return user
+    return _user_out(user)
 
 
 @router.delete("/users/{user_id}", summary="停用教师（管理员）")

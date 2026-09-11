@@ -19,6 +19,9 @@ class UserOut(ORMModel):
     grade_class: str = ""
     contact: str = ""
     is_active: bool
+    can_delete: bool = False           # 能否删除题库等公共资源
+    class_ids: list[int] = []          # 名下的班，管理员分配
+    class_names: list[str] = []
     created_at: datetime | None = None
 
 
@@ -47,6 +50,9 @@ class UserUpdate(BaseModel):
     is_active: bool | None = None
     grade_class: str | None = Field(default=None, max_length=128)
     contact: str | None = Field(default=None, max_length=64)
+    can_delete: bool | None = None
+    # 传了就整体替换这位老师名下的班级；不传则不动
+    class_ids: list[int] | None = None
     password: str | None = Field(default=None, max_length=64)  # 长度在接口里用中文判
 
 
@@ -76,11 +82,48 @@ class TokenOut(BaseModel):
     user: UserOut
 
 
+# ---------- 班级 ----------
+class ClassOut(ORMModel):
+    id: int
+    grade: str
+    name: str
+    display: str = ""          # 「七年级1班」，界面和历史数据里用这个
+    owner_id: int | None = None
+    owner_name: str = ""
+    is_active: bool = True
+    student_count: int = 0
+
+
+class ClassIn(BaseModel):
+    grade: str = Field(max_length=16)
+    name: str = Field(max_length=32)
+    owner_id: int | None = None
+    sort_order: int = 0
+
+
+class ClassUpdate(BaseModel):
+    grade: str | None = Field(default=None, max_length=16)
+    name: str | None = Field(default=None, max_length=32)
+    owner_id: int | None = None
+    is_active: bool | None = None
+    sort_order: int | None = None
+
+
+class ClassBatchIn(BaseModel):
+    """按年级批量建班：七年级 1~12 班一次建完。"""
+
+    grade: str = Field(max_length=16)
+    start: int = Field(default=1, ge=1, le=99)
+    end: int = Field(default=12, ge=1, le=99)
+    suffix: str = Field(default="班", max_length=8)
+
+
 # ---------- 学生账号 ----------
 class StudentOut(ORMModel):
     id: int
     student_no: str
     name: str
+    class_id: int | None = None
     student_class: str = ""
     is_active: bool
     created_at: datetime | None = None
@@ -91,7 +134,7 @@ class StudentCreate(BaseModel):
 
     student_no: str = Field(max_length=32)
     name: str = Field(max_length=64)
-    student_class: str = Field(default="", max_length=64)
+    class_id: int | None = None  # 从下拉里选，不再手打班级名
     password: str = Field(default="", max_length=64)  # 留空则用学号当初始密码
 
 
@@ -99,7 +142,7 @@ class StudentUpdate(BaseModel):
     """老师改学生资料。学号不在里面 —— 学号是身份，要换只能删了重建。"""
 
     name: str | None = Field(default=None, max_length=64)
-    student_class: str | None = Field(default=None, max_length=64)
+    class_id: int | None = None
     is_active: bool | None = None
     password: str | None = Field(default=None, max_length=64)
 
@@ -112,7 +155,7 @@ class StudentBulkIn(BaseModel):
 class StudentBatchIn(BaseModel):
     """按班级粘一批学生进来，一行一个「学号 姓名」。"""
 
-    student_class: str = Field(default="", max_length=64)
+    class_id: int | None = None
     text: str = Field(max_length=100_000)
 
 
@@ -270,8 +313,9 @@ class PaperOut(ORMModel):
 class ExamCreate(BaseModel):
     paper_id: int
     title: str | None = None              # 不填就用试卷标题
-    # 逗号分隔的班级名，留空 = 所有班都能在学生平台看到
-    target_classes: str = Field(default="", max_length=255)
+    # 发给哪些班。老师只能填自己名下的班；留空时：
+    # 管理员 = 全体学生，老师 = 自己名下的全部班。
+    target_class_ids: list[int] = Field(default_factory=list)
     is_open: bool = Field(default_factory=lambda: site.exam.defaults.is_open)
     allow_retake: bool = Field(default_factory=lambda: site.exam.defaults.allow_retake)
     show_score: bool = Field(default_factory=lambda: site.exam.defaults.show_score)
@@ -280,7 +324,7 @@ class ExamCreate(BaseModel):
 
 class ExamUpdate(BaseModel):
     title: str | None = None
-    target_classes: str | None = Field(default=None, max_length=255)
+    target_class_ids: list[int] | None = None
     is_open: bool | None = None
     allow_retake: bool | None = None
     show_score: bool | None = None
@@ -296,7 +340,8 @@ class ExamOut(ORMModel):
     allow_retake: bool
     show_score: bool
     show_answer: bool
-    target_classes: str = ""
+    target_classes: str = ""       # 班级名，逗号分隔；空串表示全体学生
+    target_class_ids: list[int] = []
     created_at: datetime | None = None
     submission_count: int = 0
     avg_score: float | None = None

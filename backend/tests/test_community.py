@@ -136,6 +136,22 @@ def test_add_entry_needs_login(client):
     assert res.status_code == 401
 
 
+def test_plain_teacher_cannot_delete_entry(client, auth, teacher_auth):
+    """更新日志是公共内容，普通教师加得了、删不了。"""
+    eid = client.post(
+        "/api/changelog",
+        json={"version": "9.9.8", "change_type": "Fixed", "content": "普通教师建的条目"},
+        headers=teacher_auth,
+    ).json()["id"]
+
+    res = client.delete(f"/api/changelog/{eid}", headers=teacher_auth)
+    assert res.status_code == 403
+    assert "删除权" in res.json()["detail"]
+
+    # 管理员照样删得掉，收拾干净
+    assert client.delete(f"/api/changelog/{eid}", headers=auth).status_code == 200
+
+
 def test_teacher_adds_and_deletes_entry(client, auth):
     res = client.post(
         "/api/changelog",
