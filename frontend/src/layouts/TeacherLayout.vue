@@ -74,6 +74,7 @@ function onUserCommand(cmd) {
           <el-menu-item index="/js/import">导入</el-menu-item>
           <el-menu-item index="/js/exams">考试</el-menu-item>
           <el-menu-item index="/js/students">学生</el-menu-item>
+          <el-menu-item index="/js/classes">班级</el-menu-item>
           <el-menu-item index="/js/typing">打字</el-menu-item>
           <el-menu-item index="/js/typing-texts">练习文本</el-menu-item>
         </template>

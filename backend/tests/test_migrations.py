@@ -127,3 +127,40 @@ def test_downgrade_runs(blank_db):
 
     left = _tables(blank_db) - {"alembic_version"}
     assert not left, f"降级后还残留这些表：{left}"
+
+
+# ---------- 0008 把班级文字拆成年级 + 班名 ----------
+def _load_0008():
+    """迁移脚本不是包里的模块，按路径加载进来测它的解析函数。"""
+    import importlib.util
+
+    path = BACKEND_DIR / "alembic" / "versions" / "0008_classes_permissions.py"
+    spec = importlib.util.spec_from_file_location("mig0008", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.mark.parametrize(
+    "text, expect",
+    [
+        # 学校里实际会出现的几种写法
+        ("七年级1班", ("七年级", "1班")),
+        ("七年级12班", ("七年级", "12班")),
+        ("七(3)班", ("七年级", "3班")),
+        ("七（3）班", ("七年级", "3班")),   # 全角括号
+        ("七3班", ("七年级", "3班")),
+        ("7(3)班", ("7年级", "3班")),
+        ("八年级二班", ("八年级", "二班")),
+        ("初一3班", ("初一", "3班")),
+        ("初二(5)班", ("初二", "5班")),
+        ("高三1班", ("高三", "1班")),
+        # 拆不出年级的：整串当班名，别乱猜
+        ("三班", ("", "三班")),          # 这是班名，不是三年级
+        ("实验班", ("", "实验班")),
+        ("123", ("", "123")),           # 不能拆成「1年级23班」
+        ("", ("", "")),
+    ],
+)
+def test_class_name_split(text, expect):
+    assert _load_0008()._split(text) == expect

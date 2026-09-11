@@ -5,6 +5,7 @@ import { api } from '../api'
 import { currentUser, setUser } from '../auth'
 
 const users = ref([])
+const classes = ref([])
 const loading = ref(false)
 
 const dialog = ref(false)
@@ -19,6 +20,7 @@ async function load() {
   loading.value = true
   try {
     users.value = await api.listUsers()
+    classes.value = await api.classes({ include_inactive: true })
   } finally {
     loading.value = false
   }
@@ -111,6 +113,55 @@ async function changePassword() {
   ElMessage.success('密码已修改')
 }
 
+// ---------- 权限与班级 ----------
+async function toggleDelete(row) {
+  const to = !row.can_delete
+  if (to) {
+    await ElMessageBox.confirm(
+      `开通后「${row.name || row.username}」就能删除题库里的题目、练习文本、` +
+        '更新日志和打字成绩了。\n这些是全校共用的内容，删掉所有人都受影响。\n\n确定开通吗？',
+      '开通删除权',
+      { type: 'warning', confirmButtonText: '确定开通' }
+    )
+  }
+  await api.updateUser(row.id, { can_delete: to })
+  await load()
+  ElMessage.success(to ? '已开通删除权' : '已收回删除权')
+}
+
+const classDlg = ref(false)
+const classTarget = ref(null)
+const pickedClasses = ref([])
+
+function openClasses(row) {
+  classTarget.value = row
+  pickedClasses.value = [...(row.class_ids || [])]
+  classDlg.value = true
+}
+
+async function saveClasses() {
+  await api.updateUser(classTarget.value.id, { class_ids: pickedClasses.value })
+  classDlg.value = false
+  await load()
+  ElMessage.success('班级已更新')
+}
+
+/** 按年级分组，一屏看清 */
+const classGroups = computed(() => {
+  const map = new Map()
+  for (const c of classes.value) {
+    if (!map.has(c.grade)) map.set(c.grade, [])
+    map.get(c.grade).push(c)
+  }
+  return [...map.entries()].map(([grade, list]) => ({ grade, list }))
+})
+
+/** 这个班已经归别人了吗 */
+function takenBy(c) {
+  if (!c.owner_id || c.owner_id === classTarget.value?.id) return ''
+  return c.owner_name || '其他老师'
+}
+
 // ---------- 多选与批量操作 ----------
 const picked = ref([])
 
@@ -176,7 +227,8 @@ async function bulk(action) {
     </template>
 
     <el-alert type="info" :closable="false" class="hint">
-      系统里没有邮箱，老师忘记密码<b>只能由管理员重置</b>。重置后新密码只显示一次，请当场发给本人。
+      系统里没有邮箱，老师忘记密码<b>只能由管理员重置</b>。重置后新密码只显示一次，请当场发给本人。<br />
+      <b>带的班</b>决定这位老师能给谁发考试；<b>删除权</b>控制他能不能删题库、练习文本、更新日志这些全校共用的内容，默认关着。
     </el-alert>
 
     <!-- 勾选后浮出来的操作条，没勾就不占地方 -->
@@ -204,13 +256,25 @@ async function bulk(action) {
       </el-table-column>
       <el-table-column prop="username" label="用户名" width="130" show-overflow-tooltip />
       <el-table-column prop="name" label="姓名" width="130" show-overflow-tooltip />
-      <el-table-column prop="grade_class" label="任教年级班级" min-width="130" show-overflow-tooltip>
+      <el-table-column label="带的班" min-width="170">
         <template #default="{ row }">
-          <span v-if="row.grade_class">{{ row.grade_class }}</span>
-          <span v-else class="blank">未填</span>
+          <span v-if="row.class_names?.length" class="clslist">
+            <el-tag v-for="n in row.class_names" :key="n" size="small" effect="plain">{{ n }}</el-tag>
+          </span>
+          <span v-else class="blank">未分配</span>
+          <el-button link size="small" type="primary" class="editcls" @click="openClasses(row)">
+            分配
+          </el-button>
         </template>
       </el-table-column>
-      <el-table-column prop="contact" label="联系方式" width="130" show-overflow-tooltip>
+      <el-table-column label="删除权" width="88" align="center">
+        <template #default="{ row }">
+          <!-- 管理员天然有全部权限，这个开关对他没意义 -->
+          <el-tag v-if="row.role === 'admin'" size="small" type="danger" effect="plain">全部</el-tag>
+          <el-switch v-else :model-value="row.can_delete" @change="toggleDelete(row)" />
+        </template>
+      </el-table-column>
+      <el-table-column prop="contact" label="联系方式" width="120" show-overflow-tooltip>
         <template #default="{ row }">
           <span v-if="row.contact">{{ row.contact }}</span>
           <span v-else class="blank">未填</span>
@@ -309,6 +373,37 @@ async function bulk(action) {
       <el-button type="primary" @click="changePassword">保存</el-button>
     </template>
   </el-dialog>
+
+  <!-- 给老师分班 -->
+  <el-dialog
+    v-model="classDlg"
+    :title="`分配班级 · ${classTarget?.name || classTarget?.username || ''}`"
+    width="560px"
+  >
+    <p class="dlg-tip">
+      勾中的班归这位老师，<b>他只能给这些班发考试</b>。一个班同时只能有一位老师，
+      勾一个已经归别人的班，会从对方那里转过来。
+    </p>
+
+    <el-empty v-if="!classes.length" description="还没有班级，先去「班级」页面建一批" :image-size="70" />
+
+    <el-checkbox-group v-else v-model="pickedClasses" class="clsgroup">
+      <div v-for="g in classGroups" :key="g.grade" class="grp">
+        <div class="gname">{{ g.grade }}</div>
+        <div class="gitems">
+          <el-checkbox v-for="c in g.list" :key="c.id" :value="c.id" class="cbox">
+            {{ c.name }}
+            <i v-if="takenBy(c)" class="taken">（{{ takenBy(c) }}）</i>
+          </el-checkbox>
+        </div>
+      </div>
+    </el-checkbox-group>
+
+    <template #footer>
+      <el-button @click="classDlg = false">取消</el-button>
+      <el-button type="primary" @click="saveClasses">保存</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <style scoped>
@@ -334,6 +429,48 @@ async function bulk(action) {
   font-size: 12px;
   margin: 10px 0 0;
 }
+.clslist {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.editcls {
+  margin-left: 6px;
+}
+.dlg-tip {
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: var(--el-text-color-secondary);
+}
+.clsgroup {
+  display: block;
+  max-height: 360px;
+  overflow-y: auto;
+}
+.grp {
+  margin-bottom: 14px;
+}
+.gname {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.gitems {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
+}
+.cbox {
+  min-width: 118px;
+  margin-right: 0;
+}
+.taken {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--el-color-warning);
+}
+
 .bulkbar {
   display: flex;
   align-items: center;
