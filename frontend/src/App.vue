@@ -4,17 +4,18 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { api } from './api'
 import { clearAuth, currentUser, setUser } from './auth'
+import { siteConfig, year } from './siteConfig'
 
 const route = useRoute()
 const router = useRouter()
 
-// 深色模式：Element Plus 认 <html class="dark">，记在本机
-// 平台名称走 config.yaml，改完 restart backend 刷新即生效
-const title = ref('信息科技教学平台')
-const brand = ref('信息科技教学平台')
-const footer = ref('')
+// 平台名称、页脚、图标都在 siteConfig 里，main.js 启动时已经取回来了
+const title = computed(() => siteConfig.site?.title || '信息科技教学平台')
+const brand = computed(() => siteConfig.site?.brand || title.value)
+const footer = computed(() => siteConfig.site?.footer || '')
 const version = ref('')
 
+// 深色模式：Element Plus 认 <html class="dark">，记在本机
 const dark = ref(false)
 function applyTheme() {
   document.documentElement.classList.toggle('dark', dark.value)
@@ -39,20 +40,9 @@ const isBare = computed(() => route.path === '/login' || route.meta.bare === tru
 // 降成了普通教师），登录状态下拉一次 /auth/me 就能纠正过来。
 onMounted(async () => {
   try {
-    const cfg = await api.siteConfig()
-    if (cfg.site) {
-      title.value = cfg.site.title || title.value
-      brand.value = cfg.site.brand || title.value
-      footer.value = cfg.site.footer || ''
-      document.title = title.value
-    }
-  } catch {
-    /* 配置取不到就用内置默认名，不影响使用 */
-  }
-  try {
     version.value = (await api.changelogLatest()).version || ''
   } catch {
-    /* 没有日志就不显示版本号 */
+    /* 没有更新日志就不显示版本号 */
   }
 
   if (!isBare.value && localStorage.getItem('token')) {
@@ -121,9 +111,9 @@ function onUserCommand(cmd) {
     </el-main>
 
     <el-footer class="footer">
-      <span>{{ title }}</span>
+      <span>© {{ year }} {{ title }}</span>
       <span v-if="version" class="ver">
-        <router-link to="/changelog">v{{ version }}</router-link>
+        <router-link to="/changelog" title="查看更新日志">v{{ version }}</router-link>
       </span>
       <span v-if="footer">{{ footer }}</span>
     </el-footer>

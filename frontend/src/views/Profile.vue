@@ -55,10 +55,10 @@ async function saveProfile() {
 }
 
 async function savePassword() {
+  // 只留前端才知道的那条（两次输入是否一致）。长度、纯数字之类交给后端判，
+  // 它的报错更具体，也不会和后端规则脱节。
   if (!pwd.old_password || !pwd.new_password) return ElMessage.warning('原密码和新密码都要填')
-  if (pwd.new_password.length < 6) return ElMessage.warning('新密码至少 6 位')
   if (pwd.new_password !== pwd.confirm) return ElMessage.warning('两次输入的新密码不一致')
-  if (pwd.new_password === pwd.old_password) return ElMessage.warning('新密码不能和原密码一样')
 
   savingPwd.value = true
   try {

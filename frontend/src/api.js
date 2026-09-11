@@ -12,17 +12,78 @@ http.interceptors.request.use(config => {
   return config
 })
 
+// 字段名 → 中文，用来把 FastAPI 的 422 翻成人话
+const FIELD_CN = {
+  username: '用户名',
+  password: '密码',
+  new_password: '新密码',
+  old_password: '原密码',
+  name: '姓名',
+  role: '角色',
+  grade_class: '任教年级班级',
+  contact: '联系方式',
+  content: '内容',
+  author: '称呼',
+  category: '类型',
+  reply: '回复',
+  version: '版本号',
+  released_on: '发布日期',
+  change_type: '变动类型',
+  title: '标题',
+  difficulty: '难度',
+  mode: '语言',
+  ids: '选中项',
+  action: '操作'
+}
+
+// pydantic 的报错类型 → 中文模板。少数几个高频的翻一下就够，
+// 其余原样带出来，总比"请求失败"强。
+function explainOne(e) {
+  const field = FIELD_CN[String(e.loc?.at(-1) ?? '')] || e.loc?.at(-1) || '有个字段'
+  const n = e.ctx?.min_length ?? e.ctx?.max_length
+  switch (e.type) {
+    case 'missing':
+      return `${field}不能为空`
+    case 'string_too_short':
+      return `${field}太短，至少 ${n} 个字符`
+    case 'string_too_long':
+      return `${field}太长，最多 ${n} 个字符`
+    case 'string_pattern_mismatch':
+      return `${field}格式不对`
+    case 'int_parsing':
+    case 'float_parsing':
+      return `${field}要填数字`
+    case 'literal_error':
+    case 'enum':
+      return `${field}只能是 ${(e.ctx?.expected ?? '').toString().replace(/'/g, '')}`
+    default:
+      return `${field}填得不对：${e.msg || '格式不符合要求'}`
+  }
+}
+
+/** 把后端的 detail 变成一句能读的中文。422 的 detail 是数组，不能直接显示。 */
+export function explainError(err) {
+  const detail = err?.response?.data?.detail
+  if (typeof detail === 'string' && detail) return detail
+  if (Array.isArray(detail) && detail.length) {
+    // 一次最多说三条，全列出来会糊一屏
+    const msgs = [...new Set(detail.map(explainOne))]
+    return msgs.slice(0, 3).join('；') + (msgs.length > 3 ? ` 等 ${msgs.length} 处` : '')
+  }
+  if (err?.response?.status >= 500) return '服务器出错了，请把这个页面截图发给管理员'
+  if (err?.code === 'ERR_NETWORK') return '连不上服务器，检查一下网络或问问管理员'
+  return '请求失败，请稍后再试'
+}
+
 http.interceptors.response.use(
   res => res.data,
   err => {
-    const status = err.response?.status
-    const detail = err.response?.data?.detail
-    if (status === 401) {
+    if (err.response?.status === 401) {
       clearAuth() // 清 token 和响应式登录状态，顶栏同步变回未登录
       router.push('/login')
       ElMessage.error('登录已过期，请重新登录')
     } else {
-      ElMessage.error(typeof detail === 'string' ? detail : '请求失败，请稍后再试')
+      ElMessage.error(explainError(err))
     }
     return Promise.reject(err)
   }
@@ -62,6 +123,7 @@ export const api = {
   listUsers: () => http.get('/auth/users'),
   createUser: data => http.post('/auth/users', data),
   disableUser: id => http.delete(`/auth/users/${id}`),
+  bulkUsers: (ids, action) => http.post('/auth/users/bulk', { ids, action }),
   updateUser: (id, data) => http.patch(`/auth/users/${id}`, data),
 
   dicts: category => http.get('/dicts', { params: { category } }),

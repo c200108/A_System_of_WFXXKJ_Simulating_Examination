@@ -23,8 +23,15 @@ class UserOut(ORMModel):
 
 
 class UserCreate(BaseModel):
-    username: str = Field(min_length=3, max_length=64)
-    password: str = Field(min_length=6, max_length=64)
+    """长度下限故意不写在这里。
+
+    pydantic 的校验失败会返回 422，detail 是一串英文结构体（"String should have
+    at least 3 characters"），界面上只能显示成"请求失败"。用户名和密码的规则改在
+    接口里用中文判，返回 400 + 一句人话，老师一眼就知道该怎么改。
+    """
+
+    username: str = Field(max_length=64)
+    password: str = Field(max_length=64)
     name: str = ""
     role: str = "teacher"
 
@@ -40,7 +47,7 @@ class UserUpdate(BaseModel):
     is_active: bool | None = None
     grade_class: str | None = Field(default=None, max_length=128)
     contact: str | None = Field(default=None, max_length=64)
-    password: str | None = Field(default=None, min_length=6, max_length=64)
+    password: str | None = Field(default=None, max_length=64)  # 长度在接口里用中文判
 
 
 class ProfileUpdate(BaseModel):
@@ -53,7 +60,14 @@ class ProfileUpdate(BaseModel):
 
 class PasswordChange(BaseModel):
     old_password: str
-    new_password: str = Field(min_length=6, max_length=64)
+    new_password: str = Field(max_length=64)  # 长度在接口里用中文判
+
+
+class UserBulkIn(BaseModel):
+    """管理员批量处理勾选的账号。delete 是真删，不可恢复。"""
+
+    ids: list[int] = Field(default_factory=list)
+    action: Literal["delete", "disable", "enable"]
 
 
 class TokenOut(BaseModel):
