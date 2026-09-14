@@ -106,17 +106,39 @@ ok ".env 已生成，口令沿用导出时那一套"
 step "[4/7] 启动数据库并等它就绪..."
 docker compose up -d db || die "数据库容器起不来，看 docker compose logs db"
 
+# 用真查一次来判断就绪，不用 mysqladmin ping：ping 只看服务器答不答话，
+# 口令错了它照样打印 Access denied 然后**退出码 0**，于是这里以为就绪了，
+# 一路走到下一步才报"建库失败"，指不到病根。
 READY=0
+ALIVE=0
 for i in $(seq 1 60); do
-    if docker compose exec -T db mysqladmin ping -u"$DB_USER" -p"$DB_PASS" --silent >/dev/null 2>&1; then
+    if docker compose exec -T db mysql -u"$DB_USER" -p"$DB_PASS" -e "SELECT 1" >/dev/null 2>&1; then
         READY=1
         break
+    fi
+    # 服务器起来了但认证不过 —— 和"还没起来"是两码事，分开记
+    if docker compose exec -T db mysqladmin status >/dev/null 2>&1; then
+        ALIVE=1
     fi
     sleep 2
     [ $((i % 10)) -eq 0 ] && echo "      还在等数据库初始化（已等 $((i * 2)) 秒）..."
 done
+
+if [ "$READY" != 1 ] && [ "$ALIVE" = 1 ]; then
+    die "数据库起来了，但 env.secrets 里的口令进不去。
+
+      多半是本机这个数据卷是**新建**的，里面的口令和你导出的那一套不一样 ——
+      MySQL 只在第一次建库时采用配置里的口令，之后再也不看。
+
+      本机数据卷里如果没有要保的数据，清掉再来一次即可：
+        docker compose down
+        docker volume rm exam-system_db_data
+        sudo bash scripts/data-import.sh $SRC
+
+      如果本机库里另有要保的数据，先备份再决定。"
+fi
 [ "$READY" = 1 ] || die "等了 2 分钟数据库还没起来，看 docker compose logs db"
-ok "数据库已就绪"
+ok "数据库已就绪，口令对得上"
 
 # ---------------------------------------------------------------- 4 灌数据
 step "[5/7] 导入数据..."
