@@ -26,6 +26,10 @@ die()  { printf "\n${C_RED}[失败] %s${C_OFF}\n\n" "$1"; exit 1; }
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || die "进不去项目目录 $ROOT"
 
+# 数据卷名 = compose 里 name: exam-system 加上卷名 db_data。
+# 项目名在 docker-compose.yml 里写死了，所以这个名字不随目录名变。
+DB_VOLUME="exam-system_db_data"
+
 SRC="${1:-}"
 [ -n "$SRC" ] || die "用法：sudo bash $0 <导出的文件夹>"
 SRC="$(cd "$SRC" 2>/dev/null && pwd)" || die "找不到目录：${1}"
@@ -124,18 +128,41 @@ for i in $(seq 1 60); do
     [ $((i % 10)) -eq 0 ] && echo "      还在等数据库初始化（已等 $((i * 2)) 秒）..."
 done
 
+# 服务器起来了却认证不过：本机这个数据卷是**新建**的，里面的口令和导出的那套
+# 不一样。MySQL 只在第一次建库时采用配置里的口令，之后再也不看这几个变量，
+# 所以光改 .env 没用，只能把卷清掉让它按新口令重新初始化。
+#
+# 反正你已经确认过"覆盖本机同名数据库"了，这里就直接问一句能不能清卷 ——
+# 但清卷比覆盖一个库更狠（整卷所有库都没了），所以单独再确认一次。
 if [ "$READY" != 1 ] && [ "$ALIVE" = 1 ]; then
-    die "数据库起来了，但 env.secrets 里的口令进不去。
+    warn "数据库起来了，但 env.secrets 里的口令进不去"
+    echo
+    echo "      本机这个数据卷是新建的，里面的口令和你导出的那一套不一样。"
+    echo "      改 .env 没用 —— MySQL 只认它第一次建库时那个口令。"
+    echo
+    echo "      要把这个数据卷清掉、按导出的口令重新建一个吗？"
+    echo "      · 你要还原的数据在 ${SRC} 里，不受影响；"
+    echo "      · 但这个卷里**现有的所有数据库都会没**，不可恢复。"
+    echo
+    read -r -p "      清掉并继续请输入「清空重来」：" WIPE
+    [ "$WIPE" = "清空重来" ] || die "已取消。数据卷没动，.env 已还原成导出时那套（旧的备份在 .env.bak-*）。"
 
-      多半是本机这个数据卷是**新建**的，里面的口令和你导出的那一套不一样 ——
-      MySQL 只在第一次建库时采用配置里的口令，之后再也不看。
+    docker compose down >/dev/null 2>&1 || true
+    docker volume rm "$DB_VOLUME" >/dev/null 2>&1 \
+        || die "删不掉数据卷 $DB_VOLUME。先 docker compose down，再手工 docker volume rm $DB_VOLUME"
+    ok "旧数据卷已清除，正在按导出的口令重新建库"
 
-      本机数据卷里如果没有要保的数据，清掉再来一次即可：
-        docker compose down
-        docker volume rm exam-system_db_data
-        sudo bash scripts/data-import.sh $SRC
-
-      如果本机库里另有要保的数据，先备份再决定。"
+    docker compose up -d db || die "数据库容器起不来，看 docker compose logs db"
+    READY=0
+    for i in $(seq 1 90); do
+        if docker compose exec -T db mysql -u"$DB_USER" -p"$DB_PASS" -e "SELECT 1" >/dev/null 2>&1; then
+            READY=1
+            break
+        fi
+        sleep 2
+        [ $((i % 10)) -eq 0 ] && echo "      还在建库（已等 $((i * 2)) 秒，首次初始化要一会儿）..."
+    done
+    [ "$READY" = 1 ] || die "重新建库等了 3 分钟还没成，看 docker compose logs db"
 fi
 [ "$READY" = 1 ] || die "等了 2 分钟数据库还没起来，看 docker compose logs db"
 ok "数据库已就绪，口令对得上"
