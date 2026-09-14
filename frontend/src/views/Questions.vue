@@ -17,9 +17,19 @@ const query = reactive({
   type: '',
   scope: '',
   source: '',
+  difficulty: '',
   page: 1,
   page_size: 20
 })
+
+// 难度只用数字 1~5，后面那句话只是给老师看的说明，存的还是数字
+const LEVELS = [
+  { value: 1, text: '1　很容易' },
+  { value: 2, text: '2　容易' },
+  { value: 3, text: '3　中等' },
+  { value: 4, text: '4　较难' },
+  { value: 5, text: '5　很难' }
+]
 
 const dialog = reactive({ visible: false, editing: null })
 const blank = () => ({
@@ -29,6 +39,8 @@ const blank = () => ({
   scope: '',
   source: '自定义',
   image_url: '',
+  // null = 不填，由后端按题型和题干估一个，省得为加一道题先纠结难度
+  difficulty: null,
   is_pinned: false,
   options: [
     { label: 'A', content: '' },
@@ -99,6 +111,7 @@ function openEdit(row) {
     scope: row.scope,
     source: row.source,
     image_url: row.image_url || '',
+    difficulty: row.difficulty || null,
     is_pinned: row.is_pinned,
     options: row.options.length
       ? row.options.map(o => ({ ...o }))
@@ -173,6 +186,9 @@ async function uploadImage(options) {
       <el-select v-model="query.source" placeholder="全部来源" clearable style="width: 118px">
         <el-option v-for="s in sources" :key="s" :label="s" :value="s" />
       </el-select>
+      <el-select v-model="query.difficulty" placeholder="全部难度" clearable style="width: 128px">
+        <el-option v-for="l in LEVELS" :key="l.value" :label="l.text" :value="l.value" />
+      </el-select>
       <el-checkbox v-model="onlyPinned" @change="search">只看必出</el-checkbox>
       <el-button type="primary" @click="search">查询</el-button>
       <div class="flex-1" />
@@ -193,6 +209,12 @@ async function uploadImage(options) {
       共 <b>{{ stats.total }}</b> 题
       <span v-for="(v, k) in stats.by_type" :key="k"> ｜ {{ k }} {{ v }}</span>
       ｜ 带图 {{ stats.with_image }} ｜ 必出 {{ stats.pinned }}
+      <template v-if="stats.by_difficulty">
+        <br />难度分布：<span v-for="l in LEVELS" :key="l.value" class="lv">
+          {{ l.value }} 级 <b>{{ stats.by_difficulty[l.value] || 0 }}</b>
+        </span>
+        <span class="hint">（组卷时按难度给每道题分配分值）</span>
+      </template>
     </div>
   </el-card>
 
@@ -208,6 +230,11 @@ async function uploadImage(options) {
       </el-table-column>
       <el-table-column prop="answer" label="答案" width="90" />
       <el-table-column prop="scope" label="知识范围" width="150" />
+      <el-table-column prop="difficulty" label="难度" width="70" align="center" sortable>
+        <template #default="{ row }">
+          <span class="lv-dot" :class="'lv' + row.difficulty">{{ row.difficulty }}</span>
+        </template>
+      </el-table-column>
       <el-table-column label="图片" width="80">
         <template #default="{ row }">
           <el-image v-if="row.image_url" :src="row.image_url" :preview-src-list="[row.image_url]" style="width: 40px" />
@@ -272,6 +299,14 @@ async function uploadImage(options) {
           <el-option v-for="s in scopes" :key="s" :label="s" :value="s" />
         </el-select>
       </el-form-item>
+      <el-form-item label="难度">
+        <el-select v-model="form.difficulty" style="width: 160px" placeholder="自动判断">
+          <el-option v-for="l in LEVELS" :key="l.value" :label="l.text" :value="l.value" />
+        </el-select>
+        <span class="hint">
+          只用数字 1~5。不选就按题型和题干长度自动估一个，之后随时能改。组卷时按它分配分值。
+        </span>
+      </el-form-item>
       <el-form-item label="配图">
         <el-upload :http-request="uploadImage" :show-file-list="false" accept="image/*">
           <el-button>上传图片</el-button>
@@ -305,6 +340,30 @@ async function uploadImage(options) {
   color: #606266;
   font-size: 12px;
 }
+.hint {
+  margin-left: 12px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.lv {
+  margin-right: 10px;
+}
+/* 难度用一个小圆点，数字一眼可读，颜色从浅到深 */
+.lv-dot {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  line-height: 22px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-family: ui-monospace, Consolas, monospace;
+}
+.lv1 { background: var(--el-color-success-light-9); color: var(--el-color-success); }
+.lv2 { background: var(--el-color-success-light-8, #e1f3d8); color: var(--el-color-success); }
+.lv3 { background: var(--el-fill-color); color: var(--el-text-color-regular); }
+.lv4 { background: var(--el-color-warning-light-9); color: var(--el-color-warning); }
+.lv5 { background: var(--el-color-danger-light-9); color: var(--el-color-danger); }
 .opt-row {
   display: flex;
   align-items: center;

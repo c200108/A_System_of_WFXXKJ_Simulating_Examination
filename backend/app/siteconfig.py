@@ -9,6 +9,7 @@
 
 import os
 import sys
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -35,6 +36,90 @@ class SchoolConf(_Base):
     name: str = ""
 
 
+class PaperSlotConf(_Base):
+    """一个大题里的一组题：从哪些知识范围抽几道什么题型。
+
+    大题不等于题型 —— 「互联网原理与创新」里既有选择题又有操作题，
+    所以一个大题由若干「组」拼成，每组自己说清楚要什么。
+    """
+
+    type: str                                    # 题型，要和 bank.types 对得上
+    count: int = Field(default=0, ge=0, le=300)  # 抽几道
+    scopes: list[str] = Field(default_factory=list)  # 限定知识范围，留空 = 不限
+    # long_or_image：优先挑长题干或带图的题（抽不够时仍会用普通题补齐，不会空着）
+    prefer: Literal["", "long_or_image"] = ""
+    label: str = ""                              # 组卷界面上这一组的说明文字
+
+
+class PaperSectionConf(_Base):
+    """一个大题（卷面上的「一、二、三……」）。"""
+
+    name: str
+    score: int = Field(default=0, ge=0, le=1000)  # 这个大题总分
+    # True：按题目难度分摊本大题的分（操作题恒定分最高）
+    # False：平均分，除不尽的零头给难度高的题
+    weight_by_difficulty: bool = True
+    slots: list[PaperSlotConf] = Field(default_factory=list)
+
+
+def _default_sections() -> list[PaperSectionConf]:
+    """config.yaml 没写 paper.sections 时用的六大题结构。
+
+    知识范围名要和 bank.scopes 对得上；学校改了范围名，改 config.yaml 即可，
+    不用动代码。
+    """
+    raw = [
+        ("选择题", 30, False, [("选择题", 30, [], "", "")]),
+        ("判断题", 20, False, [("判断题", 10, [], "", "")]),
+        (
+            "操作题",
+            20,
+            True,
+            [
+                ("操作题", 1, ["Windows系统操作"], "", "Windows 操作"),
+                ("操作题", 1, ["WPS文字操作"], "", "WPS 文字"),
+                ("操作题", 1, ["人工智能"], "", "人工智能"),
+            ],
+        ),
+        (
+            "算法与程序设计",
+            10,
+            True,
+            [("选择题", 3, ["Python编程基础"], "long_or_image", "长题干或带图的选择题")],
+        ),
+        (
+            "互联网原理与创新",
+            10,
+            True,
+            [
+                ("选择题", 3, ["计算机网络基础"], "long_or_image", "长题干或带图的选择题"),
+                ("操作题", 3, ["计算机网络基础"], "", "计算机网络基础操作题"),
+            ],
+        ),
+        (
+            "物联网实践与探索",
+            10,
+            True,
+            [
+                ("操作题", 2, ["物联网"], "", "物联网操作题"),
+                ("选择题", 3, ["物联网"], "", ""),
+            ],
+        ),
+    ]
+    return [
+        PaperSectionConf(
+            name=name,
+            score=score,
+            weight_by_difficulty=by_diff,
+            slots=[
+                PaperSlotConf(type=t, count=c, scopes=list(sc), prefer=pf, label=lb)
+                for t, c, sc, pf, lb in slots
+            ],
+        )
+        for name, score, by_diff, slots in raw
+    ]
+
+
 class PaperConf(_Base):
     default_title: str = "信息技术测试卷"
     default_duration: str = ""
@@ -48,6 +133,28 @@ class PaperConf(_Base):
         default_factory=lambda: ["一", "二", "三", "四", "五", "六"]
     )
     code_prefix: str = "NO."
+    # 卷面结构。按这里的先后顺序出大题，卷面总分 = 各大题分值之和。
+    sections: list[PaperSectionConf] = Field(default_factory=_default_sections)
+    # 题干多少字算「长题目」（prefer: long_or_image 用它判断）
+    long_stem_chars: int = Field(default=60, ge=10, le=2000)
+
+    @model_validator(mode="after")
+    def _check_sections(self):
+        seen: set[str] = set()
+        for s in self.sections:
+            if not s.name.strip():
+                raise ValueError("paper.sections 里有大题没写 name")
+            if s.name in seen:
+                raise ValueError(f"paper.sections 里有两个大题都叫「{s.name}」，名字要唯一")
+            seen.add(s.name)
+            if not s.slots:
+                raise ValueError(f"大题「{s.name}」一个 slots 都没有，抽不出题来")
+        return self
+
+    @property
+    def full_score(self) -> int:
+        """卷面总分 —— 各大题分值之和，不另设固定值，改配置就跟着变。"""
+        return sum(s.score for s in self.sections)
 
 
 class ExamDefaults(_Base):
@@ -61,6 +168,9 @@ class ExamConf(_Base):
     pass_score: int = Field(default=60, ge=0, le=100)
     token_length: int = Field(default=9, ge=6, le=32)
     defaults: ExamDefaults = Field(default_factory=ExamDefaults)
+    # 主观题题型：机器判不了，交卷后等老师在成绩页逐题给分。
+    # 学生交完卷先拿到客观题得分，老师阅完后总分自动更新。
+    manual_types: list[str] = Field(default_factory=lambda: ["操作题"])
 
 
 class BankConf(_Base):

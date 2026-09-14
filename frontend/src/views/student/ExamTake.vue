@@ -12,7 +12,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import { currentStudent } from '../../auth'
 
-const CN = ['一', '二', '三', '四', '五', '六']
+const CN = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
 const route = useRoute()
 const router = useRouter()
 const examId = route.params.id
@@ -24,6 +24,21 @@ const loading = ref(true)
 const submitting = ref(false)
 const result = ref(null)
 const answers = reactive({})
+
+/** 交卷当场只算得出客观题那一段，标题就照实说，别让学生以为总分就这么多。 */
+const resultTitle = computed(() => {
+  const r = result.value
+  if (!r || r.score === null || r.score === undefined) return '交卷成功'
+  if (r.full_score && r.pending_manual) return `客观题得分 ${r.objective_score} / ${r.objective_total}`
+  return r.full_score ? `得分 ${r.score} / ${r.full_score}` : `得分 ${r.score}`
+})
+
+const resultIcon = computed(() => {
+  const r = result.value
+  if (!r || r.score === null || r.score === undefined || r.pending_manual) return 'success'
+  const full = r.full_score || 100
+  return (r.score / full) * 100 >= 60 ? 'success' : 'info'
+})
 
 const numbering = computed(() => {
   const map = {}
@@ -109,6 +124,7 @@ function back() {
         <div class="meta">
           <span v-if="paper.school">{{ paper.school }}　·　</span>
           <span v-if="paper.duration">{{ paper.duration }} 分钟　·　</span>
+          <span v-if="paper.full_score">满分 {{ paper.full_score }} 分　·　</span>
           <span>{{ paper.code }}</span>
         </div>
         <!-- 身份从账号来，学生改不了，所以只显示不给编辑 -->
@@ -120,18 +136,20 @@ function back() {
       </div>
 
       <!-- 交卷结果 -->
-      <el-result
-        v-if="result"
-        :icon="result.score === undefined || result.score === null ? 'success' : result.score >= 60 ? 'success' : 'info'"
-        :title="result.score === undefined || result.score === null ? '交卷成功' : `得分 ${result.score}`"
-        :sub-title="
-          result.score === undefined || result.score === null
-            ? result.message
-            : `客观题答对 ${result.right_count} / ${result.objective_count}${
-                paper.groups.some(g => g.type === '操作题') ? '，操作题由老师评阅' : ''
-              }`
-        "
-      >
+      <el-result v-if="result" :icon="resultIcon" :title="resultTitle">
+        <template #sub-title>
+          <p class="rsub">{{ result.message }}</p>
+          <p v-if="result.full_score" class="rsub">
+            客观题 <b>{{ result.objective_score }}</b> / {{ result.objective_total }} 分
+            （答对 {{ result.right_count }} / {{ result.objective_count }} 题）
+            <template v-if="result.subjective_total">
+              　·　操作题 {{ result.subjective_total }} 分待老师评阅
+            </template>
+          </p>
+          <p v-else-if="result.score !== null && result.score !== undefined" class="rsub">
+            客观题答对 {{ result.right_count }} / {{ result.objective_count }}
+          </p>
+        </template>
         <template #extra>
           <el-button type="primary" @click="router.push('/exam')">返回考试列表</el-button>
         </template>
@@ -140,13 +158,16 @@ function back() {
       <!-- 题目 -->
       <template v-for="(g, gi) in paper.groups" :key="gi">
         <div class="sect">
-          {{ CN[gi] }}、{{ g.type }}（共 {{ g.items.length }} 题）
-          <span v-if="g.type === '操作题'" class="sd">这部分由老师评阅</span>
+          {{ CN[gi] || gi + 1 }}、{{ g.name || g.type }}（共 {{ g.items.length }} 题<template
+            v-if="g.score"
+          >，{{ g.score }} 分</template>）
+          <span v-if="g.items.some(q => q.type === '操作题')" class="sd">操作题由老师评阅</span>
         </div>
 
         <div v-for="q in g.items" :key="q.id" class="q">
           <div class="stem">
             <span class="no">{{ numbering[q.id] }}.</span>{{ q.stem }}
+            <span v-if="q.score" class="pt">（{{ q.score }} 分）</span>
             <span
               v-if="detailOf[q.id] && detailOf[q.id].scored"
               class="badge"
@@ -236,6 +257,15 @@ function back() {
   flex-wrap: wrap;
   justify-content: center;
   margin-top: 14px;
+}
+.pt {
+  color: var(--el-text-color-secondary);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.rsub {
+  margin: 4px 0;
+  line-height: 1.8;
 }
 .sect {
   margin: 26px 0 8px;

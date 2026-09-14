@@ -40,7 +40,7 @@ def _publish(client, headers, title):
     qtype = _ensure_bank(client, headers)
     paper = client.post(
         "/api/papers/generate",
-        json={"title": title, "counts": {qtype: 2}, "save": True},
+        json={"title": title, "by_sections": False, "counts": {qtype: 2}, "save": True},
         headers=headers,
     ).json()
     assert paper.get("paper_id"), f"组卷要先存档才能发布考试：{paper}"

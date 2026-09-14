@@ -134,6 +134,9 @@ class Question(Base):
     scope: Mapped[str] = mapped_column(String(64), index=True)
     source: Mapped[str] = mapped_column(String(64), default="自定义")
     image_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # 难度 1~5，只用数字。历史题目由 0010 迁移按题型和题干长度估了一个初值，
+    # 老师看着不对随时改（见 services/difficulty.py）。组卷时按它分摊分数。
+    difficulty: Mapped[int] = mapped_column(Integer, default=3, index=True)
     is_pinned: Mapped[bool] = mapped_column(Boolean, default=False)  # 必出题
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
@@ -191,6 +194,12 @@ class PaperItem(Base):
     paper_id: Mapped[int] = mapped_column(ForeignKey("papers.id", ondelete="CASCADE"), index=True)
     question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), index=True)
     order_no: Mapped[int] = mapped_column(Integer, default=0)
+    # 这道题归哪个大题（「选择题」「物联网实践与探索」……）。大题不等于题型，
+    # 所以必须单独存 —— 光看题型分不出「物联网」里那三道选择题该排在第六大题。
+    section: Mapped[str] = mapped_column(String(64), default="")
+    # 这道题在这份卷子里值几分。0 表示这份卷子没设分（2.4.0 之前的老卷子），
+    # 判分时会退回按正确率折百分制的老算法。
+    score: Mapped[int] = mapped_column(Integer, default=0)
     # 打乱选项后这道题在这份卷子里的最终样子（选项顺序 + 跟着变的答案），
     # 存下来重新打开历史试卷才和当初印出去的一模一样
     snapshot_json: Mapped[str] = mapped_column(Text, default="")
@@ -241,7 +250,20 @@ class ExamSubmission(Base):
     detail_json: Mapped[str] = mapped_column(Text, default="[]")  # 每题判分明细
     right_count: Mapped[int] = mapped_column(Integer, default=0)
     objective_count: Mapped[int] = mapped_column(Integer, default=0)
-    score: Mapped[int] = mapped_column(Integer, default=0)  # 百分制
+    # 总分 = 客观题得分 + 主观题得分。老卷子（没设分）时仍是百分制折算值。
+    score: Mapped[int] = mapped_column(Integer, default=0)
+    # 交卷时就能算出来的那部分，以及它的满分
+    objective_score: Mapped[int] = mapped_column(Integer, default=0)
+    objective_total: Mapped[int] = mapped_column(Integer, default=0)
+    # 操作题这类要老师看的部分。学生交完卷先看到客观题得分，
+    # 老师在成绩页逐题给分之后，总分自动补上。
+    subjective_score: Mapped[int] = mapped_column(Integer, default=0)
+    subjective_total: Mapped[int] = mapped_column(Integer, default=0)
+    manual_json: Mapped[str] = mapped_column(Text, default="{}")  # {题目id: 老师给的分}
+    graded_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    graded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     submitted_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     exam: Mapped[Exam] = relationship(back_populates="submissions")

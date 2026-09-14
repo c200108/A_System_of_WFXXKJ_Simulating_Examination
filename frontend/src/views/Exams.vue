@@ -33,6 +33,18 @@ const subs = ref([])
 const stats = ref(null)
 const detailDlg = ref(false)
 const detail = ref(null)
+// 阅卷：{题目id: 老师给的分}。操作题这类机器判不了的题由老师逐题给分，
+// 存完总分自动重算，学生那边的分数跟着更新。
+const manual = reactive({})
+const saving = ref(false)
+
+/** 这份答卷里要老师给分的题 */
+const manualItems = computed(() => (detail.value?.detail || []).filter(d => d.manual))
+/** 已给的分加起来，对话框顶上实时显示，不用等保存 */
+const manualGot = computed(() =>
+  manualItems.value.reduce((a, d) => a + (Number(manual[d.id]) || 0), 0)
+)
+const manualFull = computed(() => manualItems.value.reduce((a, d) => a + (d.score || 0), 0))
 
 function linkOf(exam) {
   return studentLink(`/take/${exam.token}`)
@@ -115,12 +127,49 @@ async function openScores(exam) {
 
 async function openDetail(row) {
   detail.value = await api.submission(current.value.id, row.id)
+  Object.keys(manual).forEach(k => delete manual[k])
+  // 已经给过分的回填，没给过的留空（留空和给 0 分是两回事）
+  detail.value.detail
+    .filter(d => d.manual && d.graded)
+    .forEach(d => (manual[d.id] = d.earned))
   detailDlg.value = true
+}
+
+async function saveManual() {
+  const scores = {}
+  for (const d of manualItems.value) {
+    const v = manual[d.id]
+    if (v === '' || v === null || v === undefined) continue
+    if (v > d.score) {
+      return ElMessage.warning(`第 ${d.id} 题最多 ${d.score} 分，给多了`)
+    }
+    scores[d.id] = Number(v)
+  }
+  saving.value = true
+  try {
+    const res = await api.gradeManual(current.value.id, detail.value.id, scores)
+    ElMessage.success(
+      res.pending_manual
+        ? `已保存，还有 ${res.pending_manual} 道题没给分`
+        : `已评完，这份卷子 ${res.score} 分`
+    )
+    detailDlg.value = false
+    await openScores(current.value)   // 成绩表里的分数立刻跟着变
+    await load()                      // 考试列表上的「待阅」也要更新
+  } finally {
+    saving.value = false
+  }
 }
 
 async function exportScores() {
   await download(api.exportScores(current.value.id), `${current.value.title}_成绩.xlsx`)
   ElMessage.success('已下载成绩汇总')
+}
+
+/** 及格没有。卷面总分不一定是 100（老师能改大题分值），所以按比例比。 */
+function passed(row) {
+  const full = row.full_score || 100
+  return row.score / full * 100 >= siteConfig.exam.pass_score
 }
 
 const hardest = computed(() => {
@@ -210,8 +259,18 @@ const hardest = computed(() => {
         </template>
       </el-table-column>
       <el-table-column prop="submission_count" label="交卷" width="64" />
-      <el-table-column label="均分" width="66">
-        <template #default="{ row }">{{ row.avg_score ?? '—' }}</template>
+      <el-table-column label="待阅" width="72">
+        <template #default="{ row }">
+          <el-tag v-if="row.ungraded_count" size="small" type="warning" effect="dark">
+            {{ row.ungraded_count }}
+          </el-tag>
+          <span v-else class="nodel">—</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="均分" width="76">
+        <template #default="{ row }">
+          {{ row.avg_score ?? '—' }}<span v-if="row.full_score" class="of">/{{ row.full_score }}</span>
+        </template>
       </el-table-column>
       <el-table-column label="操作" width="110" fixed="right">
         <template #default="{ row }">
@@ -255,22 +314,37 @@ const hardest = computed(() => {
           <el-table-column prop="student_name" label="姓名" width="90" />
           <el-table-column prop="student_class" label="班级" width="110" show-overflow-tooltip />
           <el-table-column prop="student_no" label="学号" width="110" show-overflow-tooltip />
-          <el-table-column label="得分" width="70">
+          <el-table-column label="总分" width="84">
             <template #default="{ row }">
-              <b :class="row.score >= siteConfig.exam.pass_score ? 'ok' : 'no'">{{ row.score }}</b>
+              <b :class="passed(row) ? 'ok' : 'no'">{{ row.score }}</b>
+              <span v-if="row.full_score" class="of">/{{ row.full_score }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="答对" width="80">
-            <template #default="{ row }">{{ row.right_count }} / {{ row.objective_count }}</template>
+          <el-table-column label="客观 / 操作" width="118">
+            <template #default="{ row }">
+              <template v-if="row.full_score">
+                {{ row.objective_score }}<span class="of">/{{ row.objective_total }}</span>
+                　
+                <template v-if="row.subjective_total">
+                  {{ row.subjective_score }}<span class="of">/{{ row.subjective_total }}</span>
+                  <!-- 批了一半也要把已给的分显示出来，只是标一下还剩几道 -->
+                  <span v-if="row.pending_manual" class="no"> 待阅{{ row.pending_manual }}</span>
+                </template>
+                <span v-else class="of">无操作题</span>
+              </template>
+              <span v-else class="of">{{ row.right_count }} / {{ row.objective_count }} 题</span>
+            </template>
           </el-table-column>
-          <el-table-column label="交卷时间" min-width="130">
+          <el-table-column label="交卷时间" min-width="120">
             <template #default="{ row }">
               {{ String(row.submitted_at).replace('T', ' ').slice(5, 19) }}
             </template>
           </el-table-column>
-          <el-table-column label="" width="60">
+          <el-table-column label="" width="86">
             <template #default="{ row }">
-              <el-button link type="primary" @click="openDetail(row)">答卷</el-button>
+              <el-button link :type="row.pending_manual ? 'warning' : 'primary'" @click="openDetail(row)">
+                {{ row.pending_manual ? '阅卷 ' + row.pending_manual : '答卷' }}
+              </el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -349,27 +423,72 @@ const hardest = computed(() => {
     </template>
   </el-dialog>
 
-  <!-- 单份答卷 -->
-  <el-dialog v-model="detailDlg" title="学生答卷" width="720px">
+  <!-- 单份答卷 + 主观题阅卷 -->
+  <el-dialog v-model="detailDlg" title="学生答卷" width="760px" top="6vh">
     <template v-if="detail">
       <p class="who">
         {{ detail.student_name }}　{{ detail.student_class }}　{{ detail.student_no }}
-        得分 <b>{{ detail.score }}</b>（答对 {{ detail.right_count }} / {{ detail.objective_count }}）
+        <template v-if="detail.full_score">
+          　总分 <b>{{ detail.score }}</b><span class="of">/{{ detail.full_score }}</span>
+          （客观 {{ detail.objective_score }}<span class="of">/{{ detail.objective_total }}</span>
+          <template v-if="detail.subjective_total">
+            　操作题 {{ manualGot }}<span class="of">/{{ manualFull }}</span>
+          </template>）
+        </template>
+        <template v-else>
+          　得分 <b>{{ detail.score }}</b>（答对 {{ detail.right_count }} / {{ detail.objective_count }}）
+        </template>
+        <span v-if="detail.graded_by_name" class="of">　{{ detail.graded_by_name }} 已评阅</span>
       </p>
-      <div v-for="(d, i) in detail.detail" :key="d.id" class="dq">
+
+      <el-alert v-if="manualItems.length" type="warning" :closable="false" class="hint">
+        下面带输入框的是<b>操作题</b>，机器判不了，要你看着学生的作答给分。
+        给完保存，总分自动重算，学生在「我的考试」里就能看到更新后的分数。
+        留空表示<b>还没评</b>，和给 0 分不是一回事。
+      </el-alert>
+
+      <div v-for="(d, i) in detail.detail" :key="d.id" class="dq" :class="{ pend: d.manual }">
         <div class="dstem">
           {{ i + 1 }}. {{ d.stem }}
-          <el-tag v-if="!d.scored" size="small" type="warning">
-            {{ d.type === '操作题' ? '需人工评阅' : '不计分' }}
+          <span v-if="d.score" class="of">（{{ d.score }} 分）</span>
+          <el-tag v-if="d.manual" size="small" :type="manual[d.id] === undefined ? 'warning' : 'success'">
+            {{ manual[d.id] === undefined ? '待评阅' : '已给分' }}
           </el-tag>
-          <el-tag v-else-if="d.ok" size="small" type="success">✓</el-tag>
+          <el-tag v-else-if="!d.scored" size="small" type="info">不计分</el-tag>
+          <el-tag v-else-if="d.ok" size="small" type="success">✓ {{ d.earned || '' }}</el-tag>
           <el-tag v-else size="small" type="danger">✕</el-tag>
         </div>
         <div class="dans">
           学生作答：<span :class="d.scored && !d.ok ? 'no' : ''">{{ d.mine || '未作答' }}</span>
           <template v-if="d.answer">　参考答案：<b>{{ d.answer }}</b></template>
         </div>
+        <div v-if="d.manual" class="grade">
+          <span>给分</span>
+          <el-input-number
+            v-model="manual[d.id]"
+            :min="0"
+            :max="d.score"
+            size="small"
+            controls-position="right"
+            style="width: 96px"
+          />
+          <span class="of">/ {{ d.score }} 分</span>
+          <el-button link size="small" @click="manual[d.id] = d.score">给满分</el-button>
+          <el-button link size="small" @click="manual[d.id] = 0">给 0 分</el-button>
+        </div>
       </div>
+    </template>
+    <template #footer>
+      <span v-if="manualItems.length" class="foot-sum">
+        操作题合计 <b>{{ manualGot }}</b> / {{ manualFull }} 分
+      </span>
+      <el-button @click="detailDlg = false">关闭</el-button>
+      <el-button
+        v-if="manualItems.length"
+        type="primary"
+        :loading="saving"
+        @click="saveManual"
+      >保存评分</el-button>
     </template>
   </el-dialog>
 </template>
@@ -439,5 +558,29 @@ const hardest = computed(() => {
   font-size: 13px;
   margin-top: 3px;
   white-space: pre-wrap;
+}
+/* 要阅的题左边留一道竖线，一眼看得出哪些等着给分 */
+.dq.pend {
+  border-left: 3px solid var(--el-color-warning);
+  padding-left: 10px;
+  background: var(--el-color-warning-light-9);
+}
+.grade {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  font-size: 13px;
+}
+.of {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+.foot-sum {
+  float: left;
+  line-height: 32px;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
 }
 </style>

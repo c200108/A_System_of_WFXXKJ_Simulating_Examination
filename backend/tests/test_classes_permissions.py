@@ -172,7 +172,7 @@ def test_teacher_without_class_cannot_publish(client, auth):
 
     pid = client.post(
         "/api/papers/generate",
-        json={"title": "无班老师的卷子", "counts": {"判断题": 1}, "save": True},
+        json={"title": "无班老师的卷子", "by_sections": False, "counts": {"判断题": 1}, "save": True},
         headers=hdr,
     ).json()["paper_id"]
 
@@ -185,7 +185,7 @@ def test_teacher_cannot_target_someone_elses_class(client, auth, teacher_auth):
     other = _cid(client, auth, "九年级", "8班")
     pid = client.post(
         "/api/papers/generate",
-        json={"title": "想发给别人班的卷子", "counts": {"判断题": 1}, "save": True},
+        json={"title": "想发给别人班的卷子", "by_sections": False, "counts": {"判断题": 1}, "save": True},
         headers=teacher_auth,
     ).json()["paper_id"]
 
@@ -202,7 +202,7 @@ def test_teacher_default_targets_own_classes(client, auth, teacher_auth):
     """老师不选班时，默认发给自己名下的全部班，而不是全校。"""
     pid = client.post(
         "/api/papers/generate",
-        json={"title": "默认发给自己班", "counts": {"判断题": 1}, "save": True},
+        json={"title": "默认发给自己班", "by_sections": False, "counts": {"判断题": 1}, "save": True},
         headers=teacher_auth,
     ).json()["paper_id"]
     exam = client.post("/api/exams", json={"paper_id": pid}, headers=teacher_auth).json()
@@ -215,7 +215,7 @@ def test_admin_exam_reaches_everyone(client, auth, teacher_auth):
     """管理员不选班 = 全体学生，哪个班的学生都看得到。"""
     pid = client.post(
         "/api/papers/generate",
-        json={"title": "管理员发给全校", "counts": {"判断题": 1}, "save": True},
+        json={"title": "管理员发给全校", "by_sections": False, "counts": {"判断题": 1}, "save": True},
         headers=auth,
     ).json()["paper_id"]
     exam = client.post("/api/exams", json={"paper_id": pid}, headers=auth).json()
@@ -240,7 +240,7 @@ def test_admin_exam_reaches_everyone(client, auth, teacher_auth):
 def test_teacher_exam_only_reaches_own_class(client, auth, teacher_auth):
     pid = client.post(
         "/api/papers/generate",
-        json={"title": "只给甲老师的班", "counts": {"判断题": 1}, "save": True},
+        json={"title": "只给甲老师的班", "by_sections": False, "counts": {"判断题": 1}, "save": True},
         headers=teacher_auth,
     ).json()["paper_id"]
     exam = client.post("/api/exams", json={"paper_id": pid}, headers=teacher_auth).json()

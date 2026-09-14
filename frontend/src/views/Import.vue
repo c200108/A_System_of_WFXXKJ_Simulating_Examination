@@ -98,7 +98,9 @@ async function downloadTemplate() {
             <el-button type="primary" size="small" @click="downloadTemplate">下载空白模板</el-button>
           </div>
         </template>
-        <p class="note">表头必须是这六列，顺序可以不同；<b>题型、题干、答案、知识范围</b> 必填。</p>
+        <p class="note">
+          表头顺序可以不同；<b>题型、题干、答案、知识范围</b> 必填，<b>图片</b> 和 <b>难度</b> 选填。
+        </p>
         <el-table
           :data="[
             {
@@ -107,9 +109,16 @@ async function downloadTemplate() {
               c: 'A.Alt+Tab\nB.Ctrl+C',
               d: 'A',
               e: 'Windows系统操作',
-              f: ''
+              f: 2
             },
-            { a: '判断题', b: '计算机病毒可以自我复制。', c: '', d: '正确', e: '信息安全与网络道德', f: '' }
+            {
+              a: '判断题',
+              b: '计算机病毒可以自我复制。',
+              c: '',
+              d: '正确',
+              e: '信息安全与网络道德',
+              f: ''
+            }
           ]"
           size="small"
           border
@@ -119,6 +128,7 @@ async function downloadTemplate() {
           <el-table-column prop="c" label="可选项" show-overflow-tooltip />
           <el-table-column prop="d" label="答案" width="60" />
           <el-table-column prop="e" label="知识范围" show-overflow-tooltip />
+          <el-table-column prop="f" label="难度" width="60" />
         </el-table>
 
         <ul class="note rules">
@@ -126,6 +136,10 @@ async function downloadTemplate() {
           <li><b>答案</b>：选择题填 A/B/C/D；判断题填 正确/错误/√/×/对/错 都认。</li>
           <li><b>知识范围</b>：只能填十类之一，写错会在导入结果里逐行提示。</li>
           <li><b>图片</b>：填图片网址或已上传的 /uploads/... 路径。</li>
+          <li>
+            <b>难度</b>：只填数字 <b>1~5</b>（1 最容易，5 最难）。<b>留空不影响导入</b> ——
+            系统会按题型和题干长度自动估一个，之后随时能在题库里改。组卷时按它给每道题分配分值。
+          </li>
           <li>题干重复的行会自动跳过，同一份文件重复上传不会产生重复题。</li>
           <li><b>CSV</b> 也能传，表头和上面一样；WPS/Excel 存出来的 GBK 编码能自动识别。</li>
         </ul>

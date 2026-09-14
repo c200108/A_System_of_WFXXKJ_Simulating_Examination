@@ -17,6 +17,7 @@ def exam(client, auth):
             "title": "期末测验",
             "school": "昌邑市实验中学",
             "duration": "40",
+            "by_sections": False,
             "counts": {"选择题": 3, "判断题": 2, "操作题": 1},
             "save": True,
         },
@@ -85,7 +86,11 @@ def test_answers_never_reach_the_student(client, exam):
         for q in g["items"]:
             assert "answer" not in q
             assert "source" not in q
-            assert set(q.keys()) <= {"id", "code", "type", "stem", "scope", "image_url", "options"}
+            # 白名单是刻意写死的：以后谁往学生那边多塞一个字段，这里就会挂。
+            # score 是本题分值，卷面上本来就印着，不算答案线索。
+            assert set(q.keys()) <= {
+                "id", "code", "type", "stem", "scope", "image_url", "score", "options"
+            }
 
 
 def test_bad_token_is_404(client):
@@ -235,15 +240,20 @@ def test_export_scores_xlsx(client, auth, exam):
     from openpyxl import load_workbook
 
     wb = load_workbook(io.BytesIO(res.content), read_only=True)
-    assert wb.sheetnames == ["成绩汇总", "题目分析", "操作题作答"]
+    assert wb.sheetnames == ["成绩汇总", "题目分析", "主观题作答"]
     rows = [list(r) for r in wb["成绩汇总"].iter_rows(values_only=True)]
-    assert rows[0] == ["姓名", "班级", "学号", "得分(百分制)", "答对", "客观题数", "交卷时间"]
+    # 这份卷子是「按题型自由组卷」出来的，不设分值，所以表头写"得分(百分制)"
+    assert rows[0] == [
+        "姓名", "班级", "学号", "得分(百分制)",
+        "客观题得分", "客观题满分", "操作题得分", "操作题满分",
+        "待评阅", "评阅人", "答对", "客观题数", "交卷时间",
+    ]
     assert any(r[0] == "张三" and r[3] == 100 for r in rows[1:])
 
 
 def test_delete_exam_removes_submissions(client, auth):
     paper = client.post(
-        "/api/papers/generate", json={"counts": {"选择题": 2}, "save": True}, headers=auth
+        "/api/papers/generate", json={"by_sections": False, "counts": {"选择题": 2}, "save": True}, headers=auth
     ).json()
     e = client.post("/api/exams", json={"paper_id": paper["paper_id"]}, headers=auth).json()
     client.post(

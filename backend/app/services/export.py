@@ -14,10 +14,17 @@ from openpyxl import Workbook
 
 from ..config import settings
 from ..siteconfig import site
+from .importer import DIFFICULTY_COL, export_headers
 
-# 表头和列宽读配置，见 config.yaml 的 import.export_headers / export_widths
-BANK_HEADERS = site.import_.export_headers
-BANK_WIDTHS = site.import_.export_widths
+# 表头读配置（见 config.yaml 的 import.export_headers），
+# 「难度」这一列由 export_headers() 补进来 —— 服务器上那份 config.yaml 是
+# 老师改过的，升级不会自动给它加列，靠代码补才不会漏。
+def _bank_widths() -> dict[str, int]:
+    """列宽仍然听 config.yaml 的 export_widths（按位置对应 export_headers），
+    只给它没覆盖到的新列补一个默认值 —— 改配置照样生效。"""
+    widths = {"图片": 30, DIFFICULTY_COL: 8}
+    widths.update(dict(zip(site.import_.export_headers, site.import_.export_widths)))
+    return widths
 
 
 def _opts_text(options) -> str:
@@ -29,29 +36,35 @@ def _opts_text(options) -> str:
     return "\n".join(parts)
 
 
+# 表头名 → 从一行里取什么值。导出的表要能原样再导回去，所以列名和导入模板一致。
+_CELL = {
+    "题型": lambda get: get("type"),
+    "题干": lambda get: get("stem"),
+    "可选项": lambda get: _opts_text(get("options")),
+    "答案": lambda get: get("answer"),
+    "知识范围": lambda get: get("scope"),
+    "来源": lambda get: get("source"),
+    "编号": lambda get: get("code") or get("id"),
+    "图片": lambda get: get("image_url") or "",
+    DIFFICULTY_COL: lambda get: get("difficulty") or "",
+}
+
+
 def questions_to_xlsx(rows: list, sheet_name: str = "题库") -> bytes:
     """行可以是 ORM 对象，也可以是组卷返回的字典，字段名一致。"""
+    cols = export_headers()
     wb = Workbook()
     ws = wb.active
     ws.title = sheet_name
-    ws.append(BANK_HEADERS)
+    ws.append(cols)
 
     for q in rows:
         get = (lambda k: q.get(k)) if isinstance(q, dict) else (lambda k: getattr(q, k, None))
-        ws.append(
-            [
-                get("type"),
-                get("stem"),
-                _opts_text(get("options")),
-                get("answer"),
-                get("scope"),
-                get("source"),
-                get("code") or get("id"),
-            ]
-        )
+        ws.append([_CELL.get(c, lambda _g: "")(get) for c in cols])
 
-    for col, width in zip("ABCDEFG", BANK_WIDTHS):
-        ws.column_dimensions[col].width = width
+    widths = _bank_widths()
+    for i, c in enumerate(cols):
+        ws.column_dimensions[chr(ord("A") + i)].width = widths.get(c, 16)
     ws.freeze_panes = "A2"
 
     buf = io.BytesIO()
@@ -78,10 +91,15 @@ def student_html(paper: dict) -> str:
     """生成学生答题网页。结构与原 HTML 的 studentHTML() 一致。"""
     items = []
     for group in paper.get("groups") or []:
+        name = group.get("name") or group["type"]
         for it in group["items"]:
             items.append(
                 {
                     "t": it["type"],
+                    # 分大题按 s 走，不再按题型 —— 「物联网实践与探索」里
+                    # 选择题和操作题同属一个大题，按题型分会把它拆成两段
+                    "s": it.get("section") or name,
+                    "p": int(it.get("score") or 0),
                     "q": it["stem"],
                     "o": [[o["label"], o["content"]] for o in it.get("options") or []],
                     "a": it.get("answer") or "",
@@ -96,6 +114,7 @@ def student_html(paper: dict) -> str:
             "school": paper.get("school") or "",
             "time": paper.get("duration") or "",
             "code": paper.get("code") or "",
+            "full": int(paper.get("full_score") or 0),
             "items": items,
         },
         ensure_ascii=False,
@@ -134,6 +153,7 @@ button.p{background:var(--teal);border-color:var(--teal);color:#fff}
 .score{font-family:ui-monospace,Consolas,monospace;font-size:19px;font-weight:600;color:var(--teal)}
 .badge{font-size:12px;font-weight:600;border-radius:5px;padding:1px 8px;font-family:ui-monospace,Consolas,monospace;margin-left:8px}
 .b-ok{background:var(--gsoft);color:var(--green)}.b-no{background:var(--rsoft);color:var(--red)}.b-na{background:var(--asoft);color:var(--amber)}
+.pt{font-size:12px;color:var(--mut);font-family:ui-monospace,Consolas,monospace;margin-left:8px;white-space:nowrap}
 @media print{.bar{position:static}button{display:none}}
 </style></head><body><div class="wrap">
 <div class="head"><h1></h1><div class="meta"></div>
@@ -148,14 +168,16 @@ document.querySelector('.meta').textContent = (P.school||'') + (P.time?'　·　
 const E = s => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let graded = false;
 const groups = [];
-P.items.forEach(it => { let g = groups.find(x=>x.t===it.t); if(!g){ g={t:it.t, list:[]}; groups.push(g);} g.list.push(it); });
-let n = 0; const CNn = ['一','二','三','四','五','六'];
+// 按大题分组：s 是大题名，可能和题型不一样（「物联网实践与探索」里两种题型都有）
+P.items.forEach(it => { const k = it.s || it.t; let g = groups.find(x=>x.t===k); if(!g){ g={t:k, list:[]}; groups.push(g);} g.list.push(it); });
+let n = 0; const CNn = ['一','二','三','四','五','六','七','八','九','十'];
 let html = '';
 groups.forEach((g,gi) => {
-  html += '<div class="sect">' + CNn[gi] + '、' + g.t + '（共 ' + g.list.length + ' 题）</div>';
+  const pts = g.list.reduce((a,b)=>a+(b.p||0),0);
+  html += '<div class="sect">' + (CNn[gi]||(gi+1)) + '、' + g.t + '（共 ' + g.list.length + ' 题' + (pts?'，共 ' + pts + ' 分':'') + '）</div>';
   g.list.forEach(it => {
     const i = n++;
-    let inner = '<div class="stem">' + (i+1) + '. ' + E(it.q) + '</div>';
+    let inner = '<div class="stem">' + (i+1) + '. ' + E(it.q) + (it.p?'<span class="pt">' + it.p + ' 分</span>':'') + '</div>';
     if(it.img) inner += '<img src="' + it.img + '" alt="配图">';
     if(it.t === '操作题'){
       inner += '<textarea data-i="' + i + '" placeholder="写下你的操作步骤"></textarea>';
@@ -172,10 +194,12 @@ function letterOf(it){ const a=(it.a||'').trim(); return it.t==='判断题' ? (a
 document.getElementById('sub').addEventListener('click', () => {
   if(graded) return;
   graded = true; let right=0, obj=0;
+  let got = 0, objFull = 0, manFull = 0;
   ANS.forEach((it,i) => {
     const box = document.querySelector('[data-q="' + i + '"]');
     const key = box.querySelector('.key'); key.style.display='block';
     if(it.t === '操作题'){
+      manFull += (it.p||0);
       key.textContent = '答案要点：' + (it.a || '原卷未给答案');
       box.querySelector('textarea').disabled = true;
       const b=document.createElement('span'); b.className='badge b-na'; b.textContent='自评'; box.querySelector('.stem').appendChild(b);
@@ -188,11 +212,11 @@ document.getElementById('sub').addEventListener('click', () => {
       const b=document.createElement('span'); b.className='badge b-na'; b.textContent='不计分'; box.querySelector('.stem').appendChild(b);
       return;
     }
-    obj++;
+    obj++; objFull += (it.p||0);
     const cl = letterOf(it);
     const sel = box.querySelector('input:checked');
     const val = sel ? sel.value : '';
-    if(val === cl) right++;
+    if(val === cl){ right++; got += (it.p||0); }
     box.querySelectorAll('input').forEach(x => x.disabled = true);
     box.querySelectorAll('label.op').forEach(l => {
       if(l.dataset.v === cl) l.classList.add('ok');
@@ -202,7 +226,10 @@ document.getElementById('sub').addEventListener('click', () => {
     const b=document.createElement('span'); b.className = 'badge ' + (val===cl?'b-ok':'b-no'); b.textContent = val===cl?'✓':'✕';
     box.querySelector('.stem').appendChild(b);
   });
-  document.getElementById('sc').textContent = '客观题 ' + right + ' / ' + obj + '　正确率 ' + (obj?Math.round(right/obj*100):0) + '%';
+  // 设了分值就报分，没设（自由组卷的卷子）还是报题数，两种卷子都说得清
+  document.getElementById('sc').textContent = objFull
+    ? '客观题 ' + got + ' / ' + objFull + ' 分' + (manFull ? '　操作题 ' + manFull + ' 分需老师评阅' : '')
+    : '客观题 ' + right + ' / ' + obj + '　正确率 ' + (obj?Math.round(right/obj*100):0) + '%';
   window.scrollTo({top:0, behavior:'smooth'});
 });
 document.getElementById('pr').addEventListener('click', () => window.print());

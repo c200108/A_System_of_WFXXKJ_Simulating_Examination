@@ -12,6 +12,7 @@ from ..database import get_db
 from ..deps import get_current_user, require_delete_permission
 from ..models import Option, Question, User
 from ..schemas import QuestionCreate, QuestionOut, QuestionPage, QuestionUpdate, StatsOut
+from ..services.difficulty import estimate
 from ..services.export import questions_to_xlsx
 from ..services.importer import stem_hash
 from ..siteconfig import site
@@ -28,6 +29,7 @@ def _filtered(
     scope: str | None,
     source: str | None,
     pinned: bool | None,
+    difficulty: int | None = None,
 ):
     """题库列表和题库导出用同一套筛选条件，避免两处走样。"""
     stmt = select(Question).where(Question.is_deleted.is_(False))
@@ -41,6 +43,8 @@ def _filtered(
         stmt = stmt.where(Question.source == source)
     if pinned is not None:
         stmt = stmt.where(Question.is_pinned.is_(pinned))
+    if difficulty:
+        stmt = stmt.where(Question.difficulty == difficulty)
     return stmt
 
 
@@ -58,12 +62,13 @@ def list_questions(
     scope: str | None = None,
     source: str | None = None,
     pinned: bool | None = None,
+    difficulty: int | None = Query(None, ge=1, le=5),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
     _: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    stmt = _filtered(keyword, type, scope, source, pinned)
+    stmt = _filtered(keyword, type, scope, source, pinned, difficulty)
 
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     items = db.scalars(
@@ -94,6 +99,12 @@ def stats(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
         )
         or 0
     )
+    by_difficulty = {
+        str(k): v
+        for k, v in db.execute(
+            select(Question.difficulty, func.count()).where(alive).group_by(Question.difficulty)
+        ).all()
+    }
     sources = [
         s for (s,) in db.execute(select(Question.source).where(alive).distinct()).all() if s
     ]
@@ -101,6 +112,7 @@ def stats(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
         total=total,
         by_type=by_type,
         by_scope=by_scope,
+        by_difficulty=by_difficulty,
         with_image=with_image,
         pinned=pinned,
         sources=sorted(sources),
@@ -114,11 +126,14 @@ def export_questions(
     scope: str | None = None,
     source: str | None = None,
     pinned: bool | None = None,
+    difficulty: int | None = Query(None, ge=1, le=5),
     filename: str = "信息技术题库",
     _: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    rows = list(db.scalars(_filtered(keyword, type, scope, source, pinned).order_by(Question.id)))
+    rows = list(
+        db.scalars(_filtered(keyword, type, scope, source, pinned, difficulty).order_by(Question.id))
+    )
     data = questions_to_xlsx(rows, "题库")
     name = quote(f"{filename}.xlsx")
     return Response(
@@ -179,6 +194,9 @@ def create_question(
         scope=body.scope,
         source=body.source,
         image_url=body.image_url,
+        # 老师没选难度就按题型和题干估一个，和导入、历史题目用的是同一套规则
+        difficulty=body.difficulty
+        or estimate(body.type, body.stem, body.scope, len(body.options)),
         is_pinned=body.is_pinned,
         created_by=user.id,
     )

@@ -164,3 +164,46 @@ def _load_0008():
 )
 def test_class_name_split(text, expect):
     assert _load_0008()._split(text) == expect
+
+
+def test_0010_fills_in_difficulty_for_existing_questions(blank_db):
+    """0010 给历史题目补难度。
+
+    空库 upgrade 跑不到这段 —— 没有题就直接返回了。这里先升到 0009、灌几道题，
+    再升 0010，验证那条 `IN :ids` 的批量 UPDATE 真的写进去了（展开参数在
+    SQLite 和 MySQL 上行为不同，是踩过坑的地方）。
+    """
+    cfg = _alembic_config(blank_db)
+    command.upgrade(cfg, "0009")
+
+    rows = [
+        (1, "判断题", "计算机由硬件和软件组成。", "计算机硬件"),
+        (2, "选择题", "下列哪个是操作系统？", "计算机软件"),
+        (3, "操作题", "用 Python 写一个能判断素数的函数，" + "并说明思路。" * 12, "Python编程基础"),
+    ]
+    engine = create_engine(blank_db)
+    try:
+        with engine.begin() as conn:
+            for qid, qtype, stem, scope in rows:
+                conn.exec_driver_sql(
+                    "INSERT INTO questions (id, type, stem, stem_hash, answer, scope, source,"
+                    " is_pinned, is_deleted) VALUES (?, ?, ?, ?, '', ?, '原卷', 0, 0)"
+                    if blank_db.startswith("sqlite")
+                    else "INSERT INTO questions (id, type, stem, stem_hash, answer, scope, source,"
+                    " is_pinned, is_deleted) VALUES (%s, %s, %s, %s, '', %s, '原卷', 0, 0)",
+                    (qid, qtype, stem, f"hash-{qid}", scope),
+                )
+
+        command.upgrade(cfg, "0010")
+
+        with engine.begin() as conn:
+            got = dict(
+                conn.exec_driver_sql("SELECT id, difficulty FROM questions").fetchall()
+            )
+    finally:
+        engine.dispose()
+
+    assert set(got) == {1, 2, 3}
+    assert all(1 <= d <= 5 for d in got.values()), got
+    # 判断题 < 操作题：估出来的难度要有区分度，不能三道题都是 3
+    assert got[1] < got[3], got

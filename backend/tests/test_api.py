@@ -137,7 +137,7 @@ def test_import_log_recorded(client, auth):
 def test_generate_paper(client, auth):
     res = client.post(
         "/api/papers/generate",
-        json={"title": "单元测验", "counts": {"选择题": 2, "判断题": 1}, "save": True},
+        json={"title": "单元测验", "by_sections": False, "counts": {"选择题": 2, "判断题": 1}, "save": True},
         headers=auth,
     )
     assert res.status_code == 200, res.text
@@ -152,7 +152,7 @@ def test_generate_paper(client, auth):
 def test_saved_paper_can_be_reopened(client, auth):
     pid = client.post(
         "/api/papers/generate",
-        json={"title": "存档卷", "counts": {"选择题": 2}, "save": True},
+        json={"title": "存档卷", "by_sections": False, "counts": {"选择题": 2}, "save": True},
         headers=auth,
     ).json()["paper_id"]
 
@@ -164,14 +164,14 @@ def test_saved_paper_can_be_reopened(client, auth):
 def test_generate_with_impossible_request(client, auth):
     """要的题比库里多时，收窄到上限并给出提示，而不是报错。"""
     body = client.post(
-        "/api/papers/generate", json={"counts": {"操作题": 9999}}, headers=auth
+        "/api/papers/generate", json={"by_sections": False, "counts": {"操作题": 9999}}, headers=auth
     ).json()
     assert body["total"] < 9999
     assert body["warnings"] and "上限" in body["warnings"][0]
 
 
 def test_generate_nothing_is_an_error(client, auth):
-    res = client.post("/api/papers/generate", json={"counts": {"选择题": 0}}, headers=auth)
+    res = client.post("/api/papers/generate", json={"by_sections": False, "counts": {"选择题": 0}}, headers=auth)
     assert res.status_code == 400
 
 
@@ -183,6 +183,7 @@ def test_paper_header_and_groups(client, auth):
             "title": "2026年信息技术模拟测试（A卷）",
             "school": "昌邑市实验中学",
             "duration": "40",
+            "by_sections": False,
             "counts": {"选择题": 2, "判断题": 2},
         },
         headers=auth,
@@ -201,7 +202,7 @@ def test_paper_header_and_groups(client, auth):
 def test_shuffled_paper_answer_still_matches_its_option(client, auth):
     body = client.post(
         "/api/papers/generate",
-        json={"counts": {"选择题": 12}, "shuffle_options": True, "seed": "shuffle-check"},
+        json={"by_sections": False, "counts": {"选择题": 12}, "shuffle_options": True, "seed": "shuffle-check"},
         headers=auth,
     ).json()
     for q in body["questions"]:
@@ -213,7 +214,7 @@ def test_shuffled_paper_answer_still_matches_its_option(client, auth):
 def test_saved_paper_keeps_the_shuffled_order(client, auth):
     gen = client.post(
         "/api/papers/generate",
-        json={"counts": {"选择题": 5}, "shuffle_options": True, "save": True},
+        json={"by_sections": False, "counts": {"选择题": 5}, "shuffle_options": True, "save": True},
         headers=auth,
     ).json()
     again = client.get(f"/api/papers/{gen['paper_id']}", headers=auth).json()
@@ -232,14 +233,14 @@ def test_no_answer_questions_are_skipped_by_default(client, auth):
         headers=auth,
     )
     body = client.post(
-        "/api/papers/generate", json={"counts": {"判断题": 50}}, headers=auth
+        "/api/papers/generate", json={"by_sections": False, "counts": {"判断题": 50}}, headers=auth
     ).json()
     assert all((q["answer"] or "").strip() for q in body["questions"])
 
     # 明确关掉这个开关时，没答案的题才会被抽出来
     loose = client.post(
         "/api/papers/generate",
-        json={"counts": {"判断题": 50}, "require_answer": False},
+        json={"by_sections": False, "counts": {"判断题": 50}, "require_answer": False},
         headers=auth,
     ).json()
     assert loose["total"] > body["total"]
@@ -248,7 +249,7 @@ def test_no_answer_questions_are_skipped_by_default(client, auth):
 def test_student_html_does_not_grade_answerless_questions(client, auth):
     paper = client.post(
         "/api/papers/generate",
-        json={"counts": {"判断题": 50}, "require_answer": False},
+        json={"by_sections": False, "counts": {"判断题": 50}, "require_answer": False},
         headers=auth,
     ).json()
     html = client.post("/api/papers/export/student-html", json=paper, headers=auth).content.decode()
@@ -258,7 +259,7 @@ def test_student_html_does_not_grade_answerless_questions(client, auth):
 # ---------- 导出 ----------
 def test_export_paper_xlsx(client, auth):
     paper = client.post(
-        "/api/papers/generate", json={"counts": {"选择题": 3, "判断题": 2}}, headers=auth
+        "/api/papers/generate", json={"by_sections": False, "counts": {"选择题": 3, "判断题": 2}}, headers=auth
     ).json()
     res = client.post("/api/papers/export/xlsx", json=paper, headers=auth)
     assert res.status_code == 200
@@ -269,7 +270,7 @@ def test_export_paper_xlsx(client, auth):
 def test_export_student_html(client, auth):
     paper = client.post(
         "/api/papers/generate",
-        json={"title": "自测卷", "school": "昌邑市实验中学", "counts": {"选择题": 3, "操作题": 1}},
+        json={"title": "自测卷", "school": "昌邑市实验中学", "by_sections": False, "counts": {"选择题": 3, "操作题": 1}},
         headers=auth,
     ).json()
     res = client.post("/api/papers/export/student-html", json=paper, headers=auth)
@@ -307,7 +308,8 @@ def test_export_bank_xlsx(client, auth):
     assert res.content.startswith(XLSX_MAGIC)
 
     rows = _read_xlsx(res.content)
-    assert rows[0] == ["题型", "题干", "可选项", "答案", "知识范围", "来源", "编号"]
+    # 「难度」这一列在 2.4.0 加进来，导出的表要能原样再导回去
+    assert rows[0] == ["题型", "题干", "可选项", "答案", "知识范围", "难度", "来源", "编号"]
     all_stems = [r[1] for r in rows[1:]]
     assert marker in all_stems
 

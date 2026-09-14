@@ -197,6 +197,9 @@ export const api = {
   deleteExam: id => http.delete(`/exams/${id}`),
   submissions: id => http.get(`/exams/${id}/submissions`),
   submission: (id, sid) => http.get(`/exams/${id}/submissions/${sid}`),
+  // 主观题人工赋分：scores 是 {题目id: 得分}
+  gradeManual: (id, sid, scores) =>
+    http.patch(`/exams/${id}/submissions/${sid}/manual`, { scores }),
   examStats: id => http.get(`/exams/${id}/stats`),
   exportScores: id => http.get(`/exams/${id}/export.xlsx`, { responseType: 'blob' }),
 

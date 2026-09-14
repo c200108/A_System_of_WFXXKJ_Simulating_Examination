@@ -28,10 +28,16 @@ def get_config():
             "require_answer": site.paper.require_answer,
             "use_pinned": site.paper.use_pinned,
             "section_numerals": site.paper.section_numerals,
+            # 卷面结构。组卷页照这个渲染六个大题的题量和分值输入框，
+            # 学校改 config.yaml 的 paper.sections，界面跟着变，前端不用重新构建。
+            "sections": [s.model_dump() for s in site.paper.sections],
+            "full_score": site.paper.full_score,
         },
         "exam": {
             "pass_score": site.exam.pass_score,
             "defaults": site.exam.defaults.model_dump(),
+            # 哪些题型要老师人工评阅，界面上据此显示「待阅」
+            "manual_types": site.exam.manual_types,
         },
         "upload": {
             "max_mb": site.upload.max_mb,

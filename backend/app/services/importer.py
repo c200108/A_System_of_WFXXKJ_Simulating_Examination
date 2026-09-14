@@ -13,11 +13,32 @@ import re
 from openpyxl import Workbook, load_workbook
 
 from ..siteconfig import site
+from .difficulty import clamp, estimate
 
 _IMG_RE = re.compile(r"^(data:image|https?://|/uploads/)")
 
 # 内部记号：这张表没有题干列
 HEADLESS = "__headless__"
+
+# 难度这一列是 2.4.0 加的。**不强制它出现在 config.yaml 的 import.headers 里** ——
+# 服务器上那份 config.yaml 是老师自己改过的，升级时不会自动多出这一列，
+# 那样模板里就不会有难度栏。所以在代码里补一次：配置里没写就自动加在最后。
+DIFFICULTY_COL = "难度"
+
+
+def import_headers() -> list[str]:
+    """导入模板的列。配置里没写「难度」就补上，老 config.yaml 也能用上新列。"""
+    cols = list(site.import_.headers)
+    if DIFFICULTY_COL not in cols:
+        cols.append(DIFFICULTY_COL)
+    return cols
+
+
+def export_headers() -> list[str]:
+    cols = list(site.import_.export_headers)
+    if DIFFICULTY_COL not in cols:
+        cols.insert(min(len(cols), 5), DIFFICULTY_COL)  # 放在「知识范围」后面
+    return cols
 
 
 def _opt_regex() -> re.Pattern:
@@ -99,9 +120,8 @@ def _validate_rows(grid: list[list], sheet_name: str, valid_scopes: set[str]):
     if not grid:
         return good, errors, rows_seen
 
-    headers = site.import_.headers
     head = [str(h or "").strip() for h in grid[0]]
-    idx = {h: (head.index(h) if h in head else -1) for h in headers}
+    idx = {h: (head.index(h) if h in head else -1) for h in import_headers()}
 
     if idx.get("题型", -1) < 0 or idx.get("题干", -1) < 0:
         # 先打个记号。说明页、对照表这类表本来就没有题干列，
@@ -137,6 +157,9 @@ def _validate_rows(grid: list[list], sheet_name: str, valid_scopes: set[str]):
 
         options = parse_options(get("可选项"), qtype)
         answer = norm_answer(get("答案"), qtype)
+        # 难度这一列是选填的：没填、填了认不出来的，都按题型自动估，
+        # 不因为一列没写就把整行判成错误
+        level = clamp(get(DIFFICULTY_COL))
 
         if qtype == "选择题":
             if len(options) < 2:
@@ -161,6 +184,7 @@ def _validate_rows(grid: list[list], sheet_name: str, valid_scopes: set[str]):
                 "scope": scope,
                 "source": site.bank.default_source,
                 "image_url": norm_image(get("图片")),
+                "difficulty": level or estimate(qtype, stem, scope, len(options)),
                 "options": options,
                 "sheet": sheet_name,
                 "row": i,
@@ -207,37 +231,83 @@ def parse_upload(content: bytes, filename: str, valid_scopes: set[str]):
     return all_good, all_errors, total
 
 
+# 模板和界面上对「难度」的说明，两处共用一句，别各写各的
+DIFFICULTY_HINT = (
+    "难度只填数字 1~5（1 最容易，5 最难）。留空不影响导入 —— "
+    "系统会按题型和题干长度自动估一个，之后随时能在题库里改。"
+)
+
+
 def build_template(scopes: list[str], types: list[str]) -> bytes:
     """生成空白模板：第一张表填写区，第二张表对照表。"""
+    cols = import_headers()
     wb = Workbook()
     ws = wb.active
     ws.title = "题目"
-    ws.append(site.import_.headers)
+    ws.append(cols)
 
     demo_scope = scopes[0] if scopes else ""
-    ws.append(
-        [
-            "选择题",
-            "在 Windows 中，用于切换当前活动窗口的快捷键是（ ）。",
-            "A.Alt+Tab\nB.Ctrl+C\nC.Alt+F4\nD.Win+D",
-            "A",
-            demo_scope,
-            "",
-        ]
-    )
-    ws.append(["判断题", "计算机病毒是一种可以自我复制的程序。", "", "正确", demo_scope, ""])
-    ws.append(["操作题", "把当前文档另存为 PDF 并命名为「作业.pdf」。", "", "略", demo_scope, ""])
 
-    for col, w in zip("ABCDEF", [10, 60, 40, 12, 22, 30]):
-        ws.column_dimensions[col].width = w
+    def row(values: dict) -> list:
+        """按当前列顺序摆值 —— 有人在 config.yaml 里调过列顺序，示例行也要跟着对上。"""
+        return [values.get(c, "") for c in cols]
+
+    ws.append(
+        row(
+            {
+                "题型": "选择题",
+                "题干": "在 Windows 中，用于切换当前活动窗口的快捷键是（ ）。",
+                "可选项": "A.Alt+Tab\nB.Ctrl+C\nC.Alt+F4\nD.Win+D",
+                "答案": "A",
+                "知识范围": demo_scope,
+                DIFFICULTY_COL: 2,
+            }
+        )
+    )
+    ws.append(
+        row(
+            {
+                "题型": "判断题",
+                "题干": "计算机病毒是一种可以自我复制的程序。",
+                "答案": "正确",
+                "知识范围": demo_scope,
+                DIFFICULTY_COL: 1,
+            }
+        )
+    )
+    ws.append(
+        row(
+            {
+                "题型": "操作题",
+                "题干": "把当前文档另存为 PDF 并命名为「作业.pdf」。",
+                "答案": "略",
+                "知识范围": demo_scope,
+                DIFFICULTY_COL: 4,
+            }
+        )
+    )
+
+    widths = {"题型": 10, "题干": 60, "可选项": 40, "答案": 12,
+              "知识范围": 22, "图片": 30, DIFFICULTY_COL: 8}
+    for i, c in enumerate(cols):
+        ws.column_dimensions[chr(ord("A") + i)].width = widths.get(c, 16)
     ws.freeze_panes = "A2"
 
     ws2 = wb.create_sheet("对照表")
-    ws2.append(["知识范围（只能填这些）", "题型"])
-    for i in range(max(len(scopes), len(types))):
-        ws2.append([scopes[i] if i < len(scopes) else "", types[i] if i < len(types) else ""])
-    ws2.column_dimensions["A"].width = 26
-    ws2.column_dimensions["B"].width = 14
+    ws2.append(["知识范围（只能填这些）", "题型", "难度"])
+    levels = ["1 很容易", "2 容易", "3 中等", "4 较难", "5 很难"]
+    for i in range(max(len(scopes), len(types), len(levels))):
+        ws2.append(
+            [
+                scopes[i] if i < len(scopes) else "",
+                types[i] if i < len(types) else "",
+                levels[i] if i < len(levels) else "",
+            ]
+        )
+    ws2.append([])
+    ws2.append([DIFFICULTY_HINT])
+    for col, w in zip("ABC", [26, 14, 12]):
+        ws2.column_dimensions[col].width = w
 
     buf = io.BytesIO()
     wb.save(buf)
