@@ -5,6 +5,7 @@ import { ElMessageBox } from 'element-plus'
 import { api } from '../api'
 import { clearAuth, currentUser, setUser } from '../auth'
 import { siteConfig, year } from '../siteConfig'
+import BrandLogo from '../components/BrandLogo.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -66,17 +67,17 @@ function onUserCommand(cmd) {
 <template>
   <el-container class="app">
     <el-header class="header">
-      <div class="brand">{{ brand }}</div>
+      <div class="brand">
+        <BrandLogo :size="26" :radius="0.27" />
+        <span>{{ brand }}</span>
+      </div>
       <el-menu :default-active="route.path" mode="horizontal" router :ellipsis="false" class="nav">
         <template v-if="user">
           <el-menu-item index="/js/paper">组卷</el-menu-item>
           <el-menu-item index="/js/bank">题库</el-menu-item>
-          <el-menu-item index="/js/import">导入</el-menu-item>
           <el-menu-item index="/js/exams">考试</el-menu-item>
           <el-menu-item index="/js/students">学生</el-menu-item>
           <el-menu-item index="/js/classes">班级</el-menu-item>
-          <el-menu-item index="/js/typing">打字</el-menu-item>
-          <el-menu-item index="/js/typing-texts">练习文本</el-menu-item>
         </template>
         <el-menu-item index="/js/feedback">反馈</el-menu-item>
         <el-menu-item index="/js/changelog">更新日志</el-menu-item>
@@ -127,6 +128,9 @@ function onUserCommand(cmd) {
   padding: 0 24px;
 }
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   font-size: 17px;
   font-weight: 600;
   white-space: nowrap;

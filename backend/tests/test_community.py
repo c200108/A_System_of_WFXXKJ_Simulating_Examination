@@ -1,7 +1,8 @@
 """需求反馈与更新日志。
 
-反馈是公开提交、公开展示的，所以重点测两件事：
-联系方式不能出现在公开接口里；下架后公开列表要看不到。
+反馈是公开提交的，但**要管理员审核过才公开展示**。重点测三件事：
+新提交的不能直接出现在公开区；联系方式不能出现在公开接口里；
+审核状态的流转（通过 / 拒绝 / 退回）。
 """
 
 
@@ -9,6 +10,21 @@ def _post(client, **kw):
     body = {"author": "张同学", "content": "希望打字练习能增加古诗文段落", "category": "建议"}
     body.update(kw)
     return client.post("/api/feedback", json=body)
+
+
+def _approve(client, auth, fid):
+    """审过一条，让它进公开区。"""
+    res = client.patch(
+        f"/api/feedback/{fid}/review", json={"status": "approved"}, headers=auth
+    )
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+def _post_approved(client, auth, **kw):
+    fid = _post(client, **kw).json()["id"]
+    _approve(client, auth, fid)
+    return fid
 
 
 # ---------------------------------------------------------------- 反馈
@@ -46,7 +62,21 @@ def test_duplicate_submit_is_idempotent(client):
     assert a.json()["id"] == b.json()["id"]
 
 
-def test_public_list_is_open(client):
+def test_new_feedback_is_not_public_until_reviewed(client, auth):
+    """先审后发：刚提交的不该出现在公开区。"""
+    fid = _post(client, author="待审同学", content="这条提交完应该处于待审核状态").json()["id"]
+    assert not any(r["id"] == fid for r in client.get("/api/feedback").json())
+
+    # 但管理端看得到，状态是 pending
+    mine = next(r for r in client.get("/api/feedback/all", headers=auth).json() if r["id"] == fid)
+    assert mine["status"] == "pending"
+
+    _approve(client, auth, fid)
+    assert any(r["id"] == fid for r in client.get("/api/feedback").json())
+
+
+def test_public_list_is_open(client, auth):
+    _post_approved(client, auth, author="公开列表", content="这条用来保证公开列表至少有一条")
     res = client.get("/api/feedback")
     assert res.status_code == 200
     assert len(res.json()) >= 1
@@ -63,7 +93,7 @@ def test_teacher_sees_contact(client, auth):
 
 
 def test_reply_shows_up_publicly(client, auth):
-    fid = client.get("/api/feedback").json()[0]["id"]
+    fid = _post_approved(client, auth, author="回复对象", content="这条会被老师回复，回复要公开显示")
     res = client.post(f"/api/feedback/{fid}/reply", json={"reply": "已排入下个版本"}, headers=auth)
     assert res.status_code == 200
     assert [r["content"] for r in res.json()["replies"]] == ["已排入下个版本"]
@@ -73,19 +103,61 @@ def test_reply_shows_up_publicly(client, auth):
     assert shown["replies"][0]["is_admin"] is True
 
 
-def test_hidden_feedback_disappears_from_public_list(client, auth):
-    fid = _post(client, author="临时", content="这条待会儿会被下架掉").json()["id"]
+def test_rejected_feedback_disappears_from_public_list(client, auth):
+    fid = _post_approved(client, auth, author="临时", content="这条待会儿会被拒掉")
     assert any(r["id"] == fid for r in client.get("/api/feedback").json())
 
-    res = client.patch(f"/api/feedback/{fid}/visibility", params={"is_public": False}, headers=auth)
+    res = client.patch(
+        f"/api/feedback/{fid}/review",
+        json={"status": "rejected", "note": "内容不合适"},
+        headers=auth,
+    )
     assert res.status_code == 200
     assert not any(r["id"] == fid for r in client.get("/api/feedback").json())
 
-    # 下架不是删除，管理端还能看到
-    assert any(r["id"] == fid for r in client.get("/api/feedback/all", headers=auth).json())
+    # 拒绝不是删除，管理端还能看到，而且留着拒绝原因
+    row = next(r for r in client.get("/api/feedback/all", headers=auth).json() if r["id"] == fid)
+    assert row["status"] == "rejected"
+    assert row["review_note"] == "内容不合适"
 
     client.delete(f"/api/feedback/{fid}", headers=auth)
     assert not any(r["id"] == fid for r in client.get("/api/feedback/all", headers=auth).json())
+
+
+def test_cannot_reply_or_like_before_approval(client, auth, teacher_auth):
+    """待审的内容还没公开，回复和点赞都没有意义，应该被挡下来。"""
+    fid = _post(client, author="待审", content="这条在审核通过前不该能回复或点赞").json()["id"]
+
+    assert client.post(
+        f"/api/feedback/{fid}/reply", json={"reply": "抢先回一句"}, headers=teacher_auth
+    ).status_code == 409
+    assert client.post(f"/api/feedback/{fid}/like", headers=teacher_auth).status_code == 409
+
+    _approve(client, auth, fid)
+    assert client.post(
+        f"/api/feedback/{fid}/reply", json={"reply": "现在可以了"}, headers=teacher_auth
+    ).status_code == 200
+
+
+def test_bulk_review(client, auth):
+    ids = [
+        _post(client, author=f"批量{i}", content=f"批量审核测试第 {i} 条内容").json()["id"]
+        for i in range(3)
+    ]
+    res = client.post(
+        "/api/feedback/review-bulk", json={"ids": ids, "status": "approved"}, headers=auth
+    )
+    assert res.json()["affected"] == 3
+
+    public = {r["id"] for r in client.get("/api/feedback").json()}
+    assert set(ids) <= public
+
+
+def test_pending_count_visible_to_teachers(client, auth, teacher_auth):
+    before = client.get("/api/feedback/pending-count", headers=teacher_auth).json()["pending"]
+    _post(client, author="计数", content="这条提交后待审数应该加一")
+    after = client.get("/api/feedback/pending-count", headers=teacher_auth).json()["pending"]
+    assert after == before + 1
 
 
 # ---------------------------------------------------------------- 更新日志
@@ -180,3 +252,85 @@ def test_invalid_change_type_rejected(client, auth):
         headers=auth,
     )
     assert res.status_code == 400
+
+
+# ---------------------------------------------------------------- 反馈配图
+PNG_1PX = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4"
+    "890000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082"
+)
+
+
+def test_upload_image_and_attach(client, auth):
+    res = client.post(
+        "/api/feedback/images", files={"file": ("shot.png", PNG_1PX, "image/png")}
+    )
+    assert res.status_code == 200, res.text
+    url = res.json()["image_url"]
+    assert url.startswith("/uploads/feedback/") and url.endswith(".png")
+
+    fid = client.post(
+        "/api/feedback",
+        json={"author": "带图同学", "category": "问题", "content": "这里显示不正常，见图", "images": [url]},
+    ).json()["id"]
+    _approve(client, auth, fid)
+
+    row = next(r for r in client.get("/api/feedback").json() if r["id"] == fid)
+    assert row["images"] == [url]
+
+
+def test_upload_rejects_non_image(client):
+    """光看扩展名不够：改个名字就能往服务器上放任意文件。"""
+    res = client.post(
+        "/api/feedback/images",
+        files={"file": ("fake.png", b"#!/bin/sh\nrm -rf /\n", "image/png")},
+    )
+    assert res.status_code == 400
+    assert "不是图片" in res.json()["detail"]
+
+
+def test_upload_rejects_other_extensions(client):
+    res = client.post(
+        "/api/feedback/images", files={"file": ("a.exe", PNG_1PX, "application/octet-stream")}
+    )
+    assert res.status_code == 400
+    assert "png/jpg" in res.json()["detail"]
+
+
+def test_network_image_url_accepted(client, auth):
+    url = "https://example.com/pic.png"
+    fid = client.post(
+        "/api/feedback",
+        json={"author": "外链同学", "category": "建议", "content": "配一张网络图片试试", "images": [url]},
+    ).json()["id"]
+    _approve(client, auth, fid)
+    row = next(r for r in client.get("/api/feedback").json() if r["id"] == fid)
+    assert row["images"] == [url]
+
+
+def test_bad_image_url_rejected(client):
+    res = client.post(
+        "/api/feedback",
+        json={
+            "author": "乱填同学",
+            "category": "建议",
+            "content": "这条的图片地址是乱填的，应该被挡住",
+            "images": ["javascript:alert(1)"],
+        },
+    )
+    assert res.status_code == 400
+    assert "http" in res.json()["detail"]
+
+
+def test_too_many_images_rejected(client):
+    res = client.post(
+        "/api/feedback",
+        json={
+            "author": "图多同学",
+            "category": "建议",
+            "content": "一条配四张图应该被挡住，最多三张",
+            "images": [f"https://example.com/{i}.png" for i in range(4)],
+        },
+    )
+    assert res.status_code == 400
+    assert "最多" in res.json()["detail"]

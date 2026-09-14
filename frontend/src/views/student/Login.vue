@@ -6,6 +6,7 @@ import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 import { setStudent } from '../../auth'
 import { siteConfig, year } from '../../siteConfig'
+import BrandLogo from '../../components/BrandLogo.vue'
 
 const router = useRouter()
 const title = computed(
@@ -44,7 +45,7 @@ async function submit() {
   <div class="wrap">
     <div class="card">
       <div class="head">
-        <span class="logo">科</span>
+        <BrandLogo :size="48" :radius="0.29" />
         <h1>{{ title }}</h1>
         <p class="sub">用学号登录，做考试和打字练习</p>
       </div>
@@ -111,17 +112,7 @@ async function submit() {
   text-align: center;
   margin-bottom: 24px;
 }
-.logo {
-  display: inline-flex;
-  width: 48px;
-  height: 48px;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #5b7cfa, #3f5bd8);
-  color: #fff;
-  align-items: center;
-  justify-content: center;
-  font-size: 22px;
-  font-weight: 600;
+.head :deep(.brand-logo) {
   margin-bottom: 14px;
 }
 h1 {
