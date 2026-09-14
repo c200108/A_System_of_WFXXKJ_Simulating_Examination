@@ -172,6 +172,10 @@ if [ "$NEED_GENERATE" = 1 ]; then
 # 由 deploy.sh 生成于 $(date '+%F %T')
 # 本文件含明文口令，不要提交进 Git，也不要发给别人。
 
+# 拉镜像走哪个仓库。国内服务器直连 Docker Hub 基本拉不动，默认用国内镜像源。
+# 能直连的机器改成 docker.io 即可。
+REGISTRY=${REGISTRY:-docker.1ms.run}
+
 MYSQL_ROOT_PASSWORD=$(gen 20)
 MYSQL_DATABASE=exam
 MYSQL_USER=exam

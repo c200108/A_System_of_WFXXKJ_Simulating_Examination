@@ -105,14 +105,21 @@ step "[4/6] 导出配置..."
 cp "$ROOT/config.yaml" "$OUT/config.yaml" || die "复制 config.yaml 失败"
 ok "config.yaml 已导出"
 
-# .env 里有明文口令，单独放并且只给 root 读
+# .env 里有明文口令，单独放并且只给 root 读。
+#
+# 除了口令，端口、对外地址、镜像源也一并带上 —— data-import.sh 是拿
+# .env.example 当模板再覆盖这些键的，不带的话每还原一次就被打回示例默认值
+# （端口退回 8080、镜像源退回 docker.io），同一台机器上反复还原尤其烦人。
 {
     echo "# 从 $(hostname) 于 $(date '+%F %T') 导出"
     echo "# 含明文口令，请妥善保管；还原时 data-import.sh 会读它"
     grep -E '^[[:space:]]*(MYSQL_|JWT_SECRET|ADMIN_)' "$ROOT/.env" 2>/dev/null
+    echo "# --- 以下是本机的部署设置，不是口令 ---"
+    grep -E '^[[:space:]]*(REGISTRY|WEB_PORT|CORS_ORIGINS|PUBLIC_BASE_URL)[[:space:]]*=' \
+        "$ROOT/.env" 2>/dev/null
 } > "$OUT/env.secrets"
 chmod 600 "$OUT/env.secrets"
-ok "口令已导出到 env.secrets（权限 600）"
+ok "口令和部署设置已导出到 env.secrets（权限 600）"
 
 # ---------------------------------------------------------------- 4 清单
 step "[5/6] 统计各表行数..."

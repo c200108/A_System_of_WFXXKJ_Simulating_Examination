@@ -34,6 +34,14 @@ from datetime import date
 # 结构：(版本号, 发布日期, [(变动类型, 内容), ...])
 VERSIONS: list[tuple[str, date, list[tuple[str, str]]]] = [
     (
+        "2.4.2",
+        date(2026, 9, 14),
+        [
+            ("Changed", "镜像源默认写进 .env：`REGISTRY=docker.1ms.run`。国内服务器不用再每次带着变量跑 `REGISTRY=... ./deploy.sh`，能直连 Docker Hub 的机器把这行改成 docker.io 即可。"),
+            ("Fixed", "还原数据后端口和镜像源会被打回示例默认值（退回 8080 和 docker.io）—— data-import.sh 拿 .env.example 当模板，而导出时只带了口令，没带这些。现在 data-export.sh 会把 REGISTRY、WEB_PORT、CORS_ORIGINS、PUBLIC_BASE_URL 一起导出，还原后照旧，不用每次手改。"),
+        ],
+    ),
+    (
         "2.4.1",
         date(2026, 9, 14),
         [
