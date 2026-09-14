@@ -34,6 +34,16 @@ from datetime import date
 # 结构：(版本号, 发布日期, [(变动类型, 内容), ...])
 VERSIONS: list[tuple[str, date, list[tuple[str, str]]]] = [
     (
+        "2.4.1",
+        date(2026, 9, 14),
+        [
+            ("Fixed", "删掉项目目录重新部署会卡在「container exam-system-backend-1 is unhealthy」。原因是 .env 随目录一起没了，重新生成的是新口令，而数据库的数据卷还活着、里面存的是旧口令 —— MySQL 只在第一次建库时采用配置里的口令。现在 deploy.sh 遇到这种情况会停下来说明白，并给出三条处理方案，不再生成一份注定连不上的配置。"),
+            ("Added", "新增 scripts/reset-db-password.sh：旧 .env 找不回来时，把数据卷里的口令改成当前 .env 的值，数据一条不动。改之前会先自动导出一份完整 SQL 备份，导不出来就停在原地不改。"),
+            ("Fixed", "数据库的健康检查原来用 mysqladmin ping，而它口令错了也返回成功 —— 于是数据库报「健康」，后端却连不上，报错只说后端不健康，根本指不到病根。改成用后端将要用的那套账号真查一次，口令不对时问题直接暴露在数据库这一层。"),
+            ("Security", "数据库健康检查不再把明文口令拼进命令里，docker inspect 看不到它了。"),
+        ],
+    ),
+    (
         "2.4.0",
         date(2026, 9, 14),
         [

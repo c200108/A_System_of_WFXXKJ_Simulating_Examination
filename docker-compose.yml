@@ -30,10 +30,24 @@ services:
     volumes:
       - db_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD}"]
+      # 用**应用账号**真的查一次，而不是 mysqladmin ping。
+      # ping 只看服务器答不答话：口令错了它照样打印 Access denied 然后退出码 0，
+      # 于是 db 报 healthy、后端却连不上，最后只看到一句
+      # 「container exam-system-backend-1 is unhealthy」，根本指不到病根。
+      # 查的是后端将要用的那一套账号口令库名，这里过了后端就一定连得上。
+      #
+      # 写成 $$VAR 是让容器里的 shell 自己去取环境变量：compose 就不会把明文口令
+      # 插进健康检查命令里，docker inspect 也看不到它。
+      test:
+        - CMD-SHELL
+        - >-
+          mysql -h localhost -u "$$MYSQL_USER" -p"$$MYSQL_PASSWORD"
+          -e 'SELECT 1' "$$MYSQL_DATABASE" >/dev/null 2>&1
       interval: 5s
       timeout: 5s
-      retries: 20
+      # 第一次建库要几十秒，这期间应用账号还没建出来，给够时间
+      start_period: 30s
+      retries: 30
 
   backend:
     build:
