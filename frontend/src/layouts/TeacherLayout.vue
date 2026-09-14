@@ -80,8 +80,10 @@ function onUserCommand(cmd) {
           <el-menu-item index="/js/classes">班级</el-menu-item>
         </template>
         <el-menu-item index="/js/feedback">反馈</el-menu-item>
-        <el-menu-item index="/js/changelog">更新日志</el-menu-item>
-        <el-menu-item v-if="user?.role === 'admin'" index="/js/users">账号</el-menu-item>
+        <template v-if="user?.role === 'admin'">
+          <el-menu-item index="/js/changelog">更新日志</el-menu-item>
+          <el-menu-item index="/js/users">账号</el-menu-item>
+        </template>
       </el-menu>
       <div class="right">
         <el-button link :title="dark ? '切换到浅色' : '切换到深色'" @click="toggleTheme">
@@ -111,7 +113,13 @@ function onUserCommand(cmd) {
     <el-footer class="footer">
       <span>© {{ year }} {{ title }}</span>
       <span v-if="version" class="ver">
-        <router-link to="/js/changelog" title="查看更新日志">v{{ version }}</router-link>
+        <!-- 版本号谁都看得到，但只有管理员点得进更新日志 -->
+        <router-link
+          v-if="user?.role === 'admin'"
+          to="/js/changelog"
+          title="查看更新日志"
+        >v{{ version }}</router-link>
+        <span v-else>v{{ version }}</span>
       </span>
       <span v-if="footer">{{ footer }}</span>
     </el-footer>

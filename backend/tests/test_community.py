@@ -161,8 +161,22 @@ def test_pending_count_visible_to_teachers(client, auth, teacher_auth):
 
 
 # ---------------------------------------------------------------- 更新日志
-def test_changelog_is_public_and_grouped(client):
-    versions = client.get("/api/changelog").json()
+def test_changelog_is_admin_only(client, teacher_auth):
+    """更新日志整个模块收归管理员，普通教师连看都看不到。"""
+    for url in ["/api/changelog", "/api/changelog/types"]:
+        assert client.get(url).status_code == 401, f"{url} 竟然免登录就能看"
+        res = client.get(url, headers=teacher_auth)
+        assert res.status_code == 403, f"{url} 放普通教师进去了"
+        assert "管理员" in res.json()["detail"]
+
+    # 页脚那个版本号是例外：谁都要显示，但它只回一个版本号，不含内容
+    res = client.get("/api/changelog/latest")
+    assert res.status_code == 200
+    assert set(res.json()) <= {"version", "released_on"}
+
+
+def test_changelog_is_grouped(client, auth):
+    versions = client.get("/api/changelog", headers=auth).json()
     assert versions, "初始化时应该已经灌进了历史版本"
 
     v = versions[0]
@@ -173,21 +187,21 @@ def test_changelog_is_public_and_grouped(client):
     assert g["items"][0]["content"]
 
 
-def test_newest_version_first(client):
-    dates = [v["released_on"] for v in client.get("/api/changelog").json()]
+def test_newest_version_first(client, auth):
+    dates = [v["released_on"] for v in client.get("/api/changelog", headers=auth).json()]
     assert dates == sorted(dates, reverse=True)
 
 
-def test_groups_follow_spec_order(client):
+def test_groups_follow_spec_order(client, auth):
     """组内顺序固定成 Added→Changed→…→Security，读起来才整齐。"""
     order = ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"]
-    for v in client.get("/api/changelog").json():
+    for v in client.get("/api/changelog", headers=auth).json():
         idx = [order.index(g["type"]) for g in v["groups"]]
         assert idx == sorted(idx), v["version"]
 
 
-def test_change_types_endpoint(client):
-    types = client.get("/api/changelog/types").json()
+def test_change_types_endpoint(client, auth):
+    types = client.get("/api/changelog/types", headers=auth).json()
     assert [t["value"] for t in types] == [
         "Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"
     ]
@@ -208,23 +222,26 @@ def test_add_entry_needs_login(client):
     assert res.status_code == 401
 
 
-def test_plain_teacher_cannot_delete_entry(client, auth, teacher_auth):
-    """更新日志是公共内容，普通教师加得了、删不了。"""
-    eid = client.post(
+def test_plain_teacher_cannot_write_entries(client, auth, teacher_auth):
+    """普通教师既加不了也删不了 —— 整个模块都不归他管。"""
+    res = client.post(
         "/api/changelog",
         json={"version": "9.9.8", "change_type": "Fixed", "content": "普通教师建的条目"},
         headers=teacher_auth,
+    )
+    assert res.status_code == 403 and "管理员" in res.json()["detail"]
+
+    eid = client.post(
+        "/api/changelog",
+        json={"version": "9.9.8", "change_type": "Fixed", "content": "管理员建的条目"},
+        headers=auth,
     ).json()["id"]
-
-    res = client.delete(f"/api/changelog/{eid}", headers=teacher_auth)
-    assert res.status_code == 403
-    assert "删除权" in res.json()["detail"]
-
+    assert client.delete(f"/api/changelog/{eid}", headers=teacher_auth).status_code == 403
     # 管理员照样删得掉，收拾干净
     assert client.delete(f"/api/changelog/{eid}", headers=auth).status_code == 200
 
 
-def test_teacher_adds_and_deletes_entry(client, auth):
+def test_admin_adds_and_deletes_entry(client, auth):
     res = client.post(
         "/api/changelog",
         json={
@@ -238,11 +255,11 @@ def test_teacher_adds_and_deletes_entry(client, auth):
     assert res.status_code == 200
     eid = res.json()["id"]
 
-    top = client.get("/api/changelog").json()[0]
+    top = client.get("/api/changelog", headers=auth).json()[0]
     assert top["version"] == "9.9.9"  # 日期最新，排在最前
 
     assert client.delete(f"/api/changelog/{eid}", headers=auth).status_code == 200
-    assert client.get("/api/changelog").json()[0]["version"] != "9.9.9"
+    assert client.get("/api/changelog", headers=auth).json()[0]["version"] != "9.9.9"
 
 
 def test_invalid_change_type_rejected(client, auth):

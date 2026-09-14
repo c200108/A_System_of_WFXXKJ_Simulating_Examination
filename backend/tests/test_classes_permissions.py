@@ -1,7 +1,8 @@
 """班级归属、删除权限、学生名单导入导出。
 
 三条主线：
-1. 公共资源（题库、练习文本、更新日志、打字成绩）没有删除权就删不掉；
+1. 公共资源（题库、练习文本、打字成绩）没有删除权就删不掉；
+   更新日志不在其中 —— 那整个模块只有管理员碰得到，见 test_community；
 2. 老师只能给自己名下的班发考试，管理员发的全体学生都收得到；
 3. 学生名单能用 Excel/CSV 导进导出，三列：学号、姓名、班级。
 """
@@ -67,16 +68,9 @@ def test_teacher_cannot_delete_shared_resources(client, auth, teacher_auth):
         json={"mode": "chinese", "difficulty": "简单", "content": "删除权限测试用的一段文本。"},
         headers=auth,
     ).json()["id"]
-    entry_id = client.post(
-        "/api/changelog",
-        json={"version": "0.0.9-permtest", "change_type": "Added", "content": "删除权限测试条目"},
-        headers=auth,
-    ).json()["id"]
-
     for url in [
         f"/api/questions/{qid}",
         f"/api/typing/texts/{text_id}",
-        f"/api/changelog/{entry_id}",
         "/api/typing/records",
     ]:
         res = client.delete(url, headers=teacher_auth)
