@@ -154,30 +154,41 @@ def test_profile_needs_login(client):
 
 
 # ---------------------------------------------------------------- 反馈权限
-def _new_feedback(client, content):
-    return client.post(
+def _new_feedback(client, content, admin_auth=None):
+    """提一条反馈。
+
+    改版后新提交的是「待审核」，不会出现在公开区，也不能回复点赞。
+    传 admin_auth 就顺手审过，用于那些需要一条**已公开**评论的用例。
+    """
+    fid = client.post(
         "/api/feedback",
         json={"author": "权限测试", "category": "建议", "content": content},
     ).json()["id"]
+    if admin_auth:
+        res = client.patch(
+            f"/api/feedback/{fid}/review", json={"status": "approved"}, headers=admin_auth
+        )
+        assert res.status_code == 200, res.text
+    return fid
 
 
-def test_only_admin_can_hide_feedback(client, teacher_auth, auth):
-    fid = _new_feedback(client, "这条用来测下架权限，普通老师不该能下架它")
+def test_only_admin_can_review_feedback(client, teacher_auth, auth):
+    fid = _new_feedback(client, "这条用来测审核权限，普通老师不该能审它", auth)
 
     res = client.patch(
-        f"/api/feedback/{fid}/visibility", params={"is_public": False}, headers=teacher_auth
+        f"/api/feedback/{fid}/review", json={"status": "rejected"}, headers=teacher_auth
     )
     assert res.status_code == 403
-    assert any(r["id"] == fid for r in client.get("/api/feedback").json()), "老师下架不该生效"
+    assert any(r["id"] == fid for r in client.get("/api/feedback").json()), "老师审核不该生效"
 
     assert client.patch(
-        f"/api/feedback/{fid}/visibility", params={"is_public": False}, headers=auth
+        f"/api/feedback/{fid}/review", json={"status": "rejected"}, headers=auth
     ).status_code == 200
     assert not any(r["id"] == fid for r in client.get("/api/feedback").json())
 
 
 def test_only_admin_can_delete_feedback(client, teacher_auth, auth):
-    fid = _new_feedback(client, "这条用来测删除权限，普通老师不该能删掉它")
+    fid = _new_feedback(client, "这条用来测删除权限，普通老师不该能删掉它", auth)
     assert client.delete(f"/api/feedback/{fid}", headers=teacher_auth).status_code == 403
     assert any(r["id"] == fid for r in client.get("/api/feedback").json())
     assert client.delete(f"/api/feedback/{fid}", headers=auth).status_code == 200
@@ -189,8 +200,8 @@ def test_only_admin_sees_contacts(client, teacher_auth, auth):
     assert client.get("/api/feedback/all", headers=auth).status_code == 200
 
 
-def test_teachers_replies_do_not_overwrite_each_other(client, teacher_auth, teacher2_auth):
-    fid = _new_feedback(client, "这条会有两位老师分别回复，谁也不该盖掉谁")
+def test_teachers_replies_do_not_overwrite_each_other(client, teacher_auth, teacher2_auth, auth):
+    fid = _new_feedback(client, "这条会有两位老师分别回复，谁也不该盖掉谁", auth)
 
     client.post(f"/api/feedback/{fid}/reply", json={"reply": "甲老师：收到了"}, headers=teacher_auth)
     res = client.post(
@@ -204,14 +215,14 @@ def test_teachers_replies_do_not_overwrite_each_other(client, teacher_auth, teac
     assert all(r["is_admin"] is False for r in replies)
 
 
-def test_empty_reply_is_rejected(client, teacher_auth):
-    fid = _new_feedback(client, "空回复应该被挡下来，不该留一条白板")
+def test_empty_reply_is_rejected(client, teacher_auth, auth):
+    fid = _new_feedback(client, "空回复应该被挡下来，不该留一条白板", auth)
     res = client.post(f"/api/feedback/{fid}/reply", json={"reply": "   "}, headers=teacher_auth)
     assert res.status_code == 400
 
 
 def test_reply_can_only_be_withdrawn_by_author_or_admin(client, teacher_auth, teacher2_auth, auth):
-    fid = _new_feedback(client, "这条用来测回复能不能被别人撤回")
+    fid = _new_feedback(client, "这条用来测回复能不能被别人撤回", auth)
     res = client.post(f"/api/feedback/{fid}/reply", json={"reply": "甲老师的回复"}, headers=teacher_auth)
     rid = res.json()["replies"][0]["id"]
 
@@ -224,8 +235,8 @@ def test_reply_can_only_be_withdrawn_by_author_or_admin(client, teacher_auth, te
     assert client.delete(f"/api/feedback/replies/{rid2}", headers=auth).status_code == 200
 
 
-def test_like_toggles_and_counts_once_per_person(client, teacher_auth, teacher2_auth):
-    fid = _new_feedback(client, "这条用来测点赞，点两次应该变成取消")
+def test_like_toggles_and_counts_once_per_person(client, teacher_auth, teacher2_auth, auth):
+    fid = _new_feedback(client, "这条用来测点赞，点两次应该变成取消", auth)
 
     res = client.post(f"/api/feedback/{fid}/like", headers=teacher_auth)
     assert res.json()["like_count"] == 1
@@ -242,14 +253,14 @@ def test_like_toggles_and_counts_once_per_person(client, teacher_auth, teacher2_
     assert res.json()["like_count"] == 2
 
 
-def test_like_needs_login(client):
-    fid = _new_feedback(client, "没登录的人不该能点赞，这条用来验证")
+def test_like_needs_login(client, auth):
+    fid = _new_feedback(client, "没登录的人不该能点赞，这条用来验证", auth)
     assert client.post(f"/api/feedback/{fid}/like").status_code == 401
 
 
-def test_public_list_marks_my_likes(client, teacher_auth):
+def test_public_list_marks_my_likes(client, teacher_auth, auth):
     """带令牌看列表要能认出自己点过的赞；不带令牌照样能看，只是都显示没点过。"""
-    fid = _new_feedback(client, "这条用来验证列表里的点赞标记对不对")
+    fid = _new_feedback(client, "这条用来验证列表里的点赞标记对不对", auth)
     client.post(f"/api/feedback/{fid}/like", headers=teacher_auth)
 
     row = next(r for r in client.get("/api/feedback", headers=teacher_auth).json() if r["id"] == fid)
@@ -259,12 +270,14 @@ def test_public_list_marks_my_likes(client, teacher_auth):
     assert anon["liked_by_me"] is False and anon["like_count"] == 1
 
 
-def test_emoji_survives_a_round_trip(client, teacher_auth):
+def test_emoji_survives_a_round_trip(client, teacher_auth, auth):
     """评论和回复都要能存表情。数据库是 utf8mb4，4 字节字符不能被截断。"""
     text = "希望能加个夜间模式 🌙✨，晚上做题眼睛疼 😣"
     fid = client.post(
         "/api/feedback", json={"author": "小明 🙂", "category": "建议", "content": text}
     ).json()["id"]
+    # 新提交的要审过才进公开区
+    client.patch(f"/api/feedback/{fid}/review", json={"status": "approved"}, headers=auth)
 
     row = next(r for r in client.get("/api/feedback").json() if r["id"] == fid)
     assert row["content"] == text

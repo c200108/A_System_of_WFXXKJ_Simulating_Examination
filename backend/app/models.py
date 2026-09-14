@@ -323,8 +323,15 @@ class Feedback(Base):
     contact: Mapped[str] = mapped_column(String(64), default="")  # 选填，方便回访
     category: Mapped[str] = mapped_column(String(16), default="建议", index=True)
     content: Mapped[str] = mapped_column(Text)
-    # 公开展示，所以要能下架不当言论；不物理删除，留痕可追溯
-    is_public: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    # 配图：本地上传的路径或外链，JSON 数组存一列。一条最多几张，不值得单开一张表。
+    images: Mapped[str] = mapped_column(Text, default="[]")
+    # 审核状态：pending 待审核 / approved 已通过 / rejected 已拒绝。
+    # **新提交的一律是 pending**，管理员审过才出现在公开区 ——
+    # 评论区谁都能发，先发后审的话不当内容会有一段时间挂在首页上。
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    review_note: Mapped[str] = mapped_column(String(255), default="")  # 拒绝原因，只给管理端看
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
     replies: Mapped[list["FeedbackReply"]] = relationship(

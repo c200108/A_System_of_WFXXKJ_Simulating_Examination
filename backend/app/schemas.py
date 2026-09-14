@@ -548,6 +548,8 @@ class FeedbackIn(BaseModel):
     contact: str = Field(default="", max_length=64)
     category: str = "建议"
     content: str = Field(max_length=2000)
+    # 配图：本地上传返回的 /uploads/... 路径，或者 http(s) 外链
+    images: list[str] = Field(default_factory=list)
 
 
 class FeedbackReplyOut(ORMModel):
@@ -567,14 +569,29 @@ class FeedbackOut(ORMModel):
     author: str
     category: str
     content: str
+    images: list[str] = []
     replies: list[FeedbackReplyOut] = []
     like_count: int = 0
     liked_by_me: bool = False
+    # 只在管理端的列表里有值；公开列表永远是 approved，不必看
+    status: str = "approved"
     created_at: datetime | None = None
 
 
 class FeedbackReplyIn(BaseModel):
     reply: str = Field(default="", max_length=2000)
+
+
+class FeedbackReviewIn(BaseModel):
+    """管理员审核一条反馈。拒绝时可以写个原因，只给管理端看。"""
+
+    status: Literal["approved", "rejected", "pending"]
+    note: str = Field(default="", max_length=255)
+
+
+class FeedbackReviewBulkIn(BaseModel):
+    ids: list[int] = Field(default_factory=list)
+    status: Literal["approved", "rejected"]
 
 
 # ---------- 更新日志 ----------

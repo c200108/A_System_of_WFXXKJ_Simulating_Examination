@@ -228,8 +228,16 @@ export const api = {
   feedbackReply: (id, reply) => http.post(`/feedback/${id}/reply`, { reply }),
   feedbackReplyDelete: rid => http.delete(`/feedback/replies/${rid}`),
   feedbackLike: id => http.post(`/feedback/${id}/like`),
-  feedbackVisibility: (id, is_public) =>
-    http.patch(`/feedback/${id}/visibility`, null, { params: { is_public } }),
+  feedbackPendingCount: () => http.get('/feedback/pending-count'),
+  feedbackReview: (id, status, note = '') =>
+    http.patch(`/feedback/${id}/review`, { status, note }),
+  feedbackReviewBulk: (ids, status) =>
+    http.post('/feedback/review-bulk', { ids, status }),
+  feedbackUploadImage(file) {
+    const fd = new FormData()
+    fd.append('file', file)
+    return http.post('/feedback/images', fd)
+  },
   feedbackDelete: id => http.delete(`/feedback/${id}`),
 
   // 更新日志

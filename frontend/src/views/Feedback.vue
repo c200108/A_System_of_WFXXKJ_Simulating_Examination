@@ -2,11 +2,13 @@
 /**
  * 需求反馈（公开提交、公开展示）。
  *
+ * **先审后发**：提交完是「待审核」，管理员审过才出现在公开区。
+ *
  * 权限分三档：
  *   未登录  —— 提交、浏览、看回复
  *   老师    —— 再多出「回复」和「点赞」
- *   管理员  —— 再多出「下架」「删除」，以及看联系方式
- * 界面上藏起来只是顺手，真正拦人的是后端：下架和删除挂的是 require_admin。
+ *   管理员  —— 再多出「审核」「删除」，以及看联系方式
+ * 界面上藏起来只是顺手，真正拦人的是后端：审核和删除挂的是 require_admin。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -31,6 +33,59 @@ const filter = ref('')
 const form = reactive({ author: '', contact: '', category: '建议', content: '' })
 const contentRef = ref(null)
 
+// ---------- 配图 ----------
+const MAX_IMAGES = 3
+const images = ref([])        // 已选好的图片地址，本地上传和外链混在一起
+const uploading = ref(false)
+const urlInput = ref('')
+const urlBox = ref(false)
+
+async function uploadImage(opt) {
+  if (images.value.length >= MAX_IMAGES) {
+    return ElMessage.warning(`最多配 ${MAX_IMAGES} 张图`)
+  }
+  uploading.value = true
+  try {
+    const res = await api.feedbackUploadImage(opt.file)
+    images.value.push(res.image_url)
+    ElMessage.success('图片已上传')
+  } catch (e) {
+    // 走的是原生 upload，拦截器弹过一次了，这里不重复弹
+    opt.onError?.(e)
+  } finally {
+    uploading.value = false
+  }
+}
+
+function addUrl() {
+  const url = urlInput.value.trim()
+  if (!url) return
+  if (!/^https?:\/\//i.test(url)) {
+    return ElMessage.warning('网络图片要用 http:// 或 https:// 开头的完整地址')
+  }
+  if (images.value.length >= MAX_IMAGES) {
+    return ElMessage.warning(`最多配 ${MAX_IMAGES} 张图`)
+  }
+  images.value.push(url)
+  urlInput.value = ''
+  urlBox.value = false
+}
+
+function dropImage(i) {
+  images.value.splice(i, 1)
+}
+
+// 点开大图。**开关必须是独立的布尔量**：el-dialog 的 modelValue 声明成
+// Boolean，Vue 对 Boolean 类型的 prop 会把空字符串强制转成 true，
+// 直接 v-model 绑图片地址的话，地址为空时对话框反而是打开的。
+const preview = ref('')
+const previewOpen = ref(false)
+
+function openPreview(src) {
+  preview.value = src
+  previewOpen.value = true
+}
+
 // 正在回复哪一条：{ [反馈id]: 输入中的文字 }
 const replyDraft = reactive({})
 const replyOpen = ref(null)
@@ -40,14 +95,19 @@ const me = currentUser
 const isTeacher = computed(() => !!me.value)
 const isAdmin = computed(() => me.value?.role === 'admin')
 
-// 管理员视角要看到已下架的和联系方式，走另一个接口
+// 管理员视角要看到待审核的和联系方式，走另一个接口
 const manageRows = ref([])
+const pending = ref(0)
+const picked = ref([])       // 批量审核勾中的
 
 async function load() {
   loading.value = true
   try {
     list.value = await api.feedbackList(filter.value ? { category: filter.value } : {})
     if (isAdmin.value) manageRows.value = await api.feedbackAll()
+    if (isTeacher.value) {
+      pending.value = (await api.feedbackPendingCount()).pending
+    }
   } finally {
     loading.value = false
   }
@@ -101,14 +161,19 @@ async function submit() {
 
   submitting.value = true
   try {
-    await api.feedbackCreate({ ...form })
+    await api.feedbackCreate({ ...form, images: images.value })
     localStorage.setItem(
       'feedbackWho',
       JSON.stringify({ a: form.author.trim(), c: form.contact.trim() })
     )
     form.content = ''
+    images.value = []
     await load()
-    ElMessage.success('已提交，感谢反馈')
+    ElMessageBox.alert(
+      '已提交，感谢反馈。\n\n内容要管理员审核通过后才会出现在下面的评论区，请稍等。',
+      '提交成功',
+      { confirmButtonText: '知道了' }
+    )
   } finally {
     submitting.value = false
   }
@@ -148,22 +213,29 @@ async function like(row) {
   row.liked_by_me = res.liked_by_me
 }
 
-// ---------- 管理员：下架与删除 ----------
-// 分成两个动作而不是一个 toggle：公开列表里的 FeedbackOut **不含 is_public**
-// （那是管理端字段），对它取反只会得到 true，等于点了「下架」却重新上架。
-async function hide(row) {
-  await ElMessageBox.confirm('下架后这条在公开列表里就看不到了，但记录仍然保留。', '确认下架', {
-    type: 'warning'
-  })
-  await api.feedbackVisibility(row.id, false)
+// ---------- 管理员：审核与删除 ----------
+async function review(row, status) {
+  let note = ''
+  if (status === 'rejected') {
+    const res = await ElMessageBox.prompt(
+      '拒绝后这条不会出现在公开区，内容仍然保留在管理端。\n可以写个原因，只有管理员看得到：',
+      '拒绝这条反馈',
+      { inputPlaceholder: '比如：内容不实 / 与平台无关', confirmButtonText: '确认拒绝' }
+    )
+    note = (res.value || '').trim()
+  }
+  await api.feedbackReview(row.id, status, note)
+  picked.value = picked.value.filter(id => id !== row.id)
   await load()
-  ElMessage.success('已下架')
+  ElMessage.success({ approved: '已通过，评论区可见了', rejected: '已拒绝', pending: '已退回待审' }[status])
 }
 
-async function restore(row) {
-  await api.feedbackVisibility(row.id, true)
+async function reviewPicked(status) {
+  if (!picked.value.length) return ElMessage.warning('先勾选要审的条目')
+  const res = await api.feedbackReviewBulk(picked.value, status)
+  picked.value = []
   await load()
-  ElMessage.success('已重新展示')
+  ElMessage.success(`已${status === 'approved' ? '通过' : '拒绝'} ${res.affected} 条`)
 }
 
 async function remove(row) {
@@ -176,7 +248,9 @@ async function remove(row) {
 }
 
 const fmt = t => String(t).replace('T', ' ').slice(0, 16)
-const hidden = computed(() => manageRows.value.filter(r => !r.is_public))
+
+const pendingRows = computed(() => manageRows.value.filter(r => r.status === 'pending'))
+const rejectedRows = computed(() => manageRows.value.filter(r => r.status === 'rejected'))
 </script>
 
 <template>
@@ -205,6 +279,14 @@ const hidden = computed(() => manageRows.value.filter(r => !r.is_public))
         placeholder="具体说说：想在哪个页面、做什么事、现在卡在哪里"
         class="ta"
       />
+      <!-- 已选的配图 -->
+      <div v-if="images.length" class="shots">
+        <div v-for="(src, i) in images" :key="src + i" class="shot">
+          <img :src="src" alt="配图" @click="openPreview(src)" />
+          <button class="drop" title="移除" @click="dropImage(i)">×</button>
+        </div>
+      </div>
+
       <div class="acts">
         <el-popover placement="bottom-start" :width="330" trigger="click">
           <template #reference>
@@ -214,15 +296,54 @@ const hidden = computed(() => manageRows.value.filter(r => !r.is_public))
             <button v-for="e in EMOJI" :key="e" class="emoji" @click="addEmojiToForm(e)">{{ e }}</button>
           </div>
         </el-popover>
-        <span class="tip">提交的内容会公开展示，联系方式不会。</span>
+
+        <el-upload
+          :http-request="uploadImage"
+          :show-file-list="false"
+          accept=".png,.jpg,.jpeg,.gif,.webp"
+          :disabled="uploading || images.length >= MAX_IMAGES"
+        >
+          <el-button size="small" :loading="uploading" :disabled="images.length >= MAX_IMAGES">
+            🖼 本地图片
+          </el-button>
+        </el-upload>
+
+        <el-popover v-model:visible="urlBox" placement="bottom-start" :width="330" trigger="click">
+          <template #reference>
+            <el-button size="small" :disabled="images.length >= MAX_IMAGES">🔗 网络图片</el-button>
+          </template>
+          <div class="urlbox">
+            <el-input
+              v-model="urlInput"
+              size="small"
+              placeholder="粘贴图片网址，https:// 开头"
+              @keyup.enter="addUrl"
+            />
+            <el-button size="small" type="primary" @click="addUrl">添加</el-button>
+          </div>
+        </el-popover>
+
+        <span class="tip">
+          最多 {{ MAX_IMAGES }} 张图。提交后<b>需管理员审核</b>才会公开展示，联系方式不公开。
+        </span>
         <span class="grow" />
         <el-button type="primary" :loading="submitting" @click="submit">提交反馈</el-button>
       </div>
     </el-card>
 
+    <!-- 点缩略图看大图 -->
+    <el-dialog v-model="previewOpen" title="查看配图" width="min(90vw, 900px)" align-center>
+      <img v-if="preview" :src="preview" class="bigpic" alt="配图" />
+    </el-dialog>
+
     <!-- 列表 -->
     <div class="listhead">
-      <h2>大家的反馈<span class="count">{{ list.length }}</span></h2>
+      <h2>
+        大家的反馈<span class="count">{{ list.length }}</span>
+        <el-tag v-if="isTeacher && pending" size="small" type="warning" effect="light" class="pendtag">
+          {{ pending }} 条待审核
+        </el-tag>
+      </h2>
       <el-select v-model="filter" placeholder="全部类型" clearable style="width: 130px" @change="load">
         <el-option v-for="c in CATEGORIES" :key="c" :label="c" :value="c" />
       </el-select>
@@ -239,14 +360,26 @@ const hidden = computed(() => manageRows.value.filter(r => !r.is_public))
           </el-tag>
           <time>{{ fmt(f.created_at) }}</time>
           <span class="grow" />
-          <!-- 管理员才有下架和删除 -->
+          <!-- 管理员才有撤下和删除 -->
           <template v-if="isAdmin">
-            <el-button link type="warning" @click="hide(f)">下架</el-button>
+            <el-button link type="warning" @click="review(f, 'rejected')">撤下</el-button>
             <el-button link type="danger" @click="remove(f)">删除</el-button>
           </template>
         </div>
 
         <p class="content">{{ f.content }}</p>
+
+        <div v-if="f.images?.length" class="pics">
+          <img
+            v-for="(src, i) in f.images"
+            :key="src + i"
+            :src="src"
+            class="pic"
+            alt="配图"
+            loading="lazy"
+            @click="openPreview(src)"
+          />
+        </div>
 
         <!-- 回复列表 -->
         <div v-if="f.replies?.length" class="replies">
@@ -317,22 +450,65 @@ const hidden = computed(() => manageRows.value.filter(r => !r.is_public))
       </article>
     </div>
 
-    <!-- 管理员：已下架的 -->
+    <!-- 管理员：审核队列 -->
     <template v-if="isAdmin">
       <div class="listhead hidden-head">
-        <h2>已下架<span class="count">{{ hidden.length }}</span></h2>
-        <span class="onlyadmin">只有管理员看得到这一栏</span>
+        <h2>待审核<span class="count">{{ pendingRows.length }}</span></h2>
+        <div class="bulkact">
+          <template v-if="picked.length">
+            <span class="picked">已选 {{ picked.length }} 条</span>
+            <el-button size="small" type="success" @click="reviewPicked('approved')">批量通过</el-button>
+            <el-button size="small" type="warning" @click="reviewPicked('rejected')">批量拒绝</el-button>
+            <el-button size="small" link @click="picked = []">取消</el-button>
+          </template>
+          <span v-else class="onlyadmin">只有管理员看得到这一栏</span>
+        </div>
       </div>
-      <el-empty v-if="!hidden.length" description="没有下架过任何反馈" :image-size="60" />
-      <div class="items">
-        <article v-for="f in hidden" :key="'h' + f.id" class="item off">
+
+      <el-empty v-if="!pendingRows.length" description="没有待审核的反馈" :image-size="60" />
+      <el-checkbox-group v-else v-model="picked" class="items">
+        <article v-for="f in pendingRows" :key="'p' + f.id" class="item pend">
           <div class="meta">
+            <el-checkbox :value="f.id" class="pick" />
             <span class="who">{{ f.author }}</span>
-            <el-tag size="small" type="info">{{ f.category }}</el-tag>
+            <el-tag :type="CAT_TYPE[f.category] || 'info'" size="small" effect="light">
+              {{ f.category }}
+            </el-tag>
             <span v-if="f.contact" class="contact">联系方式 {{ f.contact }}</span>
             <time>{{ fmt(f.created_at) }}</time>
             <span class="grow" />
-            <el-button link type="success" @click="restore(f)">重新展示</el-button>
+            <el-button link type="success" @click="review(f, 'approved')">通过</el-button>
+            <el-button link type="warning" @click="review(f, 'rejected')">拒绝</el-button>
+            <el-button link type="danger" @click="remove(f)">删除</el-button>
+          </div>
+          <p class="content">{{ f.content }}</p>
+          <div v-if="f.images?.length" class="pics">
+            <img
+              v-for="(src, i) in f.images"
+              :key="src + i"
+              :src="src"
+              class="pic"
+              alt="配图"
+              loading="lazy"
+              @click="openPreview(src)"
+            />
+          </div>
+        </article>
+      </el-checkbox-group>
+
+      <div class="listhead hidden-head">
+        <h2>已拒绝<span class="count">{{ rejectedRows.length }}</span></h2>
+      </div>
+      <el-empty v-if="!rejectedRows.length" description="没有拒绝过任何反馈" :image-size="60" />
+      <div class="items">
+        <article v-for="f in rejectedRows" :key="'r' + f.id" class="item off">
+          <div class="meta">
+            <span class="who">{{ f.author }}</span>
+            <el-tag size="small" type="info">{{ f.category }}</el-tag>
+            <span v-if="f.review_note" class="note">原因：{{ f.review_note }}</span>
+            <time>{{ fmt(f.created_at) }}</time>
+            <span class="grow" />
+            <el-button link type="success" @click="review(f, 'approved')">改为通过</el-button>
             <el-button link type="danger" @click="remove(f)">删除</el-button>
           </div>
           <p class="content">{{ f.content }}</p>
@@ -427,6 +603,95 @@ h1 {
   font-family: ui-monospace, Consolas, monospace;
 }
 .onlyadmin {
+  font-size: 12px;
+  color: var(--el-color-warning);
+}
+
+/* ---------- 配图 ---------- */
+.shots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+/* 名字别太泛：点赞按钮里那个 👍 本来就叫 .thumb，撞了会被撑成方块 */
+.shot {
+  position: relative;
+  width: 84px;
+  height: 84px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--el-border-color-lighter);
+  background: var(--el-fill-color-lighter);
+}
+.shot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  cursor: zoom-in;
+  display: block;
+}
+.shot .drop {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.pics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 0;
+}
+.pic {
+  width: 120px;
+  height: 90px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--el-border-color-lighter);
+  cursor: zoom-in;
+  background: var(--el-fill-color-lighter);
+}
+.bigpic {
+  display: block;
+  max-width: 100%;
+  max-height: 78vh;
+  margin: 0 auto;
+}
+.urlbox {
+  display: flex;
+  gap: 8px;
+}
+
+/* ---------- 审核 ---------- */
+.bulkact {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.picked {
+  font-size: 12.5px;
+  color: var(--el-text-color-secondary);
+}
+.pendtag {
+  margin-left: 10px;
+}
+.item.pend {
+  border-left: 3px solid var(--el-color-warning);
+}
+.pick {
+  margin-right: 2px;
+}
+.note {
   font-size: 12px;
   color: var(--el-color-warning);
 }

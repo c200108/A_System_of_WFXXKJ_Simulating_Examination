@@ -11,6 +11,7 @@ import { ElMessageBox } from 'element-plus'
 import { api } from '../api'
 import { clearStudentAuth, currentStudent, setStudent } from '../auth'
 import { siteConfig, year } from '../siteConfig'
+import BrandLogo from '../components/BrandLogo.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -92,7 +93,7 @@ async function logout() {
 
     <aside class="side">
       <div class="brand" :title="title">
-        <span class="logo">科</span>
+        <BrandLogo :size="30" />
         <span v-show="!collapsed" class="bname">{{ shortTitle }}</span>
       </div>
 
@@ -196,19 +197,6 @@ async function logout() {
   padding: 0 14px;
   border-bottom: 1px solid var(--el-border-color-lighter);
   overflow: hidden;
-}
-.logo {
-  width: 30px;
-  height: 30px;
-  flex: none;
-  border-radius: 9px;
-  background: linear-gradient(135deg, #5b7cfa, #3f5bd8);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 15px;
-  font-weight: 600;
 }
 .bname {
   font-size: 14.5px;

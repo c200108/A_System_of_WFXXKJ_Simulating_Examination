@@ -1,18 +1,22 @@
 """需求反馈 + 更新日志。
 
-反馈：学生和老师都能提，**不需要登录**；提交后公开展示在反馈区。
-      老师登录后能在评论下回复、点赞；**下架和删除只有管理员能做** ——
-      这两个动作会让内容从公开区消失，权限收在一个人手里，出了事查得清。
+反馈：学生和老师都能提，**不需要登录**；但**要管理员审核过才出现在公开区**。
+      评论区谁都能发，先发后审的话不当内容会有一段时间挂在首页上。
+      老师登录后能在已通过的评论下回复、点赞；审核、删除只有管理员能做。
 更新日志：公开可看，按 Keep a Changelog 规范组织 —— 一个版本一组，
       组内按 Added / Changed / Fixed 等变动类型再分。
 """
 
-from datetime import date
+import json
+import os
+import uuid
+from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..database import get_db
 from ..deps import (
     get_current_user,
@@ -29,11 +33,28 @@ from ..schemas import (
     FeedbackOut,
     FeedbackReplyIn,
     FeedbackReplyOut,
+    FeedbackReviewBulkIn,
+    FeedbackReviewIn,
 )
 
 router = APIRouter(prefix="/api", tags=["反馈与日志"])
 
 CATEGORIES = ("建议", "问题", "表扬", "其他")
+STATUSES = ("pending", "approved", "rejected")
+
+MAX_IMAGES = 3
+ALLOWED_IMAGE = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+# 文件头，用来确认"扩展名是 .png 的东西"确实是张图。
+# 只看扩展名的话，改个名字就能往服务器上放任意文件。
+# 用 fromhex 而不是带反斜杠的字节字面量：这份源码经过几层工具传递，
+# 反斜杠转义被吃掉过好几次，写成十六进制就没有这个隐患。
+IMAGE_MAGIC = (
+    bytes.fromhex("89504e470d0a1a0a"),  # png
+    bytes.fromhex("ffd8ff"),            # jpg
+    b"GIF87a",
+    b"GIF89a",
+    b"RIFF",                            # webp，RIFF 后第 8 字节起还要是 WEBP
+)
 CHANGE_TYPES = ("Added", "Changed", "Deprecated", "Removed", "Fixed", "Security")
 
 # 变动类型的中文说明，前端直接用，不用各写一份
@@ -47,6 +68,15 @@ CHANGE_TYPE_LABELS = {
 }
 
 
+def _images(row: Feedback) -> list[str]:
+    """配图存的是 JSON 数组。存过脏值时当没有，不要让整个列表挂掉。"""
+    try:
+        val = json.loads(row.images or "[]")
+        return [str(x) for x in val] if isinstance(val, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
 def _out(row: Feedback, me: User | None) -> FeedbackOut:
     """一条反馈的公开视图。contact 不在 FeedbackOut 里，构造不出来也就漏不出去。"""
     return FeedbackOut(
@@ -54,6 +84,8 @@ def _out(row: Feedback, me: User | None) -> FeedbackOut:
         author=row.author,
         category=row.category,
         content=row.content,
+        images=_images(row),
+        status=row.status,
         replies=[FeedbackReplyOut.model_validate(r) for r in row.replies],
         like_count=len(row.likes),
         liked_by_me=bool(me) and any(lk.user_id == me.id for lk in row.likes),
@@ -61,8 +93,65 @@ def _out(row: Feedback, me: User | None) -> FeedbackOut:
     )
 
 
+def _check_images(urls: list[str]) -> list[str]:
+    """校验配图地址。两种来源：本地上传的 /uploads/... 和 http(s) 外链。
+
+    外链只做格式校验，不去下载 —— 下载外部地址等于让服务器按用户给的
+    URL 发请求，是个现成的 SSRF 口子。图片由浏览器去取，服务器不碰。
+    """
+    out = []
+    for raw in urls[:MAX_IMAGES]:
+        url = str(raw or "").strip()
+        if not url:
+            continue
+        if url.startswith("/uploads/"):
+            out.append(url[:500])
+        elif url.startswith(("http://", "https://")):
+            out.append(url[:500])
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"图片地址「{url[:40]}」不认识，要么是本站上传的，要么是 http/https 开头的网址",
+            )
+    if len(urls) > MAX_IMAGES:
+        raise HTTPException(status_code=400, detail=f"一条反馈最多配 {MAX_IMAGES} 张图")
+    return out
+
+
 # ================================================================ 需求反馈
-@router.post("/feedback", response_model=FeedbackOut, summary="提交反馈（公开）")
+@router.post("/feedback/images", summary="上传反馈配图（公开）")
+async def upload_feedback_image(file: UploadFile = File(...)):
+    """反馈不需要登录，所以这个上传口也是公开的。
+
+    三道限制：扩展名白名单、大小上限、**文件头必须真的是图片** ——
+    光看扩展名的话，改个名字就能往服务器上放任意文件。
+    文件名用随机 uuid，猜不到；加上内容要管理员审过才公开展示。
+    """
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in ALLOWED_IMAGE:
+        raise HTTPException(status_code=400, detail="只支持 png/jpg/gif/webp")
+
+    content = await file.read()
+    limit_mb = min(settings.max_upload_mb, 5)  # 评论配图不需要很大
+    if len(content) > limit_mb * 1024 * 1024:
+        raise HTTPException(status_code=400, detail=f"图片不能超过 {limit_mb} MB")
+    if not content:
+        raise HTTPException(status_code=400, detail="文件是空的")
+
+    if not content.startswith(IMAGE_MAGIC):
+        raise HTTPException(status_code=400, detail="这个文件看起来不是图片，换一张试试")
+    if content.startswith(b"RIFF") and content[8:12] != b"WEBP":
+        raise HTTPException(status_code=400, detail="这个文件看起来不是图片，换一张试试")
+
+    folder = os.path.join(settings.upload_dir, "feedback")
+    os.makedirs(folder, exist_ok=True)
+    name = f"{uuid.uuid4().hex}{ext}"
+    with open(os.path.join(folder, name), "wb") as f:
+        f.write(content)
+    return {"image_url": f"/uploads/feedback/{name}"}
+
+
+@router.post("/feedback", response_model=FeedbackOut, summary="提交反馈（公开，待审核）")
 def create_feedback(body: FeedbackIn, db: Session = Depends(get_db)):
     author = body.author.strip()
     content = body.content.strip()
@@ -72,6 +161,8 @@ def create_feedback(body: FeedbackIn, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="说得再具体一点吧，至少 5 个字")
     if body.category not in CATEGORIES:
         raise HTTPException(status_code=400, detail=f"类型只能是 {'/'.join(CATEGORIES)}")
+
+    images = _check_images(body.images)
 
     # 同一个人重复提交完全一样的内容，多半是手抖点了两次
     dup = db.scalar(
@@ -85,6 +176,8 @@ def create_feedback(body: FeedbackIn, db: Session = Depends(get_db)):
         contact=body.contact.strip()[:64],
         category=body.category,
         content=content,
+        images=json.dumps(images, ensure_ascii=False),
+        status="pending",  # 审过才公开
     )
     db.add(row)
     db.commit()
@@ -99,28 +192,48 @@ def list_feedback(
     me: User | None = Depends(get_optional_user),
     db: Session = Depends(get_db),
 ):
-    """公开接口只返回没被下架的。联系方式不在响应模型里，不会外泄。
+    """公开接口**只返回审核通过的**。联系方式不在响应模型里，不会外泄。
 
     带令牌访问时会顺带标出哪几条是自己点过赞的（liked_by_me）；不带令牌照常返回。
     """
-    stmt = select(Feedback).where(Feedback.is_public.is_(True))
+    stmt = select(Feedback).where(Feedback.status == "approved")
     if category:
         stmt = stmt.where(Feedback.category == category)
     rows = db.scalars(stmt.order_by(Feedback.created_at.desc()).limit(limit)).all()
     return [_out(r, me) for r in rows]
 
 
-@router.get("/feedback/all", summary="全部反馈，含已下架和联系方式（管理员）")
+@router.get("/feedback/all", summary="全部反馈，含待审核和联系方式（管理员）")
 def list_feedback_all(
+    status: str | None = Query(None, description="按状态筛，留空看全部"),
     me: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """联系方式和已下架的内容只给管理员看，普通老师用公开列表就够了。"""
-    rows = db.scalars(select(Feedback).order_by(Feedback.created_at.desc()).limit(500)).all()
+    """联系方式和未通过的内容只给管理员看，普通老师用公开列表就够了。"""
+    if status and status not in STATUSES:
+        raise HTTPException(status_code=400, detail=f"状态只能是 {'/'.join(STATUSES)}")
+
+    stmt = select(Feedback)
+    if status:
+        stmt = stmt.where(Feedback.status == status)
+    rows = db.scalars(stmt.order_by(Feedback.created_at.desc()).limit(500)).all()
     return [
-        {**_out(r, me).model_dump(), "contact": r.contact, "is_public": r.is_public}
+        {
+            **_out(r, me).model_dump(),
+            "contact": r.contact,
+            "review_note": r.review_note,
+            "reviewed_at": r.reviewed_at,
+        }
         for r in rows
     ]
+
+
+@router.get("/feedback/pending-count", summary="待审核条数（教师可见，用来提醒管理员）")
+def pending_count(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    n = db.scalar(
+        select(func.count()).select_from(Feedback).where(Feedback.status == "pending")
+    )
+    return {"pending": n or 0}
 
 
 @router.post("/feedback/{fid}/reply", response_model=FeedbackOut, summary="在反馈下回复（教师）")
@@ -134,6 +247,8 @@ def reply_feedback(
     row = db.get(Feedback, fid)
     if not row:
         raise HTTPException(status_code=404, detail="反馈不存在")
+    if row.status != "approved":
+        raise HTTPException(status_code=409, detail="这条还没通过审核，等管理员审过再回复")
     content = body.reply.strip()
     if not content:
         raise HTTPException(status_code=400, detail="回复内容不能为空")
@@ -174,6 +289,8 @@ def toggle_like(
     row = db.get(Feedback, fid)
     if not row:
         raise HTTPException(status_code=404, detail="反馈不存在")
+    if row.status != "approved":
+        raise HTTPException(status_code=409, detail="这条还没通过审核")
 
     existing = db.scalar(
         select(FeedbackLike).where(
@@ -189,20 +306,46 @@ def toggle_like(
     return _out(row, me)
 
 
-@router.patch("/feedback/{fid}/visibility", response_model=FeedbackOut, summary="上架/下架（管理员）")
-def toggle_feedback(
+@router.patch("/feedback/{fid}/review", response_model=FeedbackOut, summary="审核一条反馈（管理员）")
+def review_feedback(
     fid: int,
-    is_public: bool,
+    body: FeedbackReviewIn,
     me: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    """通过 / 拒绝 / 退回待审。拒绝后内容还在库里，只是不进公开区。"""
     row = db.get(Feedback, fid)
     if not row:
         raise HTTPException(status_code=404, detail="反馈不存在")
-    row.is_public = is_public
+
+    row.status = body.status
+    row.review_note = body.note.strip()[:255]
+    row.reviewed_by = me.id
+    row.reviewed_at = datetime.now()
     db.commit()
     db.refresh(row)
     return _out(row, me)
+
+
+@router.post("/feedback/review-bulk", summary="批量审核（管理员）")
+def review_bulk(
+    body: FeedbackReviewBulkIn,
+    me: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """一次开学能积几十条，一条条点太慢。"""
+    ids = list(dict.fromkeys(body.ids))
+    if not ids:
+        raise HTTPException(status_code=400, detail="没有选中任何反馈")
+
+    rows = list(db.scalars(select(Feedback).where(Feedback.id.in_(ids))))
+    now = datetime.now()
+    for r in rows:
+        r.status = body.status
+        r.reviewed_by = me.id
+        r.reviewed_at = now
+    db.commit()
+    return {"status": body.status, "affected": len(rows)}
 
 
 @router.delete("/feedback/{fid}", summary="删除反馈（管理员）")
