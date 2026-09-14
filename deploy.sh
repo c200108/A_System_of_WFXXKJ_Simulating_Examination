@@ -106,6 +106,47 @@ if [ -f .env ]; then
     fi
 fi
 
+# 要重新生成口令、但数据卷里已经有一个旧数据库 —— 这是最容易踩的坑：
+# 删掉项目目录重新部署时，.env 跟着没了（它不进 Git），脚本会生成一份**新的**
+# 随机口令；可数据库的数据卷不在项目目录里，它还活着，里面存的还是**旧口令**。
+# MySQL 只在第一次初始化时采用 MYSQL_PASSWORD，之后完全不看这个变量。
+#
+# 结果就是：db 容器正常起来、健康检查还过（mysqladmin ping 只看服务器答不答话，
+# 不管口令对不对），后端却怎么都连不上，最后卡在
+#   dependency failed to start: container exam-system-backend-1 is unhealthy
+#
+# 所以这里直接拦下来，让人先决定拿旧数据怎么办，而不是生成一份注定连不上的配置。
+DB_VOLUME="exam-system_db_data"
+if [ "$NEED_GENERATE" = 1 ] && docker volume inspect "$DB_VOLUME" >/dev/null 2>&1; then
+    printf "\n${C_RED}[停一下] 这台机器上已经有一个旧数据库，但 .env 不见了${C_OFF}\n\n"
+    cat <<'TXT'
+      数据卷 exam-system_db_data 还在，里面是你之前的题库和成绩。
+      但数据库的口令存在库里，而记着这个口令的 .env 随项目目录一起被删了。
+
+      现在生成新口令没用 —— MySQL 只认它初始化时那一个，后端照样连不上，
+      部署会卡在「backend is unhealthy」。
+
+      三条路，挑一条：
+
+      1) 找回旧 .env（最省事，数据原样还在）
+         找找这几个地方，找到就放回项目根目录，然后重新跑本脚本：
+           ls -a ~ /opt/exam-backups /root | grep -i env
+           ls exam-data/env.secrets            # data-export.sh 导出的那份里就有
+         放回去：cp /路径/env.secrets .env && chmod 600 .env
+
+      2) 旧 .env 找不回来，但要保住数据
+         用这个脚本把库里的口令改成新的（会先自动导出一份 SQL 备份）：
+           bash scripts/reset-db-password.sh
+
+      3) 旧数据不要了，从零开始
+         注意：题库、成绩、学生账号全部清空，不可恢复。
+           docker compose down
+           docker volume rm exam-system_db_data
+         然后重新跑本脚本。
+TXT
+    die "请先按上面选一条处理，再重新运行 ./deploy.sh"
+fi
+
 if [ "$NEED_GENERATE" = 1 ]; then
     echo
     echo "  这台机器对外的访问地址是什么？"
