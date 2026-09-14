@@ -34,4 +34,15 @@ body {
 .page-card {
   margin-bottom: 16px;
 }
+
+/* 对话框宽度各页面写的都是固定像素（520px、760px……），手机上会超出屏幕、
+   整页横向滚动。这里统一封一道顶：再宽也不超过屏幕。
+   写在全局而不是各页面的 scoped 里 —— el-dialog 挂在 body 上，
+   scoped 样式和 :deep() 都够不着它。 */
+.el-dialog {
+  max-width: calc(100vw - 24px);
+}
+.el-message-box {
+  max-width: calc(100vw - 24px);
+}
 </style>

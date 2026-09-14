@@ -83,6 +83,7 @@ async def import_questions(
             scope=item["scope"],
             source=item["source"],
             image_url=item["image_url"],
+            difficulty=item.get("difficulty") or 3,
             created_by=user.id,
         )
         for i, (label, text) in enumerate(item["options"]):

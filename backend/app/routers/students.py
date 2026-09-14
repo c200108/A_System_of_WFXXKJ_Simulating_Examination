@@ -42,6 +42,7 @@ from ..security import (
     hash_password,
     verify_password,
 )
+from ..routers.take import _submit_out as submit_out
 from ..services.exam import grade, group_items, load_items, strip_answers
 
 student_api = APIRouter(prefix="/api/student", tags=["学生平台"])
@@ -172,6 +173,7 @@ def student_exams(me: Student = Depends(get_current_student), db: Session = Depe
     out = []
     for e in exams:
         sub = done.get(e.id)
+        visible = sub is not None and e.show_score
         out.append(
             StudentExamOut(
                 id=e.id,
@@ -180,7 +182,12 @@ def student_exams(me: Student = Depends(get_current_student), db: Session = Depe
                 total=len(e.paper.items) if e.paper else 0,
                 submitted=sub is not None,
                 # 老师关掉"交卷后看分数"时连历史分数也不给看，口径保持一致
-                score=sub.score if (sub and e.show_score) else None,
+                score=sub.score if visible else None,
+                objective_score=sub.objective_score if visible else None,
+                subjective_score=sub.subjective_score if visible else None,
+                full_score=(sub.objective_total + sub.subjective_total) if visible else None,
+                # 操作题还没批完时列表上标一句，免得学生以为分就这么多了
+                pending_manual=bool(sub and sub.subjective_total > 0 and sub.graded_at is None),
                 show_score=e.show_score,
                 allow_retake=e.allow_retake,
                 submitted_at=sub.submitted_at if sub else None,
@@ -219,6 +226,7 @@ def student_paper(
         "duration": exam.paper.duration,
         "code": exam.paper.code,
         "total": len(items),
+        "full_score": sum(int(it.get("score") or 0) for it in items),
         # 和公开答题页同一个函数，答案在这一步就被剥掉了
         "groups": strip_answers(group_items(items)),
     }
@@ -259,20 +267,15 @@ def student_submit(
             right_count=result["right_count"],
             objective_count=result["objective_count"],
             score=result["score"],
+            objective_score=result["objective_score"],
+            objective_total=result["objective_total"],
+            subjective_total=result["subjective_total"],
         )
     )
     db.commit()
 
-    out = {"submitted": True, "message": "交卷成功"}
-    if exam.show_score:
-        out["score"] = result["score"]
-        out["right_count"] = result["right_count"]
-        out["objective_count"] = result["objective_count"]
-    else:
-        out["message"] = "交卷成功，成绩由老师统一公布"
-    if exam.show_answer:
-        out["detail"] = result["detail"]
-    return out
+    # 和公开答题页共用同一段"给学生看什么"的逻辑，两处口径不会走样
+    return submit_out(exam, result).model_dump()
 
 
 @student_api.get("/typing/records", summary="我的打字练习记录")

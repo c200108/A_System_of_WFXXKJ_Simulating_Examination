@@ -60,7 +60,9 @@ const fmt = t => (t ? String(t).replace('T', ' ').slice(0, 16) : '')
         <h3 class="sect">已完成<span class="cnt">{{ done.length }}</span></h3>
         <div class="grid">
           <article v-for="e in done" :key="e.id" class="card">
-            <div class="tag ok">已交卷</div>
+            <div class="tag" :class="e.pending_manual ? 'wait' : 'ok'">
+              {{ e.pending_manual ? '待评阅' : '已交卷' }}
+            </div>
             <h4>{{ e.title }}</h4>
             <div class="meta">
               <span>共 {{ e.total }} 题</span>
@@ -68,11 +70,15 @@ const fmt = t => (t ? String(t).replace('T', ' ').slice(0, 16) : '')
             </div>
             <div class="foot">
               <span v-if="e.score !== null && e.score !== undefined" class="score">
-                {{ e.score }}<i>分</i>
+                {{ e.score }}<i v-if="e.full_score">/{{ e.full_score }} 分</i><i v-else>分</i>
               </span>
               <span v-else class="pending">成绩由老师统一公布</span>
               <el-button v-if="e.allow_retake" size="small" @click.stop="open(e)">再考一次</el-button>
             </div>
+            <!-- 操作题要老师看，先给的是客观题那一段；不写清楚学生会以为自己考砸了 -->
+            <p v-if="e.pending_manual" class="wait-note">
+              这是客观题得分，操作题老师批完后总分会自动更新。
+            </p>
           </article>
         </div>
       </section>
@@ -130,6 +136,16 @@ const fmt = t => (t ? String(t).replace('T', ' ').slice(0, 16) : '')
   background: var(--el-color-primary-light-9);
   color: var(--el-color-primary);
   font-weight: 600;
+}
+.tag.wait {
+  background: var(--el-color-warning-light-9);
+  color: var(--el-color-warning);
+}
+.wait-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-color-warning);
 }
 .tag.ok {
   background: var(--el-color-success-light-9);

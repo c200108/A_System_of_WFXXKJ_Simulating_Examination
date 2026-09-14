@@ -179,6 +179,10 @@ class StudentExamOut(BaseModel):
     total: int = 0
     submitted: bool = False
     score: int | None = None          # 没交或老师关了看分数就是 None
+    objective_score: int | None = None
+    subjective_score: int | None = None
+    full_score: int | None = None     # 卷面总分；老卷子是 None，按百分制看
+    pending_manual: bool = False      # 操作题还等着老师评阅
     show_score: bool = True
     allow_retake: bool = False
     submitted_at: datetime | None = None
@@ -214,6 +218,9 @@ class QuestionBase(BaseModel):
     scope: str
     source: str = "自定义"
     image_url: str | None = None
+    # 难度只用数字 1~5。不填就按题型和题干自动估一个（services/difficulty.py），
+    # 省得老师为了加一道题先纠结难度该填几。
+    difficulty: int | None = Field(default=None, ge=1, le=5)
     is_pinned: bool = False
 
 
@@ -228,6 +235,7 @@ class QuestionUpdate(BaseModel):
     scope: str | None = None
     source: str | None = None
     image_url: str | None = None
+    difficulty: int | None = Field(default=None, ge=1, le=5)
     is_pinned: bool | None = None
     options: list[OptionIn] | None = None
 
@@ -241,6 +249,7 @@ class QuestionOut(ORMModel):
     scope: str
     source: str
     image_url: str | None = None
+    difficulty: int = 3
     is_pinned: bool
     options: list[OptionOut] = []
     created_at: datetime | None = None
@@ -259,6 +268,13 @@ class PaperGenerateIn(BaseModel):
     school: str = Field(default_factory=lambda: site.school.name)
     duration: str = Field(default_factory=lambda: site.paper.default_duration)
     counts: dict[str, int] = Field(default_factory=lambda: dict(site.paper.default_counts))
+    # True = 按卷面结构出六个大题并给每题赋分（默认）；
+    # False = 老的按题型自由组卷，不设分值，判分仍按正确率折百分制。
+    by_sections: bool = True
+    # 改过的题量，键是 "大题名/第几组"，只传改动过的那几个
+    section_counts: dict[str, int] = Field(default_factory=dict)
+    # 改过的大题分值，键是大题名；不传就用 config.yaml 里的
+    section_scores: dict[str, int] = Field(default_factory=dict)
     scopes: list[str] | None = None       # 为空表示全部知识范围
     use_pinned: bool = Field(default_factory=lambda: site.paper.use_pinned)
     require_answer: bool = Field(default_factory=lambda: site.paper.require_answer)
@@ -278,11 +294,18 @@ class PaperItemOut(BaseModel):
     scope: str
     source: str = ""
     image_url: str | None = None
+    difficulty: int = 3
+    section: str = ""                     # 归属大题
+    score: int = 0                        # 本题分值，0 = 这份卷子没设分
     options: list[OptionOut] = []
 
 
 class PaperGroupOut(BaseModel):
-    type: str                             # 一道大题（选择题/判断题/操作题）
+    # name 是大题名（「物联网实践与探索」），可能和题型不一样；
+    # type 留着是为了不打断老前端，值和 name 相同。
+    name: str = ""
+    type: str
+    score: int = 0                        # 本大题总分
     items: list[PaperItemOut]
 
 
@@ -294,6 +317,8 @@ class PaperGenerateOut(BaseModel):
     code: str = ""                        # 卷号 NO.12345
     seed: str = ""
     total: int
+    full_score: int = 0                   # 卷面总分，0 = 这份卷子没设分
+    by_sections: bool = False
     tally: dict[str, int]                 # 各知识范围实际抽了几题
     warnings: list[str] = []
     groups: list[PaperGroupOut] = []      # 按大题分组，前端照着排版
@@ -345,6 +370,8 @@ class ExamOut(ORMModel):
     created_at: datetime | None = None
     submission_count: int = 0
     avg_score: float | None = None
+    full_score: int = 0            # 卷面总分，0 = 老卷子（百分制）
+    ungraded_count: int = 0        # 还有几份卷子的操作题没批完
     owner_name: str = ""
     # 能不能改设置／删除。老师看得到管理员发的考试，但只能查成绩
     can_edit: bool = True
@@ -359,11 +386,14 @@ class TakeQuestionOut(BaseModel):
     stem: str
     scope: str
     image_url: str | None = None
+    score: int = 0                        # 本题分值。卷面上本来就印着，不是答案线索
     options: list[OptionOut] = []
 
 
 class TakeGroupOut(BaseModel):
+    name: str = ""
     type: str
+    score: int = 0
     items: list[TakeQuestionOut]
 
 
@@ -375,6 +405,7 @@ class TakePaperOut(BaseModel):
     duration: str = ""
     code: str = ""
     total: int
+    full_score: int = 0
     groups: list[TakeGroupOut]
 
 
@@ -391,6 +422,12 @@ class SubmitOut(BaseModel):
     score: int | None = None              # show_score 关掉时为 None
     right_count: int | None = None
     objective_count: int | None = None
+    # 主客观分开报：操作题要老师看，学生先拿到客观题这一段
+    objective_score: int | None = None
+    objective_total: int | None = None
+    subjective_total: int | None = None
+    full_score: int | None = None
+    pending_manual: int = 0               # 还有几道题等着老师评阅
     detail: list[dict] = []               # show_answer 关掉时为空
 
 
@@ -402,7 +439,21 @@ class SubmissionOut(ORMModel):
     right_count: int
     objective_count: int
     score: int
+    objective_score: int = 0
+    objective_total: int = 0
+    subjective_score: int = 0
+    subjective_total: int = 0
+    full_score: int = 0                   # 客观 + 主观满分，0 = 老卷子（百分制）
+    pending_manual: int = 0               # 还有几道主观题没批
+    graded_by_name: str = ""              # 谁批的
+    graded_at: datetime | None = None
     submitted_at: datetime | None = None
+
+
+class ManualGradeIn(BaseModel):
+    """老师给一份答卷的主观题赋分。键是题目 id，值是得分，超过本题满分按满分算。"""
+
+    scores: dict[str, int] = Field(default_factory=dict)
 
 
 # ---------- 导入 ----------
@@ -452,6 +503,7 @@ class StatsOut(BaseModel):
     total: int
     by_type: dict[str, int]
     by_scope: dict[str, int]
+    by_difficulty: dict[str, int] = {}    # {"1": 12, "2": 40, ...}
     with_image: int
     pinned: int = 0
     sources: list[str] = []               # 题库里出现过的「来源」，供筛选下拉用

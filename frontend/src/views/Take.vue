@@ -8,7 +8,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
 
-const CN = ['一', '二', '三', '四', '五', '六']
+const CN = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
 const route = useRoute()
 const token = route.params.token
 
@@ -29,6 +29,22 @@ const numbering = computed(() => {
 })
 
 const answered = computed(() => Object.values(answers).filter(v => String(v || '').trim()).length)
+
+/** 交卷结果的标题。操作题要老师评阅，所以交卷当场报的是**客观题**那一段，
+ *  写清楚"目前"两个字，免得学生以为总分就这么多。 */
+const resultTitle = computed(() => {
+  const r = result.value
+  if (!r || r.score === null) return '交卷成功'
+  if (r.full_score && r.pending_manual) return `客观题得分 ${r.objective_score} / ${r.objective_total}`
+  return r.full_score ? `得分 ${r.score} / ${r.full_score}` : `得分 ${r.score}`
+})
+
+const resultIcon = computed(() => {
+  const r = result.value
+  if (!r || r.score === null || r.pending_manual) return 'success'
+  const full = r.full_score || 100
+  return (r.score / full) * 100 >= 60 ? 'success' : 'info'
+})
 
 /** 交卷后按题号取回判分明细（老师开了「显示答案」才有） */
 const detailOf = computed(() => {
@@ -95,6 +111,7 @@ async function submit() {
         <div class="meta">
           <span v-if="paper.school">{{ paper.school }}　·　</span>
           <span v-if="paper.duration">{{ paper.duration }} 分钟　·　</span>
+          <span v-if="paper.full_score">满分 {{ paper.full_score }} 分　·　</span>
           <span>{{ paper.code }}</span>
         </div>
         <div v-if="!result" class="who">
@@ -105,18 +122,20 @@ async function submit() {
       </div>
 
       <!-- 交卷结果 -->
-      <el-result
-        v-if="result"
-        :icon="result.score === null ? 'success' : result.score >= 60 ? 'success' : 'info'"
-        :title="result.score === null ? '交卷成功' : `得分 ${result.score}`"
-        :sub-title="
-          result.score === null
-            ? result.message
-            : `客观题答对 ${result.right_count} / ${result.objective_count}${
-                paper.groups.some(g => g.type === '操作题') ? '，操作题由老师评阅' : ''
-              }`
-        "
-      >
+      <el-result v-if="result" :icon="resultIcon" :title="resultTitle">
+        <template #sub-title>
+          <p class="rsub">{{ result.message }}</p>
+          <p v-if="result.full_score" class="rsub">
+            客观题 <b>{{ result.objective_score }}</b> / {{ result.objective_total }} 分
+            （答对 {{ result.right_count }} / {{ result.objective_count }} 题）
+            <template v-if="result.subjective_total">
+              　·　操作题 {{ result.subjective_total }} 分待老师评阅
+            </template>
+          </p>
+          <p v-else-if="result.score !== null" class="rsub">
+            客观题答对 {{ result.right_count }} / {{ result.objective_count }}
+          </p>
+        </template>
         <template #extra>
           <p class="tip">{{ me.student_name }}　{{ me.student_class }}　{{ me.student_no }}</p>
           <p class="tip">这个页面可以关掉了。</p>
@@ -126,13 +145,16 @@ async function submit() {
       <!-- 题目 -->
       <template v-for="(g, gi) in paper.groups" :key="gi">
         <div class="sect">
-          {{ CN[gi] }}、{{ g.type }}（共 {{ g.items.length }} 题）
-          <span v-if="g.type === '操作题'" class="sd">这部分由老师评阅</span>
+          {{ CN[gi] || gi + 1 }}、{{ g.name || g.type }}（共 {{ g.items.length }} 题<template
+            v-if="g.score"
+          >，{{ g.score }} 分</template>）
+          <span v-if="g.items.some(q => q.type === '操作题')" class="sd">操作题由老师评阅</span>
         </div>
 
         <div v-for="q in g.items" :key="q.id" class="q">
           <div class="stem">
             <span class="no">{{ numbering[q.id] }}.</span>{{ q.stem }}
+            <span v-if="q.score" class="pt">（{{ q.score }} 分）</span>
             <span
               v-if="detailOf[q.id] && detailOf[q.id].scored"
               class="badge"
@@ -223,6 +245,15 @@ async function submit() {
   flex-wrap: wrap;
   justify-content: center;
   margin-top: 14px;
+}
+.pt {
+  color: var(--mut, #61757A);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.rsub {
+  margin: 4px 0;
+  line-height: 1.8;
 }
 .sect {
   margin: 26px 0 8px;

@@ -32,7 +32,7 @@ def exam(client, auth):
 
     res = client.post(
         "/api/papers/generate",
-        json={"title": "学生平台测验", "counts": {"选择题": 3, "判断题": 2}, "save": True},
+        json={"title": "学生平台测验", "by_sections": False, "counts": {"选择题": 3, "判断题": 2}, "save": True},
         headers=auth,
     )
     assert res.status_code == 200, res.text
@@ -225,7 +225,7 @@ def test_exam_targeting_by_class(client, auth, exam):
     """
     paper_id = client.post(
         "/api/papers/generate",
-        json={"title": "只给九九班的卷子", "counts": {"选择题": 2}, "save": True},
+        json={"title": "只给九九班的卷子", "by_sections": False, "counts": {"选择题": 2}, "save": True},
         headers=auth,
     ).json()["paper_id"]
     targeted = client.post(

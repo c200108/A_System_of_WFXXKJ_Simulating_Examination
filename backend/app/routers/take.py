@@ -18,6 +18,38 @@ from ..services.exam import grade, group_items, load_items, strip_answers
 router = APIRouter(prefix="/api/take", tags=["学生答题"])
 
 
+def _submit_out(exam, result: dict) -> SubmitOut:
+    """交卷后给学生看什么。
+
+    操作题要老师看，所以这里先报客观题那一段，并说清还有几分等着评阅 ——
+    不说的话学生会以为自己只考了七十分。老师批完，分数在「我的考试」里自动更新。
+    """
+    out = SubmitOut(submitted=True, message="交卷成功")
+    if not exam.show_score:
+        out.message = "交卷成功，成绩由老师统一公布"
+        if exam.show_answer:
+            out.detail = result["detail"]
+        return out
+
+    out.score = result["score"]
+    out.right_count = result["right_count"]
+    out.objective_count = result["objective_count"]
+    out.objective_score = result["objective_score"]
+    out.objective_total = result["objective_total"]
+    out.subjective_total = result["subjective_total"]
+    out.full_score = result["full_score"]
+    out.pending_manual = result["pending_manual"]
+    if result["pending_manual"]:
+        out.message = (
+            f"交卷成功。客观题 {result['objective_score']} 分已经算好，"
+            f"还有 {result['subjective_total']} 分的操作题要老师评阅，"
+            "批完后在「我的考试」里就能看到总分。"
+        )
+    if exam.show_answer:
+        out.detail = result["detail"]
+    return out
+
+
 def _open_exam(db: Session, token: str) -> Exam:
     exam = db.scalar(select(Exam).where(Exam.token == token))
     if not exam:
@@ -38,6 +70,7 @@ def take_paper(token: str, db: Session = Depends(get_db)):
         duration=exam.paper.duration,
         code=exam.paper.code,
         total=len(items),
+        full_score=sum(int(it.get("score") or 0) for it in items),
         groups=groups,
     )
 
@@ -73,17 +106,11 @@ def submit(token: str, body: SubmitIn, db: Session = Depends(get_db)):
         right_count=result["right_count"],
         objective_count=result["objective_count"],
         score=result["score"],
+        objective_score=result["objective_score"],
+        objective_total=result["objective_total"],
+        subjective_total=result["subjective_total"],
     )
     db.add(sub)
     db.commit()
 
-    out = SubmitOut(submitted=True, message="交卷成功")
-    if exam.show_score:
-        out.score = result["score"]
-        out.right_count = result["right_count"]
-        out.objective_count = result["objective_count"]
-    else:
-        out.message = "交卷成功，成绩由老师统一公布"
-    if exam.show_answer:
-        out.detail = result["detail"]
-    return out
+    return _submit_out(exam, result)

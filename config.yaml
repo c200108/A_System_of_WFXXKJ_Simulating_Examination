@@ -46,6 +46,79 @@ paper:
   section_numerals: ["一", "二", "三", "四", "五", "六"] # 大题序号
   code_prefix: "NO." # 卷号前缀，生成形如 NO.20263
 
+  # 题干多少字算"长题目"（下面 prefer: long_or_image 用它判断；带图的题一律算）
+  long_stem_chars: 60
+
+  # ======================= 卷面结构 =======================
+  # 组卷按这里的先后顺序出大题，卷面总分 = 各大题 score 之和（现在正好 100）。
+  #
+  # 一个大题由若干组（slots）拼成，每组说清楚"从哪些知识范围抽几道什么题型"——
+  # 因为大题不等于题型："物联网实践与探索"里既有操作题又有选择题。
+  #   type    题型，要和 bank.types 对得上
+  #   count   抽几道（组卷页上还能临时改）
+  #   scopes  限定知识范围，留空 = 不限。名字要和 bank.scopes 完全一致
+  #   prefer  long_or_image = 优先挑长题干或带图的题（不够时用普通题补齐，不会空着）
+  #   label   组卷页上这一组的说明文字
+  #
+  # score 怎么摊到每道题：weight_by_difficulty: true 按题目难度（1~5）分，
+  # 并保证**操作题的分高于同一大题里任何一道客观题**；false 则平均分，
+  # 除不尽的零头给难度高的题。两种都用最大余数法，大题的分精确对得上。
+  #
+  # 改完 docker compose restart backend 即生效，前端不用重新构建。
+  sections:
+    - name: "选择题"
+      score: 30
+      weight_by_difficulty: false # 30 题 30 分，一题一分，不按难度拉开
+      slots:
+        - { type: "选择题", count: 30 }
+
+    - name: "判断题"
+      score: 20
+      weight_by_difficulty: false # 10 题 20 分，一题两分
+      slots:
+        - { type: "判断题", count: 10 }
+
+    - name: "操作题"
+      score: 20
+      slots: # 三道题的顺序钉死：Windows → WPS 文字 → 人工智能
+        - { type: "操作题", count: 1, scopes: ["Windows系统操作"], label: "Windows 操作" }
+        - { type: "操作题", count: 1, scopes: ["WPS文字操作"], label: "WPS 文字" }
+        - { type: "操作题", count: 1, scopes: ["人工智能"], label: "人工智能" }
+
+    - name: "算法与程序设计"
+      score: 10
+      slots:
+        - {
+            type: "选择题",
+            count: 3,
+            scopes: ["Python编程基础"],
+            prefer: "long_or_image",
+            label: "长题干或带图的选择题",
+          }
+
+    - name: "互联网原理与创新"
+      score: 10
+      slots:
+        - {
+            type: "选择题",
+            count: 3,
+            scopes: ["计算机网络基础"],
+            prefer: "long_or_image",
+            label: "长题干或带图的选择题",
+          }
+        - {
+            type: "操作题",
+            count: 3,
+            scopes: ["计算机网络基础"],
+            label: "计算机网络基础操作题",
+          }
+
+    - name: "物联网实践与探索"
+      score: 10
+      slots:
+        - { type: "操作题", count: 2, scopes: ["物联网"], label: "物联网操作题" }
+        - { type: "选择题", count: 3, scopes: ["物联网"] }
+
 exam:
   pass_score: 60 # 及格线，成绩表里低于它标红
   token_length: 9 # 学生链接口令的随机字节数，越大越难猜（9 约等于 12 个字符）
@@ -55,6 +128,9 @@ exam:
     show_score: true # 交卷后给学生看分数
     show_answer: false # 交卷后给学生看答案（正式考试务必保持 false）
     allow_retake: false # 同一学号能否重考
+  # 机器判不了、要老师在成绩页逐题给分的题型。学生交完卷先拿到客观题得分，
+  # 老师批完总分自动补上。填空题这类有标准答案的不要放进来 —— 它们能自动判。
+  manual_types: ["操作题"]
 
 bank:
   # false = 下面的 scopes/types 只在第一次建库时灌进数据库，之后以界面上的修改为准
@@ -75,11 +151,12 @@ bank:
   default_source: "自定义" # 新增/导入的题目，来源栏默认填什么
 
 import:
-  # 上传模板必须有这几列（顺序可以不同）
-  headers: ["题型", "题干", "可选项", "答案", "知识范围", "图片"]
+  # 上传模板必须有这几列（顺序可以不同）。
+  # 「难度」是选填的：这里没写也会自动加到模板末尾，导入时留空则按题型自动估。
+  headers: ["题型", "题干", "可选项", "答案", "知识范围", "图片", "难度"]
   # 导出题库/试卷 Excel 的表头
-  export_headers: ["题型", "题干", "可选项", "答案", "知识范围", "来源", "编号"]
-  export_widths: [8, 60, 34, 26, 16, 10, 9] # 上面各列的宽度
+  export_headers: ["题型", "题干", "可选项", "答案", "知识范围", "难度", "来源", "编号"]
+  export_widths: [8, 60, 34, 26, 16, 8, 10, 9] # 上面各列的宽度
   # 题型识别：题型这一栏只要含有关键词之一，就算这种题型
   type_keywords:
     选择题: ["选择"]

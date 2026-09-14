@@ -26,11 +26,17 @@ export const siteConfig = reactive({
     shuffle_options: true,
     require_answer: true,
     use_pinned: true,
-    section_numerals: ['一', '二', '三', '四', '五', '六']
+    section_numerals: ['一', '二', '三', '四', '五', '六'],
+    // 卷面结构（六个大题）。组卷页照它渲染题量和分值输入框，
+    // 改 config.yaml 重启后端即生效，前端不用重新构建。
+    sections: [],
+    full_score: 0
   },
   exam: {
     pass_score: 60,
-    defaults: { is_open: true, show_score: true, show_answer: false, allow_retake: false }
+    defaults: { is_open: true, show_score: true, show_answer: false, allow_retake: false },
+    // 要老师人工评阅的题型，界面上据此标「待阅」
+    manual_types: ['操作题']
   },
   upload: { max_mb: 20, image_extensions: [] }
 })

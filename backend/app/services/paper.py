@@ -105,10 +105,14 @@ def build_paper(
                     "scope": q.scope,
                     "source": q.source,
                     "image_url": q.image_url,
+                    "difficulty": q.difficulty,
+                    # 自由组卷不设每题分值，判分时退回按正确率折百分制
+                    "section": qtype,
+                    "score": 0,
                     "options": [{"label": lb, "content": ct} for lb, ct in opts],
                 }
             )
-        groups.append({"type": qtype, "items": items})
+        groups.append({"name": qtype, "type": qtype, "score": 0, "items": items})
 
     flat = [it for g in groups for it in g["items"]]
     tally: dict[str, int] = {k: 0 for k in scope_order}
@@ -122,6 +126,8 @@ def build_paper(
         "code": site.paper.code_prefix + str(_seed_int(seed_str) % 100000).zfill(5),
         "seed": seed_str,
         "total": len(flat),
+        "full_score": 0,
+        "by_sections": False,
         "tally": tally,
         "warnings": warnings,
         "groups": groups,
@@ -135,3 +141,95 @@ def right_letter(item: dict) -> str:
     if item.get("type") == "判断题":
         return "A" if a == "正确" else "B" if a == "错误" else a
     return a
+
+
+def build_by_sections(
+    db: Session,
+    *,
+    sections,
+    counts: dict[str, int] | None,
+    scope_order: list[str],
+    scopes: list[str] | None,
+    require_answer: bool,
+    use_pinned: bool,
+    shuffle_opts: bool,
+    seed: str | None,
+    title: str,
+    school: str,
+    duration: str,
+) -> dict:
+    """按卷面结构组卷：六个大题依次出，每个大题的分按难度摊到题上。
+
+    和 build_paper() 的产物结构完全一样，多了 name / score 两项，
+    前端、导出、判分都照同一套字段读，不用分两条路。
+    """
+    from .blueprint import allocate_scores, pick_sections
+
+    seed_str = seed or f"{time.time()}-{random.random()}"
+    rnd = random.Random(_seed_int(seed_str))
+
+    picked, warnings = pick_sections(
+        db,
+        sections,
+        counts=counts,
+        scope_order=scope_order,
+        scopes=scopes,
+        require_answer=require_answer,
+        use_pinned=use_pinned,
+        rnd=rnd,
+    )
+
+    groups: list[dict] = []
+    for sec in picked:
+        items = []
+        for q in sec["items"]:
+            opts = [(o.label, o.content) for o in q.options]
+            ans = q.answer or ""
+            if shuffle_opts and q.type == "选择题":
+                opts, ans = shuffle_options(opts, ans, rnd)
+            items.append(
+                {
+                    "id": q.id,
+                    "code": q.code,
+                    "type": q.type,
+                    "stem": q.stem,
+                    "answer": ans,
+                    "scope": q.scope,
+                    "source": q.source,
+                    "image_url": q.image_url,
+                    "difficulty": q.difficulty,
+                    "section": sec["name"],
+                    "score": 0,
+                    "options": [{"label": lb, "content": ct} for lb, ct in opts],
+                }
+            )
+
+        per = allocate_scores(
+            items, sec["score"], by_difficulty=sec["conf"].weight_by_difficulty
+        )
+        for it, pts in zip(items, per):
+            it["score"] = pts
+
+        groups.append(
+            {"name": sec["name"], "type": sec["name"], "score": sum(per), "items": items}
+        )
+
+    flat = [it for g in groups for it in g["items"]]
+    tally: dict[str, int] = {k: 0 for k in scope_order}
+    for it in flat:
+        tally[it["scope"]] = tally.get(it["scope"], 0) + 1
+
+    return {
+        "title": title or "信息技术测试卷",
+        "school": school,
+        "duration": duration,
+        "code": site.paper.code_prefix + str(_seed_int(seed_str) % 100000).zfill(5),
+        "seed": seed_str,
+        "total": len(flat),
+        "full_score": sum(g["score"] for g in groups),
+        "by_sections": True,
+        "tally": tally,
+        "warnings": warnings,
+        "groups": groups,
+        "questions": flat,
+    }
