@@ -90,6 +90,27 @@ def resolve_class(db: Session, class_id: int | None) -> SchoolClass | None:
     return row
 
 
+HINTS = {
+    "split": "每行写成「学号 姓名」两部分，中间用空格或 Tab 隔开，例如：20260101 张三",
+    "no": "学号只能用字母、数字和 _ . -，不能有空格或中文，最长 32 位",
+}
+
+
+def batch_hint(kinds: set[str]) -> str:
+    """把这批里出现过的问题各给一句怎么改。一类只说一次。"""
+    return "\n".join(HINTS[k] for k in ("split", "no") if k in kinds)
+
+
+def clip(text: str, width: int = 16) -> str:
+    """错误信息里回显用户填的内容时截一下。
+
+    一行写了三十几个字的话，十几条错误堆起来提示框就没法看了；
+    截到十几个字足够让人认出是哪一行。
+    """
+    value = (text or "").strip()
+    return value if len(value) <= width else value[:width] + "…"
+
+
 def initial_password(student_no: str) -> str:
     """初始密码。学号够长就直接用学号，太短则补足到 6 位，保证能通过校验。"""
     return student_no if len(student_no) >= PASSWORD_MIN else (student_no + "123456")[:6]
@@ -412,6 +433,8 @@ def batch_students(
     """
     cls = resolve_class(db, body.class_id)
     added, skipped, bad = 0, 0, []
+    # 出现过哪几类问题。"该怎么写"按类别各给一句，不跟在每一行后面重复
+    kinds: set[str] = set()
 
     existing = set(db.scalars(select(Student.student_no)))
 
@@ -422,12 +445,14 @@ def batch_students(
         # 学号和姓名之间用空格或制表符隔开，中间多几个空格也认
         parts = line.split()
         if len(parts) < 2:
-            bad.append(f"第 {lineno} 行「{line}」：要写成「学号 姓名」两部分")
+            kinds.add("split")
+            bad.append(f"第 {lineno} 行「{clip(line)}」：分不出学号和姓名")
             continue
 
         no, name = parts[0], " ".join(parts[1:])
         if not STUDENT_NO_RE.match(no) or len(no) > 32:
-            bad.append(f"第 {lineno} 行「{no}」：学号只能用字母数字和 _ . -")
+            kinds.add("no")
+            bad.append(f"第 {lineno} 行「{clip(no)}」：学号不合规")
             continue
         if no in existing:
             skipped += 1
@@ -447,7 +472,13 @@ def batch_students(
         added += 1
 
     db.commit()
-    return {"added": added, "skipped": skipped, "errors": bad[:20], "error_count": len(bad)}
+    return {
+        "added": added,
+        "skipped": skipped,
+        "errors": bad[:20],
+        "error_count": len(bad),
+        "hint": batch_hint(kinds),
+    }
 
 
 @admin_api.patch("/{sid}", response_model=StudentOut, summary="改学生资料或重置密码")
@@ -659,6 +690,8 @@ async def import_students(
     existing = set(db.scalars(select(Student.student_no)))
     added, skipped, bad = 0, 0, []
     used_classes: set[str] = set()
+    bad_classes: set[str] = set()   # 表里出现过、但系统里没有的班级名
+    kinds: set[str] = set()         # 出现过哪几类问题，每类只提示一次
 
     for lineno, row in enumerate(rows, 1):
         cells = list(row or [])
@@ -675,19 +708,23 @@ async def import_students(
             continue
 
         if not no or not name:
-            bad.append(f"第 {lineno} 行：学号和姓名都要填")
+            kinds.add("empty")
+            bad.append(f"第 {lineno} 行：学号或姓名是空的")
             continue
         if not STUDENT_NO_RE.match(no) or len(no) > 32:
-            bad.append(f"第 {lineno} 行「{no}」：学号只能用字母数字和 _ . -")
+            kinds.add("no")
+            bad.append(f"第 {lineno} 行「{clip(no)}」：学号不合规")
             continue
 
         if cls_name:
             cls = by_name.get(cls_name.replace(" ", ""))
             if cls is None:
-                bad.append(
-                    f"第 {lineno} 行「{cls_name}」：系统里没有这个班，"
-                    f"班级名要和「班级」页面完全一致（如 {valid_hint}）"
-                )
+                # 只写"哪一行、错在哪"。"该怎么改"是所有错行共用的一句话，
+                # 放在 hint 里回一次就够 —— 每行都跟一遍"班级名要和……完全一致
+                # （如 七年级1班、七年级2班……）"，十几行错就刷出十几遍，
+                # 真正有用的行号反而被淹了。
+                bad_classes.add(cls_name)
+                bad.append(f"第 {lineno} 行：没有「{clip(cls_name)}」这个班")
                 continue
         else:
             cls = fallback
@@ -712,11 +749,28 @@ async def import_students(
         added += 1
 
     db.commit()
+
+    # 所有错行共用的那些"该怎么改"，每类只回一次
+    tips = []
+    if bad_classes:
+        wrong = "、".join(sorted(bad_classes)[:5])
+        tips.append(
+            f"表里这些班级名系统里没有：{wrong}。"
+            f"班级名要和「班级」页面完全一致，例如：{valid_hint}。"
+            "模板第三页「可用班级」里有现成的，照抄就不会错。"
+        )
+    if "empty" in kinds:
+        tips.append("学号和姓名两列都必须填，空一个整行就导不进来。")
+    if "no" in kinds:
+        tips.append(HINTS["no"] + "。")
+    hint = "\n".join(tips)
+
     return {
         "added": added,
         "skipped": skipped,
         "errors": bad[:20],
         "error_count": len(bad),
+        "hint": hint,
         # 表里逐行写了班级，所以回报的是"这批实际进了哪几个班"
         "classes": sorted(used_classes),
         "student_class": fallback.display if fallback else "",

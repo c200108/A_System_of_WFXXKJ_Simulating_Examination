@@ -482,11 +482,41 @@ def test_import_reports_bad_class_per_row(client, auth):
 
     err = body["errors"][0]
     assert "第 3 行" in err and "六(3)班" in err
-    assert "班级" in err
+    # 每行只说"哪一行、错在哪"，别把怎么改也跟在每一行后面
+    assert "完全一致" not in err
+
+    # "该怎么改"整体只给一句，放在 hint 里
+    assert "完全一致" in body["hint"] and "六(3)班" in body["hint"]
 
     # 写错的那个学生确实没被建出来
     got = client.get("/api/students", params={"keyword": "26060302"}, headers=auth).json()
     assert got == []
+
+
+def test_import_does_not_repeat_the_same_advice_on_every_row(client, auth):
+    """十几行都写错班级时，"该怎么改"那句话只能出现一次。
+
+    以前是每行都跟一遍"班级名要和「班级」页面完全一致（如 …）"，
+    错十行就刷十遍，真正有用的行号反而被淹了。
+    """
+    _cid(client, auth, "五年级", "7班")
+    rows = [["学号", "姓名", "班级"]]
+    rows += [[f"2605070{i}", f"学生{i}", "五(7)班"] for i in range(1, 7)]
+    res = client.post(
+        "/api/students/import",
+        files={"file": ("名单.xlsx", _xlsx(rows), "application/octet-stream")},
+        headers=auth,
+    )
+    body = res.json()
+    assert body["error_count"] == 6 and body["added"] == 0
+
+    # 六行错误，六条各自带行号，但没有一条重复那段指导语
+    assert len(body["errors"]) == 6
+    assert all("第 " in e and "五(7)班" in e for e in body["errors"])
+    assert sum("完全一致" in e for e in body["errors"]) == 0
+
+    # 错的班名只列一次，不是列六遍
+    assert body["hint"].count("五(7)班") == 1
 
 
 def test_import_falls_back_to_selected_class(client, auth):

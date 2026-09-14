@@ -139,7 +139,10 @@ def test_batch_skips_existing(client, auth):
         json={"student_class": "八(1)班", "text": "20260021 已存在\n20260022 新的"},
         headers=auth,
     )
-    assert res.json() == {"added": 1, "skipped": 1, "errors": [], "error_count": 0}
+    # 没有错行时 hint 是空串 —— 不该凭空给一堆"该怎么写"的说明
+    assert res.json() == {
+        "added": 1, "skipped": 1, "errors": [], "error_count": 0, "hint": ""
+    }
 
 
 def test_bulk_reset_password(client, auth):
@@ -359,3 +362,26 @@ def test_anonymous_typing_still_works(client):
         },
     )
     assert res.status_code == 200
+
+
+def test_batch_errors_do_not_repeat_the_same_advice(client, auth):
+    """九行都少写了姓名时，"该怎么写"那句话只能出现一次。
+
+    以前每行都跟一遍「要写成「学号 姓名」两部分」，九行就刷九遍，
+    提示框被撑得老高，真正有用的行号反而看不见了。
+    """
+    text = "\n".join(f"这是第{i}行写错的内容没有空格分隔" for i in range(1, 10))
+    body = client.post(
+        "/api/students/batch", json={"text": text}, headers=auth
+    ).json()
+
+    assert body["added"] == 0 and body["error_count"] == 9
+    assert len(body["errors"]) == 9
+    # 每行只说错在哪，不带"该怎么写"
+    assert all("第 " in e for e in body["errors"])
+    assert sum("Tab" in e for e in body["errors"]) == 0
+    # 怎么写整体只给一次
+    assert body["hint"].count("Tab") == 1
+
+    # 回显的原文要截断，否则一行三十几个字会把提示框撑爆
+    assert all(len(e) < 40 for e in body["errors"]), body["errors"]
