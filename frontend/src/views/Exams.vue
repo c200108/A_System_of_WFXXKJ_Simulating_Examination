@@ -6,7 +6,8 @@ import { api, download } from '../api'
 import { loadPublicBase, studentLink } from '../publicUrl'
 import { currentUser } from '../auth'
 
-// 管理员看得到全校的考试，得多一列「发布人」；老师只看得到自己的，不用这列
+// 管理员看得到全校的考试；老师看得到自己的 + 管理员发的（后者只读）。
+// 能不能改由后端给的 can_edit 决定，界面只是照着显示 —— 真正拦人的在后端。
 const isAdmin = computed(() => currentUser.value?.role === 'admin')
 
 const exams = ref([])
@@ -148,14 +149,21 @@ const hardest = computed(() => {
         <br />你是管理员，这里列的是<b>全校所有老师</b>发布的考试。
       </template>
       <template v-else>
-        <br />这里只列<b>你自己发布的</b>考试，别的老师看不到，你也看不到他们的。
+        <br />这里列<b>你自己发布的</b>考试，以及<b>管理员发布的</b>（多半是全校统考）。
+        管理员发的那几场你可以查成绩、导出，但改不了设置也删不掉；
+        别的老师发的考试你看不到，他们也看不到你的。
       </template>
     </el-alert>
 
     <el-empty v-if="!exams.length && !loading" description="还没有发布过考试" />
     <el-table v-else :data="exams" v-loading="loading" border size="small">
       <el-table-column prop="title" label="考试" min-width="160" show-overflow-tooltip />
-      <el-table-column v-if="isAdmin" prop="owner_name" label="发布人" width="92" show-overflow-tooltip />
+      <el-table-column label="发布人" width="110" show-overflow-tooltip>
+        <template #default="{ row }">
+          {{ row.owner_name }}
+          <el-tag v-if="!row.can_edit" size="small" type="info" effect="plain" class="ro">只读</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="学生链接" min-width="230">
         <template #default="{ row }">
           <el-input :model-value="linkOf(row)" readonly size="small">
@@ -169,23 +177,36 @@ const hardest = computed(() => {
         <template #default="{ row }">
           <el-switch
             :model-value="row.is_open"
+            :disabled="!row.can_edit"
             @change="v => toggle(row, 'is_open', v)"
           />
         </template>
       </el-table-column>
       <el-table-column label="交卷看分" width="86">
         <template #default="{ row }">
-          <el-switch :model-value="row.show_score" @change="v => toggle(row, 'show_score', v)" />
+          <el-switch
+            :model-value="row.show_score"
+            :disabled="!row.can_edit"
+            @change="v => toggle(row, 'show_score', v)"
+          />
         </template>
       </el-table-column>
       <el-table-column label="交卷看答案" width="96">
         <template #default="{ row }">
-          <el-switch :model-value="row.show_answer" @change="v => toggle(row, 'show_answer', v)" />
+          <el-switch
+            :model-value="row.show_answer"
+            :disabled="!row.can_edit"
+            @change="v => toggle(row, 'show_answer', v)"
+          />
         </template>
       </el-table-column>
       <el-table-column label="可重考" width="76">
         <template #default="{ row }">
-          <el-switch :model-value="row.allow_retake" @change="v => toggle(row, 'allow_retake', v)" />
+          <el-switch
+            :model-value="row.allow_retake"
+            :disabled="!row.can_edit"
+            @change="v => toggle(row, 'allow_retake', v)"
+          />
         </template>
       </el-table-column>
       <el-table-column prop="submission_count" label="交卷" width="64" />
@@ -195,7 +216,13 @@ const hardest = computed(() => {
       <el-table-column label="操作" width="110" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openScores(row)">成绩</el-button>
-          <el-button link type="danger" @click="remove(row)">删除</el-button>
+          <el-button
+            v-if="row.can_edit"
+            link
+            type="danger"
+            @click="remove(row)"
+          >删除</el-button>
+          <span v-else class="nodel" title="管理员发布的考试，只能查看成绩">—</span>
         </template>
       </el-table-column>
     </el-table>
@@ -355,6 +382,13 @@ const hardest = computed(() => {
 }
 .hint {
   margin-bottom: 14px;
+}
+.ro {
+  margin-left: 4px;
+}
+.nodel {
+  color: var(--el-text-color-placeholder);
+  margin-left: 8px;
 }
 .kpi {
   display: flex;

@@ -345,8 +345,9 @@ class ExamOut(ORMModel):
     created_at: datetime | None = None
     submission_count: int = 0
     avg_score: float | None = None
-    # 只有管理员看列表时才填，老师看到的都是自己的，不需要这一列
     owner_name: str = ""
+    # 能不能改设置／删除。老师看得到管理员发的考试，但只能查成绩
+    can_edit: bool = True
 
 
 class TakeQuestionOut(BaseModel):

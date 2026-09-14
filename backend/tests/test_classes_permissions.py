@@ -3,7 +3,7 @@
 三条主线：
 1. 公共资源（题库、练习文本、更新日志、打字成绩）没有删除权就删不掉；
 2. 老师只能给自己名下的班发考试，管理员发的全体学生都收得到；
-3. 学生名单能用 Excel/CSV 导进导出，两列：学号、姓名。
+3. 学生名单能用 Excel/CSV 导进导出，三列：学号、姓名、班级。
 """
 
 import csv
@@ -317,13 +317,19 @@ def test_batch_create_classes(client, auth):
 
 
 # ================================================================ 导入导出
-def test_template_is_two_columns(client, auth):
+def test_template_has_three_columns_and_lists_classes(client, auth):
+    """模板三列：学号、姓名、班级，并把现有班级原样列出来供照抄。"""
+    _cid(client, auth, "七年级", "9班")
     res = client.get("/api/students/template.xlsx", headers=auth)
     assert res.status_code == 200
     assert res.content.startswith(XLSX_MAGIC)
 
-    ws = load_workbook(io.BytesIO(res.content)).active
-    assert [c.value for c in ws[1]] == ["学号", "姓名"], "模板就该是学号、姓名两列"
+    wb = load_workbook(io.BytesIO(res.content))
+    assert [c.value for c in wb["学生名单"][1]] == ["学号", "姓名", "班级"]
+
+    # 「可用班级」那一页要能查到刚建的班，老师复制粘贴就不会写错
+    names = {row[0] for row in wb["可用班级"].iter_rows(min_row=2, values_only=True)}
+    assert "七年级9班" in names
 
 
 def _xlsx(rows) -> bytes:
@@ -428,3 +434,118 @@ def test_export_round_trips(client, auth):
     )
     assert again.json()["added"] == 0
     assert again.json()["skipped"] == 1
+
+
+def test_import_reads_class_from_each_row(client, auth):
+    """表里逐行写班级，学生按各自那一行的班级入库。"""
+    _cid(client, auth, "五年级", "1班")
+    _cid(client, auth, "五年级", "2班")
+    data = _xlsx([
+        ["学号", "姓名", "班级"],
+        ["26050101", "一班甲", "五年级1班"],
+        ["26050201", "二班乙", "五年级2班"],
+    ])
+    res = client.post(
+        "/api/students/import",
+        files={"file": ("名单.xlsx", data, "application/octet-stream")},
+        headers=auth,
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["added"] == 2
+    assert res.json()["classes"] == ["五年级1班", "五年级2班"]
+
+    rows = {
+        r["student_no"]: r["student_class"]
+        for r in client.get("/api/students", params={"keyword": "2605"}, headers=auth).json()
+    }
+    assert rows["26050101"] == "五年级1班"
+    assert rows["26050201"] == "五年级2班"
+
+
+def test_import_reports_bad_class_per_row(client, auth):
+    """班级写错只跳过那一行，其余照常导入，并指出错在第几行、错成了什么。"""
+    _cid(client, auth, "六年级", "3班")
+    data = _xlsx([
+        ["学号", "姓名", "班级"],
+        ["26060301", "写对了", "六年级3班"],
+        ["26060302", "写错了", "六(3)班"],      # 系统里没有这个写法
+        ["26060303", "也对", "六年级3班"],
+    ])
+    res = client.post(
+        "/api/students/import",
+        files={"file": ("名单.xlsx", data, "application/octet-stream")},
+        headers=auth,
+    )
+    body = res.json()
+    assert body["added"] == 2, "写错的那一行不该拖垮其余两行"
+    assert body["error_count"] == 1
+
+    err = body["errors"][0]
+    assert "第 3 行" in err and "六(3)班" in err
+    assert "班级" in err
+
+    # 写错的那个学生确实没被建出来
+    got = client.get("/api/students", params={"keyword": "26060302"}, headers=auth).json()
+    assert got == []
+
+
+def test_import_falls_back_to_selected_class(client, auth):
+    """班级列留空时，归到导入时选的那个班。"""
+    cid = _cid(client, auth, "四年级", "2班")
+    data = _xlsx([["学号", "姓名", "班级"], ["26040201", "没写班级", ""]])
+    res = client.post(
+        "/api/students/import",
+        params={"class_id": cid},
+        files={"file": ("名单.xlsx", data, "application/octet-stream")},
+        headers=auth,
+    )
+    assert res.json()["added"] == 1
+    rows = client.get("/api/students", params={"class_id": cid}, headers=auth).json()
+    assert [r["student_no"] for r in rows] == ["26040201"]
+
+
+def test_import_tolerates_spaces_in_class_name(client, auth):
+    """「七年级 1班」这种手滑多打的空格要认出来；真写错的仍然报错。"""
+    _cid(client, auth, "七年级", "1班")
+    data = _xlsx([["学号", "姓名", "班级"], ["26070199", "多了空格", " 七年级 1班 "]])
+    res = client.post(
+        "/api/students/import",
+        files={"file": ("名单.xlsx", data, "application/octet-stream")},
+        headers=auth,
+    )
+    assert res.json()["added"] == 1
+    rows = client.get("/api/students", params={"keyword": "26070199"}, headers=auth).json()
+    assert rows[0]["student_class"] == "七年级1班"
+
+
+def test_export_round_trips_with_class(client, auth):
+    """导出的表前三列和模板同构，原样再导回来应该全部识别为重复。"""
+    _cid(client, auth, "三年级", "9班")
+    client.post(
+        "/api/students/import",
+        files={
+            "file": (
+                "名单.xlsx",
+                _xlsx([["学号", "姓名", "班级"], ["26030901", "回流测试", "三年级9班"]]),
+                "application/octet-stream",
+            )
+        },
+        headers=auth,
+    )
+
+    out = client.get(
+        "/api/students/export.xlsx", params={"keyword": "26030901"}, headers=auth
+    )
+    ws = load_workbook(io.BytesIO(out.content)).active
+    assert [c.value for c in ws[1]][:3] == ["学号", "姓名", "班级"]
+    assert [c.value for c in ws[2]][:3] == ["26030901", "回流测试", "三年级9班"]
+
+    again = client.post(
+        "/api/students/import",
+        files={"file": ("回传.xlsx", out.content, "application/octet-stream")},
+        headers=auth,
+    )
+    body = again.json()
+    assert body["added"] == 0
+    assert body["skipped"] == 1
+    assert body["error_count"] == 0

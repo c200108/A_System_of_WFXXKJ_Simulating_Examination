@@ -1,9 +1,18 @@
 """教师端：发布考试、查成绩、导出。全部需要登录。
 
-**考试是按人隔离的**：老师只看得到自己发布的考试和上面的成绩，
-管理员看得到所有人的。隔离在 `_visible` / `_get` 两个函数里，
+**考试是按人隔离的**，分「看得到」和「改得动」两层：
+
+    谁          看得到                        改得动
+    管理员      全部                          全部
+    老师        自己发的 + 管理员发的         只有自己发的
+
+管理员发的多半是全校统考，老师要能查自己班的成绩，但不该能动那份卷子的
+开关，更不该删掉。别的老师发的考试仍然互相看不见。
+
+三个函数管这件事：`_visible`（列表）、`_can_edit`（判权限）、`_get`（取单个）。
 每个接口都得从它们拿考试对象，不要再自己 db.get(Exam, ...)。
-访问别人的考试一律回 404 而不是 403 —— 连"这个 id 存在"都不告诉。
+看不到的一律回 404 而不是 403 —— 连"这个 id 存在"都不告诉；
+看得到但改不动的回 403，并说清为什么。
 """
 
 import io
@@ -12,7 +21,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from openpyxl import Workbook
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -82,15 +91,55 @@ def _resolve_targets(db: Session, user: User, class_ids: list[int]) -> str:
     return ",".join(sorted(c.display for c in rows))
 
 
-def _visible(stmt, user: User):
-    """管理员不加限制，老师只看自己发布的。"""
-    return stmt if user.role == "admin" else stmt.where(Exam.created_by == user.id)
+def _admin_ids(db: Session):
+    """管理员的 user id 子查询。管理员发的考试全校老师都看得到。"""
+    return select(User.id).where(User.role == "admin")
 
 
-def _get(db: Session, exam_id: int, user: User) -> Exam:
+def _visible(stmt, user: User, db: Session):
+    """看得到哪些考试。
+
+    - 管理员：全部；
+    - 老师：自己发的 + **管理员发的**（后者只能看成绩，改不了也删不了）。
+
+    别人发的考试仍然互相看不到 —— 隔离的是老师之间，不是老师和管理员之间。
+    """
+    if user.role == "admin":
+        return stmt
+    return stmt.where(
+        or_(Exam.created_by == user.id, Exam.created_by.in_(_admin_ids(db)))
+    )
+
+
+def _can_edit(db: Session, exam: Exam, user: User) -> bool:
+    """能不能改这场考试。管理员都能改；老师只能改自己发的。
+
+    管理员发的考试老师看得到，但改不了 —— 全校统考的开关不该让任课老师动。
+    """
+    return user.role == "admin" or exam.created_by == user.id
+
+
+def _get(db: Session, exam_id: int, user: User, *, edit: bool = False) -> Exam:
+    """取一场考试。
+
+    edit=True 时要求有修改权，没有就 403 并说清为什么；
+    edit=False 只要求看得到，看不到一律 404（连"这个 id 存在"都不告诉）。
+    """
     exam = db.get(Exam, exam_id)
-    if not exam or (user.role != "admin" and exam.created_by != user.id):
+    if not exam:
         raise HTTPException(status_code=404, detail="考试不存在")
+
+    if user.role != "admin":
+        owner = db.get(User, exam.created_by) if exam.created_by else None
+        visible = exam.created_by == user.id or (owner and owner.role == "admin")
+        if not visible:
+            raise HTTPException(status_code=404, detail="考试不存在")
+
+    if edit and not _can_edit(db, exam, user):
+        raise HTTPException(
+            status_code=403,
+            detail="这是管理员发布的考试，你可以查看成绩，但不能修改设置或删除。",
+        )
     return exam
 
 
@@ -123,23 +172,23 @@ def create_exam(
 
 @router.get("", response_model=list[ExamOut], summary="考试列表")
 def list_exams(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    rows = db.scalars(_visible(select(Exam), user).order_by(Exam.id.desc())).all()
+    rows = db.scalars(_visible(select(Exam), user, db).order_by(Exam.id.desc())).all()
 
-    # 管理员看的是全校的考试，得标出每场是谁发的；老师只看得到自己的，不用标
-    names: dict[int, str] = {}
-    if user.role == "admin":
-        owner_ids = {e.created_by for e in rows if e.created_by}
-        if owner_ids:
-            names = {
-                u.id: (u.name or u.username)
-                for u in db.scalars(select(User).where(User.id.in_(owner_ids)))
-            }
+    # 老师的列表里现在混着管理员发的考试，所以两边都要标出「谁发的」，
+    # 否则老师分不清哪几场是自己的、哪几场只能看
+    owner_ids = {e.created_by for e in rows if e.created_by}
+    owners = (
+        {u.id: u for u in db.scalars(select(User).where(User.id.in_(owner_ids)))}
+        if owner_ids
+        else {}
+    )
 
     out = []
     for e in rows:
         item = _to_out(e, db)
-        if user.role == "admin":
-            item.owner_name = names.get(e.created_by or 0, "未知")
+        owner = owners.get(e.created_by or 0)
+        item.owner_name = (owner.name or owner.username) if owner else "未知"
+        item.can_edit = _can_edit(db, e, user)
         out.append(item)
     return out
 
@@ -156,7 +205,7 @@ def update_exam(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    exam = _get(db, exam_id, user)
+    exam = _get(db, exam_id, user, edit=True)
     data = body.model_dump(exclude_unset=True)
 
     # 改发放范围要重新走一遍归属校验，别让人绕过创建时的限制
@@ -172,7 +221,7 @@ def update_exam(
 
 @router.delete("/{exam_id}", summary="删除考试（连同答卷）")
 def delete_exam(exam_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    db.delete(_get(db, exam_id, user))
+    db.delete(_get(db, exam_id, user, edit=True))
     db.commit()
     return {"ok": True}
 
