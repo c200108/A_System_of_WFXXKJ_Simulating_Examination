@@ -22,6 +22,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.database import SessionLocal
 from app.models import Option, Question
+from app.services.difficulty import estimate
 from app.services.importer import stem_hash
 
 DATA_URL_RE = re.compile(r"^data:image/(?P<ext>[a-zA-Z0-9.+-]+);base64,(?P<body>.+)$", re.S)
@@ -103,19 +104,24 @@ def main() -> None:
                 if image_url:
                     images += 1
 
+            qtype = item.get("t") or "选择题"
+            scope = item.get("k") or ""
+            options = [p for p in (item.get("o") or []) if len(p) >= 2]
             q = Question(
                 code=item.get("id"),
-                type=item.get("t") or "选择题",
+                type=qtype,
                 stem=stem,
                 stem_hash=h,
                 answer=item.get("a") or "",
-                scope=item.get("k") or "",
+                scope=scope,
                 source=item.get("s") or "原卷",
                 image_url=image_url,
+                # 原卷没写难度，按题型和题干估一个 —— 和导入、界面新增同一套规则。
+                # 不给的话会吃模型默认值 3，全库一个难度，组卷按难度分摊分值就失效了。
+                difficulty=estimate(qtype, stem, scope, len(options)),
             )
-            for i, pair in enumerate(item.get("o") or []):
-                if len(pair) >= 2:
-                    q.options.append(Option(label=pair[0], content=pair[1], sort_order=i))
+            for i, pair in enumerate(options):
+                q.options.append(Option(label=pair[0], content=pair[1], sort_order=i))
             db.add(q)
             added += 1
         db.commit()

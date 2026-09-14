@@ -428,3 +428,24 @@ def test_stats_report_difficulty_spread(client, auth):
     stats = client.get("/api/questions/stats", headers=auth).json()
     assert stats["by_difficulty"]
     assert sum(stats["by_difficulty"].values()) == stats["total"]
+
+
+def test_difficulty_does_not_collapse_to_one_level():
+    """一批题型、范围、长度都不同的题，估出来不能全是同一个难度。
+
+    这是 2.4.3 服务器上真出过的问题：灌库脚本建题时没传难度，331 道题
+    全吃了模型默认值 3，"按难度分摊分值"就等于没生效 —— 每道题分数一样。
+    盯住"有区分度"这条，比盯某道题该是几分更有意义。
+    """
+    sample = [
+        ("判断题", "计算机由硬件和软件组成。", "信息基础与信息技术"),
+        ("判断题", "所有网站都可以随意转载他人作品。", "信息安全与网络道德"),
+        ("选择题", "下列哪个是操作系统？", "计算机软件"),
+        ("选择题", "在 Windows 中切换窗口的快捷键是（ ）。", "Windows系统操作"),
+        ("选择题", "阅读下面这段较长的情境材料" + "并回答问题。" * 12, "Python编程基础"),
+        ("操作题", "把文档另存为 PDF。", "WPS文字操作"),
+        ("操作题", "配置一台路由器，" + "使两个网段互通。" * 12, "计算机网络基础"),
+    ]
+    levels = {estimate(t, stem, scope) for t, stem, scope in sample}
+    assert len(levels) >= 3, f"难度没有区分度，估出来只有 {sorted(levels)}"
+    assert min(levels) < 3 < max(levels), f"难度全挤在中间：{sorted(levels)}"

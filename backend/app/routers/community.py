@@ -361,8 +361,13 @@ def delete_feedback(
 
 
 # ================================================================ 更新日志
-@router.get("/changelog", response_model=list[ChangelogVersionOut], summary="更新日志（公开）")
-def get_changelog(db: Session = Depends(get_db)):
+#
+# 整个模块收归管理员：更新日志讲的是"系统这次改了什么"，是维护者之间的事，
+# 任课老师看了帮不上忙，还容易把"某某功能改过"当成操作说明去理解。
+# 例外是 /changelog/latest —— 页脚那个版本号谁都要显示，它只回一个版本号，
+# 不含任何内容。
+@router.get("/changelog", response_model=list[ChangelogVersionOut], summary="更新日志（管理员）")
+def get_changelog(_: User = Depends(require_admin), db: Session = Depends(get_db)):
     """按 Keep a Changelog 组织：新版本在前，同版本内按变动类型分组。"""
     rows = db.scalars(
         select(ChangelogEntry).order_by(
@@ -403,15 +408,15 @@ def get_changelog(db: Session = Depends(get_db)):
     return versions
 
 
-@router.get("/changelog/types", summary="变动类型清单（公开）")
-def changelog_types():
+@router.get("/changelog/types", summary="变动类型清单（管理员）")
+def changelog_types(_: User = Depends(require_admin)):
     return [{"value": t, "label": CHANGE_TYPE_LABELS[t]} for t in CHANGE_TYPES]
 
 
-@router.post("/changelog", response_model=ChangelogEntryOut, summary="新增一条日志（教师）")
+@router.post("/changelog", response_model=ChangelogEntryOut, summary="新增一条日志（管理员）")
 def create_entry(
     body: ChangelogEntryIn,
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     if body.change_type not in CHANGE_TYPES:
@@ -435,9 +440,9 @@ def create_entry(
     return row
 
 
-@router.delete("/changelog/{eid}", summary="删除一条日志（需要删除权）")
+@router.delete("/changelog/{eid}", summary="删除一条日志（管理员）")
 def delete_entry(
-    eid: int, _: User = Depends(require_delete_permission), db: Session = Depends(get_db)
+    eid: int, _: User = Depends(require_admin), db: Session = Depends(get_db)
 ):
     row = db.get(ChangelogEntry, eid)
     if not row:

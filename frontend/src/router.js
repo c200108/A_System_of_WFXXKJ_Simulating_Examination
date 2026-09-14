@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { currentUser } from './auth'
 
 /**
  * 两套平台共用一个单页应用，靠路径前缀分开：
@@ -51,16 +52,17 @@ const teacherRoutes = {
     },
     { path: 'profile', component: () => import('./views/Profile.vue'), meta: { title: '我的账号' } },
     { path: 'users', component: () => import('./views/Users.vue'), meta: { title: '账号', admin: true } },
-    // 反馈和更新日志公开可看，登录的老师多出管理操作
+    // 反馈公开可看，登录的老师多出管理操作
     {
       path: 'feedback',
       component: () => import('./views/Feedback.vue'),
       meta: { title: '反馈', public: true }
     },
+    // 更新日志只给管理员：讲的是系统这次改了什么，是维护者之间的事
     {
       path: 'changelog',
       component: () => import('./views/Changelog.vue'),
-      meta: { title: '更新日志', public: true }
+      meta: { title: '更新日志', admin: true }
     }
   ]
 }
@@ -96,7 +98,11 @@ router.beforeEach(to => {
 
   if (isTeacherSide) {
     if (to.meta.public) return true
-    return localStorage.getItem('token') ? true : '/js/login'
+    if (!localStorage.getItem('token')) return '/js/login'
+    // meta.admin 的页面以前只靠菜单 v-if 藏着，手敲地址照样进得去
+    // （虽然接口会 403，但页面会先闪一下再报错）。这里真的拦住。
+    if (to.meta.admin && currentUser.value?.role !== 'admin') return '/js/paper'
+    return true
   }
 
   // 学生侧
