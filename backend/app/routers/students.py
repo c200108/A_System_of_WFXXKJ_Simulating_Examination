@@ -560,28 +560,55 @@ def _rows_from_upload(filename: str, raw: bytes) -> list[list[str]]:
 
 
 @admin_api.get("/template.xlsx", summary="下载学生导入模板")
-def student_template(_: User = Depends(get_current_user)):
-    """两列：学号、姓名。班级在导入时统一选，不用每行都写。"""
+def student_template(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """三列：学号、姓名、班级。
+
+    班级名必须和「班级」页面里的一模一样，所以模板里直接把现有班级列出来，
+    老师照着填就不会错 —— 让人凭记忆敲「七(3)班」还是「七年级3班」，
+    十有八九对不上。
+    """
+    classes = list(
+        db.scalars(
+            select(SchoolClass)
+            .where(SchoolClass.is_active.is_(True))
+            .order_by(SchoolClass.sort_order, SchoolClass.grade, SchoolClass.name)
+        )
+    )
+    sample_class = classes[0].display if classes else "七年级1班"
+
     wb = Workbook()
     ws = wb.active
     ws.title = "学生名单"
-    ws.append(["学号", "姓名"])
-    ws.append(["20260101", "张三"])
-    ws.append(["20260102", "李四"])
-    ws.column_dimensions["A"].width = 18
-    ws.column_dimensions["B"].width = 14
+    ws.append(["学号", "姓名", "班级"])
+    ws.append(["20260101", "张三", sample_class])
+    ws.append(["20260102", "李四", sample_class])
+    for col, w in zip("ABC", [18, 14, 18]):
+        ws.column_dimensions[col].width = w
 
     note = wb.create_sheet("填写说明")
     for line in [
-        ["把学生名单填在「学生名单」这一页，只要两列：学号、姓名。"],
+        ["把学生名单填在「学生名单」这一页，三列：学号、姓名、班级。"],
         ["第一行的表头请保留，示例的两行可以直接改掉。"],
-        ["班级在导入时统一选择，表格里不用写。"],
+        ["", ],
+        ["★ 班级必须和系统里的名称完全一致，可用的班级见「可用班级」那一页。"],
+        ["  班级留空的话，会归到导入时选的那个班；都没有就是「未分班」。"],
+        ["", ],
         ["初始密码就是学号，学生登录后自己改。"],
         ["已经存在的学号会自动跳过，不会覆盖原有账号。"],
         ["也可以存成 CSV 再上传，编码用 UTF-8 或 GBK 都行。"],
     ]:
         note.append(line)
     note.column_dimensions["A"].width = 60
+
+    # 把现有班级原样列出来，复制粘贴就不会写错
+    sheet = wb.create_sheet("可用班级")
+    sheet.append(["班级（照抄到名单的「班级」列）", "年级", "任课老师"])
+    for c in classes:
+        sheet.append([c.display, c.grade, (c.owner.name or c.owner.username) if c.owner else ""])
+    if not classes:
+        sheet.append(["还没有建班级，请先到「班级」页面建班", "", ""])
+    for col, w in zip("ABC", [30, 12, 14]):
+        sheet.column_dimensions[col].width = w
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -600,10 +627,14 @@ async def import_students(
     me: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """两列：学号、姓名。表头那一行认得出来就跳过，认不出来就当数据处理。
+    """三列：学号、姓名、班级，按这个顺序读。
 
-    已存在的学号跳过而不是报错 —— 名单里混进几个已建的很正常，
-    不该因此让整批都导不进去。
+    班级名要和「班级」页面里的完全一致；写错的那一行会被跳过并报出来，
+    **其余行照常导入** —— 一个班几十号人，不该因为一行写错就全军覆没。
+    班级留空的行归到 class_id 指定的班；都没有就是未分班。
+
+    表头那一行认得出来就跳过，认不出来就当数据处理。
+    已存在的学号跳过而不是报错 —— 名单里混进几个已建的很正常。
     """
     raw = await file.read()
     if len(raw) > 5 * 1024 * 1024:
@@ -613,16 +644,29 @@ async def import_students(
     if not rows:
         raise HTTPException(status_code=400, detail="文件是空的，没有可导入的内容")
 
-    cls = resolve_class(db, class_id)
+    fallback = resolve_class(db, class_id)
+
+    # 班级按显示名查。键上去掉空格，「七年级 1班」这种手滑也能认出来；
+    # 但别的差异（七(3)班 vs 七年级3班）一律算写错，照实报出来让人改对，
+    # 猜来猜去反而会把学生塞进错的班。
+    all_classes = list(db.scalars(select(SchoolClass)))
+    by_name = {c.display.replace(" ", ""): c for c in all_classes}
+    valid_hint = "、".join(c.display for c in all_classes[:6]) or "（还没有建班级）"
+
     existing = set(db.scalars(select(Student.student_no)))
     added, skipped, bad = 0, 0, []
+    used_classes: set[str] = set()
 
     for lineno, row in enumerate(rows, 1):
-        cells = [c for c in (row or []) if c]
-        if not cells:
+        cells = list(row or [])
+        if not any(c for c in cells):
             continue
 
-        no, name = (cells + ["", ""])[:2]
+        # 按列位置取，不要先把空单元格挤掉 —— 学号和姓名之间空一格的话，
+        # 挤掉之后班级会被当成姓名
+        no, name, cls_name = (cells + ["", "", ""])[:3]
+        no, name, cls_name = no.strip(), name.strip(), cls_name.strip()
+
         # 表头行：第一列写着"学号"之类的字样就跳过
         if lineno == 1 and ("学号" in no or "姓名" in name or no in ("id", "no")):
             continue
@@ -633,6 +677,18 @@ async def import_students(
         if not STUDENT_NO_RE.match(no) or len(no) > 32:
             bad.append(f"第 {lineno} 行「{no}」：学号只能用字母数字和 _ . -")
             continue
+
+        if cls_name:
+            cls = by_name.get(cls_name.replace(" ", ""))
+            if cls is None:
+                bad.append(
+                    f"第 {lineno} 行「{cls_name}」：系统里没有这个班，"
+                    f"班级名要和「班级」页面完全一致（如 {valid_hint}）"
+                )
+                continue
+        else:
+            cls = fallback
+
         if no in existing:
             skipped += 1
             continue
@@ -647,6 +703,8 @@ async def import_students(
                 created_by=me.id,
             )
         )
+        if cls:
+            used_classes.add(cls.display)
         existing.add(no)
         added += 1
 
@@ -656,7 +714,9 @@ async def import_students(
         "skipped": skipped,
         "errors": bad[:20],
         "error_count": len(bad),
-        "student_class": cls.display if cls else "",
+        # 表里逐行写了班级，所以回报的是"这批实际进了哪几个班"
+        "classes": sorted(used_classes),
+        "student_class": fallback.display if fallback else "",
     }
 
 

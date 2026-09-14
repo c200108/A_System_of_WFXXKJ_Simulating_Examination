@@ -75,11 +75,51 @@ def test_admin_sees_every_exam_with_owner_name(client, auth, teacher_auth):
     assert row["owner_name"] == "甲老师", "管理员看列表要能分清是谁发的"
 
 
-def test_owner_name_is_blank_for_teachers(client, teacher_auth):
-    """老师看到的都是自己的，不用再标一遍是谁发的。"""
+def test_teacher_list_marks_who_published(client, teacher_auth):
+    """老师的列表里现在混着管理员发的考试，每一场都要标出是谁发的，
+    否则分不清哪几场能改、哪几场只能看。"""
     _publish(client, teacher_auth, "甲老师的随堂练")
     rows = client.get("/api/exams", headers=teacher_auth).json()
-    assert all(e["owner_name"] == "" for e in rows)
+    assert rows and all(e["owner_name"] for e in rows)
+
+    mine = next(e for e in rows if e["title"] == "甲老师的随堂练")
+    assert mine["owner_name"] == "甲老师"
+    assert mine["can_edit"] is True
+
+
+# ---------------------------------------------------------------- 管理员发的考试
+def test_teacher_sees_admin_exam_but_cannot_change_it(client, auth, teacher_auth):
+    """管理员发的多半是全校统考：老师要能查自己班的成绩，但不该动那份卷子。"""
+    eid = _publish(client, auth, "全校统考（管理员发布）")
+
+    rows = client.get("/api/exams", headers=teacher_auth).json()
+    row = next((e for e in rows if e["id"] == eid), None)
+    assert row is not None, "管理员发的考试老师该看得到"
+    assert row["can_edit"] is False, "但不该能改"
+
+    # 成绩看得到
+    assert client.get(f"/api/exams/{eid}/submissions", headers=teacher_auth).status_code == 200
+    assert client.get(f"/api/exams/{eid}/stats", headers=teacher_auth).status_code == 200
+    assert client.get(f"/api/exams/{eid}/export.xlsx", headers=teacher_auth).status_code == 200
+
+    # 改设置和删除都被挡下，而且要说清为什么
+    res = client.patch(f"/api/exams/{eid}", json={"is_open": False}, headers=teacher_auth)
+    assert res.status_code == 403
+    assert "管理员发布" in res.json()["detail"] and "查看成绩" in res.json()["detail"]
+
+    res = client.delete(f"/api/exams/{eid}", headers=teacher_auth)
+    assert res.status_code == 403
+
+    # 确认真的没被改动
+    assert client.get(f"/api/exams/{eid}", headers=auth).json()["is_open"] is True
+
+
+def test_teachers_still_cannot_see_each_other(client, auth, teacher_auth, teacher2_auth):
+    """放开的只是「管理员 → 老师」这一层，老师之间照旧互相看不见。"""
+    eid = _publish(client, teacher_auth, "甲老师的私房卷")
+    rows = client.get("/api/exams", headers=teacher2_auth).json()
+    assert eid not in {e["id"] for e in rows}
+    assert client.get(f"/api/exams/{eid}", headers=teacher2_auth).status_code == 404
 
 
 def test_other_teacher_cannot_touch_your_exam(client, teacher_auth, teacher2_auth):

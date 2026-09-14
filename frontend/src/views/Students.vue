@@ -2,8 +2,10 @@
 /**
  * 教师端：学生账号管理。
  *
- * 一个班几十号人，一个个建太慢，所以主推「按班级粘名单」批量建号：
- * 从花名册里复制「学号 姓名」两列粘进来就行，初始密码是学号。
+ * 一个班几十号人，一个个建太慢，所以有两条批量入口：
+ *   导入 Excel/CSV —— 三列「学号 姓名 班级」，班级逐行写，可以跨班一次导完；
+ *   粘贴名单     —— 从花名册复制「学号 姓名」两列，班级在弹窗里统一选。
+ * 两条路的初始密码都是学号。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -113,7 +115,7 @@ const className = id => classes.value.find(c => c.id === id)?.display || '全部
 
 async function downloadTemplate() {
   await download(api.studentTemplate(), '学生导入模板.xlsx')
-  ElMessage.success('模板已下载，两列：学号、姓名')
+  ElMessage.success('模板已下载，三列：学号、姓名、班级；可用班级见表格第三页')
 }
 
 async function exportList() {
@@ -137,11 +139,18 @@ async function doImport(opt) {
       res.error_count ? `${res.error_count} 行没导进来` : ''
     ].filter(Boolean)
 
+    // 表里逐行写了班级，所以回报的是「实际进了哪几个班」
+    const where = res.classes?.length
+      ? `，分别进了：${res.classes.join('、')}。`
+      : res.student_class
+        ? `，都归到「${res.student_class}」。`
+        : '。'
+
     await ElMessageBox.alert(
       lines.join('，') +
-        (res.student_class ? `，都归到「${res.student_class}」。` : '。') +
+        where +
         '\n\n初始密码就是学号，请提醒学生登录后到「首页」改密码。' +
-        (res.errors?.length ? '\n\n有问题的行：\n' + res.errors.join('\n') : ''),
+        (res.errors?.length ? '\n\n这些行没能导入：\n' + res.errors.join('\n') : ''),
       '导入完成',
       { confirmButtonText: '知道了' }
     )
@@ -316,18 +325,21 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
   <!-- Excel / CSV 导入 -->
   <el-dialog v-model="importDlg" title="从 Excel / CSV 导入学生" width="540px">
     <el-form label-width="80px">
-      <el-form-item label="导入到">
-        <el-select v-model="imp.class_id" placeholder="选择班级（留空则不分班）" clearable style="width: 260px">
+      <el-form-item label="默认班级">
+        <el-select v-model="imp.class_id" placeholder="表里没写班级的行归到这里" clearable style="width: 260px">
           <el-option v-for="c in classes" :key="c.id" :label="c.display" :value="c.id" />
         </el-select>
       </el-form-item>
     </el-form>
 
     <div class="tip">
-      表格<b>两列：学号、姓名</b>，第一行写表头会自动跳过。班级在上面统一选，表里不用写。<br />
-      支持 <b>.xlsx</b> 和 <b>.csv</b>（UTF-8 或 GBK 编码都认）。<br />
-      已存在的学号会跳过，不会覆盖原有账号。<b>初始密码就是学号</b>。
-      <el-button link type="primary" size="small" @click="downloadTemplate">下载空白模板</el-button>
+      表格<b>三列：学号、姓名、班级</b>，第一行写表头会自动跳过。<br />
+      <b>班级要和「班级」页面里的名称完全一致</b>（如「七年级1班」）；写错的那一行会被跳过并报出来，
+      其余行照常导入。模板的「可用班级」页里列好了所有班，照抄就不会错。<br />
+      <b>班级列留空</b>的行归到上面选的班；上面也没选就是「未分班」。<br />
+      支持 <b>.xlsx</b> 和 <b>.csv</b>（UTF-8 或 GBK 编码都认）。已存在的学号会跳过，
+      <b>初始密码就是学号</b>。
+      <el-button link type="primary" size="small" @click="downloadTemplate">下载模板</el-button>
     </div>
 
     <el-upload drag :http-request="doImport" :show-file-list="false" accept=".xlsx,.csv" :disabled="importing">
