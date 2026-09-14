@@ -83,6 +83,26 @@ async function save() {
   ElMessage.success('已保存')
 }
 
+/**
+ * 拼导入结果的文字。
+ *
+ * 每一行错误只写"哪一行、错在哪"，"该怎么改"由后端的 hint 统一给一句 ——
+ * 以前每行都跟一遍「班级名要和「班级」页面完全一致（如 七年级1班、…）」，
+ * 错十几行就刷出十几遍同样的话，真正有用的行号反而被淹了。
+ */
+function importReport(res, head) {
+  const parts = [head, '初始密码就是学号，请提醒学生登录后到「首页」改密码。']
+  if (res.errors?.length) {
+    parts.push('这些行没能导入：\n' + res.errors.join('\n'))
+    // 只回前 20 条，没列全的说一声，别让人以为就这几行有问题
+    if (res.error_count > res.errors.length) {
+      parts.push(`（还有 ${res.error_count - res.errors.length} 行同类问题没列出来）`)
+    }
+  }
+  if (res.hint) parts.push(res.hint)
+  return parts.join('\n\n')
+}
+
 // ---------- 批量建号 ----------
 async function doBatch() {
   if (!batch.text.trim()) return ElMessage.warning('先把名单粘进来')
@@ -98,13 +118,9 @@ async function doBatch() {
       res.error_count ? `${res.error_count} 行格式不对，没有导入` : ''
     ].filter(Boolean)
 
-    await ElMessageBox.alert(
-      lines.join('，') +
-        '。\n\n初始密码就是学号，请提醒学生登录后到「首页」改密码。' +
-        (res.errors?.length ? '\n\n有问题的行：\n' + res.errors.join('\n') : ''),
-      '导入完成',
-      { confirmButtonText: '知道了' }
-    )
+    await ElMessageBox.alert(importReport(res, lines.join('，') + '。'), '导入完成', {
+      confirmButtonText: '知道了'
+    })
   } finally {
     batching.value = false
   }
@@ -146,14 +162,9 @@ async function doImport(opt) {
         ? `，都归到「${res.student_class}」。`
         : '。'
 
-    await ElMessageBox.alert(
-      lines.join('，') +
-        where +
-        '\n\n初始密码就是学号，请提醒学生登录后到「首页」改密码。' +
-        (res.errors?.length ? '\n\n这些行没能导入：\n' + res.errors.join('\n') : ''),
-      '导入完成',
-      { confirmButtonText: '知道了' }
-    )
+    await ElMessageBox.alert(importReport(res, lines.join('，') + where), '导入完成', {
+      confirmButtonText: '知道了'
+    })
   } finally {
     importing.value = false
   }

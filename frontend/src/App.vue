@@ -42,7 +42,34 @@ body {
 .el-dialog {
   max-width: calc(100vw - 24px);
 }
+
+/* 提示框（确认、警告、导入结果这些）跟着内容走，而不是一律 420px 宽。
+   一句"确定删除？"占半屏太空，导入结果那种十几行又挤成一长条。
+   规则：
+     宽度 = 内容实际需要的宽度（fit-content）
+     下限 300px —— 再窄按钮就排不开
+     上限 2/3 屏幕 —— 左右合计至少留出 1/3，长文本在这个宽度内折行
+   高度也封一道：错误行多的时候内容区自己滚，别把框撑得比屏幕还高。 */
 .el-message-box {
-  max-width: calc(100vw - 24px);
+  width: fit-content;
+  min-width: 300px;
+  max-width: min(66vw, 680px);
+}
+.el-message-box__content {
+  max-height: 60vh;
+  overflow: auto;
+}
+.el-message-box__message {
+  /* 后端的换行照原样显示，过长的行自动折 */
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 窄屏上 2/3 屏就太挤了，这里放宽到贴边 */
+@media (max-width: 600px) {
+  .el-message-box {
+    max-width: calc(100vw - 24px);
+    min-width: 0;
+  }
 }
 </style>
