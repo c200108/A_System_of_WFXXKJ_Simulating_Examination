@@ -1,18 +1,30 @@
 #!/usr/bin/env bash
-# 把这套系统的全部数据导出到一个专属文件夹，拷走就能在别的服务器上还原。
+# 把本机的全部数据导到一个文件夹，供以后在别的机器上还原。
 #
-#   sudo bash scripts/data-export.sh              # 导到 ./exam-data/
+#   sudo bash scripts/data-export.sh              # 导到项目下的 exam-data/
 #   sudo bash scripts/data-export.sh /mnt/u盘     # 导到指定位置
 #
 # 导出的内容：
-#   database.sql.gz  整个 MySQL 库（题库、账号、学生、成绩、反馈、更新日志……）
+#   tables/*.jsonl   每张表一个文件，一行一条记录（学生、教师、题库、成绩、
+#                    班级、反馈、打字记录、系统设置……一张不落）
+#   meta.json        导出时间、迁移版本、每张表有哪些列和多少行
 #   uploads.tar.gz   题目配图和导入的 Excel 原件
-#   config.yaml      平台配置（平台名称、知识范围、打字文本……）
-#   env.secrets      .env 里的口令，**含明文密码，注意保管**
-#   MANIFEST.txt     导出时间、版本、各表行数，还原后拿来核对
+#   config.yaml      平台配置
+#   settings.env     端口、对外地址、镜像源（**不含任何口令**）
 #
-# 设计上的一条原则：**宁可失败也不要产出一个看似成功的空备份**。
-# 每一步都验证产物有没有内容，任何一步不对就立刻退出，绝不打印"导出完成"。
+# ============================ 两条设计原则 ============================
+#
+# 1）**只导数据，不导表结构。**
+#    老版本用 mysqldump，导出的 SQL 带着 CREATE TABLE，还原时会把目标库的结构
+#    倒退成导出那天的样子。表结构应该由目标库那份代码说了算，不该由一份旧备份
+#    倒着覆盖回去。改成只导数据之后，老备份能直接导进新版本系统：新加的列取
+#    默认值，删掉的列跳过并报出来。
+#
+# 2）**不导口令。**
+#    老版本会把 .env 里的口令导进 env.secrets，还原时按到新机器上。这是错的：
+#    MySQL 的口令存在数据卷里、只在第一次建库时采用，新部署的卷用的是它自己
+#    生成的那套。硬按旧口令上去只会连不上 —— 这个坑踩过一整天，见
+#    docs/数据还原排障.md。所以这里只导端口、对外地址这些非机密设置。
 
 set -uo pipefail
 
@@ -22,173 +34,104 @@ ok()   { printf "      ${C_GREEN}✓ %s${C_OFF}\n" "$1"; }
 warn() { printf "      ${C_YEL}! %s${C_OFF}\n" "$1"; }
 die()  { printf "\n${C_RED}[失败] %s${C_OFF}\n\n" "$1"; exit 1; }
 
-# 项目根目录：脚本在 scripts/ 下，往上一层
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || die "进不去项目目录 $ROOT"
 
-OUT_BASE="${1:-$ROOT/exam-data}"
-STAMP="$(date +%Y%m%d-%H%M%S)"
+OUT="${1:-$ROOT/exam-data}"
 
 echo "=================================================="
 echo "   导出全部数据"
 echo "=================================================="
 echo "  项目目录：$ROOT"
-echo "  导出到  ：$OUT_BASE"
+echo "  导出到  ：$OUT"
 
-# ---------------------------------------------------------------- 0 前置检查
-step "[1/6] 检查环境..."
+# ---------------------------------------------------------------- 1 检查
+step "[1/5] 检查环境..."
 command -v docker >/dev/null 2>&1 || die "没装 docker"
-[ -f "$ROOT/.env" ] || die "找不到 $ROOT/.env，无法取得数据库口令"
-[ -f "$ROOT/docker-compose.yml" ] || die "找不到 docker-compose.yml，确认在项目根目录"
+docker compose version >/dev/null 2>&1 || die "docker compose 不可用（需要 v2）"
+[ -f "$ROOT/docker-compose.yml" ] || die "当前目录不是项目根目录"
+[ -n "$(docker compose ps -q backend 2>/dev/null)" ] \
+    || die "backend 容器没在运行。先 docker compose up -d 再导出。"
+ok "docker 就绪，后端容器在运行"
 
-# cron 或 sudo 环境里变量是空的，必须自己读 .env。
-# 用 load_env_file 而不是 source：口令里带 & | ; 空格时 source 会当成 shell 语法。
-# shellcheck disable=SC1091
-. "$ROOT/scripts/lib-env.sh" || die "找不到 scripts/lib-env.sh"
-load_env_file "$ROOT/.env" || die "读不了 $ROOT/.env"
+mkdir -p "$OUT" || die "建不了目录 $OUT"
+OUT="$(cd "$OUT" && pwd)"
 
-DB_USER="${MYSQL_USER:?".env 里缺 MYSQL_USER"}"
-DB_PASS="${MYSQL_PASSWORD:?".env 里缺 MYSQL_PASSWORD"}"
-DB_NAME="${MYSQL_DATABASE:-exam}"
-
-if [ -z "$(docker compose ps -q db 2>/dev/null)" ]; then
-    die "db 容器没在运行。先 docker compose up -d db 再导出。"
-fi
-ok "docker 和 .env 都就位，数据库容器在运行"
-
-mkdir -p "$OUT_BASE" || die "建不了目录 $OUT_BASE"
-OUT="$OUT_BASE"
-
-# ---------------------------------------------------------------- 1 数据库
-step "[2/6] 导出数据库..."
-SQL_TMP="$OUT/.database.sql.tmp"
-
-# --routines --events --triggers：把存储过程一起带走，将来加了也不会漏
-# --single-transaction：不锁表，导出期间学生照常答题
-# --set-gtid-purged=OFF：新库不是同一个复制拓扑，带 GTID 会导不进去
-if ! docker compose exec -T db mysqldump \
-        -u"$DB_USER" -p"$DB_PASS" \
-        --single-transaction --quick \
-        --routines --events --triggers \
-        --default-character-set=utf8mb4 \
-        --set-gtid-purged=OFF \
-        "$DB_NAME" > "$SQL_TMP" 2>"$OUT/.dump_err"; then
-    printf "%s\n" "$(cat "$OUT/.dump_err")" >&2
-    rm -f "$SQL_TMP" "$OUT/.dump_err"
-    die "mysqldump 失败，上面是原始报错"
+# ---------------------------------------------------------------- 2 数据
+step "[2/5] 导出数据表..."
+# 在容器里导到 /tmp，再拷出来 —— 不依赖宿主机和容器之间有共享目录
+docker compose exec -T backend rm -rf /tmp/data-export >/dev/null 2>&1
+if ! docker compose exec -T backend python -m tools.export_data /tmp/data-export; then
+    die "导出失败，上面是原始报错"
 fi
 
-# 认证失败时 mysqldump 可能只吐几行注释就退出，光看退出码不够
-if ! grep -q "CREATE TABLE" "$SQL_TMP"; then
-    rm -f "$SQL_TMP" "$OUT/.dump_err"
-    die "导出的 SQL 里没有建表语句，备份无效（口令不对？库是空的？）"
-fi
+rm -rf "$OUT/tables" "$OUT/meta.json"
+CID="$(docker compose ps -q backend)"
+docker cp "$CID:/tmp/data-export/tables" "$OUT/tables" >/dev/null || die "拷不出 tables 目录"
+docker cp "$CID:/tmp/data-export/meta.json" "$OUT/meta.json" >/dev/null || die "拷不出 meta.json"
+docker compose exec -T backend rm -rf /tmp/data-export >/dev/null 2>&1
 
-TABLES="$(grep -c "^CREATE TABLE" "$SQL_TMP")"
-gzip -c "$SQL_TMP" > "$OUT/database.sql.gz" || die "压缩失败"
-rm -f "$SQL_TMP" "$OUT/.dump_err"
-ok "数据库已导出（$TABLES 张表，$(du -h "$OUT/database.sql.gz" | cut -f1)）"
+# 宁可失败也不要产出一个看似成功的空备份
+[ -s "$OUT/meta.json" ] || die "meta.json 是空的，备份无效"
+COUNT="$(ls -1 "$OUT/tables"/*.jsonl 2>/dev/null | wc -l)"
+[ "$COUNT" -ge 5 ] || die "只导出了 $COUNT 张表，太少了，八成没导成"
+ok "$COUNT 张表已导出（$(du -sh "$OUT/tables" | cut -f1)）"
 
-# ---------------------------------------------------------------- 2 上传目录
-step "[3/6] 导出题目配图与导入原件..."
+# ---------------------------------------------------------------- 3 文件
+step "[3/5] 导出题目配图与导入原件..."
 if [ -d "$ROOT/data/uploads" ] && [ -n "$(ls -A "$ROOT/data/uploads" 2>/dev/null)" ]; then
     tar czf "$OUT/uploads.tar.gz" -C "$ROOT/data" uploads || die "打包 uploads 失败"
-    ok "已导出（$(find "$ROOT/data/uploads" -type f | wc -l) 个文件，$(du -h "$OUT/uploads.tar.gz" | cut -f1)）"
+    ok "配图已打包（$(du -h "$OUT/uploads.tar.gz" | cut -f1)）"
 else
-    # 建个空包，还原脚本就不用分两种情况处理
-    tar czf "$OUT/uploads.tar.gz" -T /dev/null
-    warn "data/uploads 是空的，生成了空包"
+    tar czf "$OUT/uploads.tar.gz" -C "$ROOT" --files-from /dev/null || die "建空包失败"
+    warn "uploads 目录是空的，打了个空包"
 fi
 
-# ---------------------------------------------------------------- 3 配置
-step "[4/6] 导出配置..."
+# ---------------------------------------------------------------- 4 配置
+step "[4/5] 导出配置..."
 cp "$ROOT/config.yaml" "$OUT/config.yaml" || die "复制 config.yaml 失败"
 ok "config.yaml 已导出"
 
-# .env 里有明文口令，单独放并且只给 root 读。
-#
-# 除了口令，端口、对外地址、镜像源也一并带上 —— data-import.sh 是拿
-# .env.example 当模板再覆盖这些键的，不带的话每还原一次就被打回示例默认值
-# （端口退回 8080、镜像源退回 docker.io），同一台机器上反复还原尤其烦人。
+# 只导非机密的部署设置。口令一概不导 —— 新机器用它自己那套。
 {
     echo "# 从 $(hostname) 于 $(date '+%F %T') 导出"
-    echo "# 含明文口令，请妥善保管；还原时 data-import.sh 会读它"
-    grep -E '^[[:space:]]*(MYSQL_|JWT_SECRET|ADMIN_)' "$ROOT/.env" 2>/dev/null
-    echo "# --- 以下是本机的部署设置，不是口令 ---"
+    echo "# 只有部署设置，**没有任何口令**。还原时可选择性套用。"
     grep -E '^[[:space:]]*(REGISTRY|WEB_PORT|CORS_ORIGINS|PUBLIC_BASE_URL)[[:space:]]*=' \
         "$ROOT/.env" 2>/dev/null
-} > "$OUT/env.secrets"
-chmod 600 "$OUT/env.secrets"
-ok "口令和部署设置已导出到 env.secrets（权限 600）"
+} > "$OUT/settings.env"
+ok "端口和对外地址已导出到 settings.env（不含口令）"
 
-# ---------------------------------------------------------------- 4 清单
-step "[5/6] 统计各表行数..."
-COUNTS="$(docker compose exec -T db mysql -u"$DB_USER" -p"$DB_PASS" \
-    --default-character-set=utf8mb4 -N -B "$DB_NAME" 2>/dev/null <<'SQL'
-SELECT CONCAT(table_name, '=', table_rows)
-FROM information_schema.tables
-WHERE table_schema = DATABASE()
-ORDER BY table_name;
-SQL
-)"
-
-# information_schema.table_rows 对 InnoDB 只是估算，关键几张表实点一遍
-EXACT="$(docker compose exec -T db mysql -u"$DB_USER" -p"$DB_PASS" \
-    --default-character-set=utf8mb4 -N -B "$DB_NAME" 2>/dev/null <<'SQL'
-SELECT CONCAT('questions=', (SELECT COUNT(*) FROM questions));
-SELECT CONCAT('users=', (SELECT COUNT(*) FROM users));
-SELECT CONCAT('students=', (SELECT COUNT(*) FROM students));
-SELECT CONCAT('exams=', (SELECT COUNT(*) FROM exams));
-SELECT CONCAT('exam_submissions=', (SELECT COUNT(*) FROM exam_submissions));
-SELECT CONCAT('typing_records=', (SELECT COUNT(*) FROM typing_records));
-SELECT CONCAT('typing_texts=', (SELECT COUNT(*) FROM typing_texts));
-SQL
-)"
-
+# ---------------------------------------------------------------- 5 清单
+step "[5/5] 生成清单..."
 {
     echo "昌邑市实验中学信息科技教学平台 —— 数据导出清单"
     echo "导出时间 : $(date '+%F %T')"
     echo "来源主机 : $(hostname)"
-    echo "数据库名 : $DB_NAME"
-    echo "表数量   : $TABLES"
-    echo "迁移版本 : $(docker compose exec -T db mysql -u"$DB_USER" -p"$DB_PASS" -N -B "$DB_NAME" \
-                     -e 'SELECT version_num FROM alembic_version' 2>/dev/null | tr -d '\r')"
     echo
-    echo "--- 关键表精确行数（还原后拿这个核对）---"
-    echo "$EXACT" | tr -d '\r'
-    echo
-    echo "--- 全部表（估算值，仅供参考）---"
-    echo "$COUNTS" | tr -d '\r'
+    echo "--- 各表行数（还原后拿这个核对）---"
+    docker compose exec -T backend python -c "
+import json, sys
+meta = json.load(open('/dev/stdin', encoding='utf-8'))
+for name, info in sorted(meta['表'].items()):
+    print(f\"{name}={info['行数']}\")
+" < "$OUT/meta.json" 2>/dev/null || python3 -c "
+import json
+meta = json.load(open('$OUT/meta.json', encoding='utf-8'))
+for name, info in sorted(meta['表'].items()):
+    print(f\"{name}={info['行数']}\")
+"
 } > "$OUT/MANIFEST.txt"
-ok "清单已写入 MANIFEST.txt"
-
-# ---------------------------------------------------------------- 5 自检
-step "[6/6] 校验导出结果..."
-FAIL=0
-for f in database.sql.gz uploads.tar.gz config.yaml env.secrets MANIFEST.txt; do
-    if [ ! -s "$OUT/$f" ]; then
-        warn "$f 不存在或是空的"
-        FAIL=1
-    fi
-done
-[ "$FAIL" = 0 ] || die "导出结果不完整，别拿这份去还原"
-
-gzip -t "$OUT/database.sql.gz" || die "database.sql.gz 压缩包损坏"
-tar tzf "$OUT/uploads.tar.gz" >/dev/null || die "uploads.tar.gz 压缩包损坏"
-ok "压缩包完整性校验通过"
-
-# 留一份带时间戳的副本，避免下次导出直接把这份覆盖掉
-cp "$OUT/MANIFEST.txt" "$OUT/MANIFEST-$STAMP.txt"
+ok "清单已生成"
 
 echo
 echo "=================================================="
-echo "  导出完成"
+echo "  导出完成：$OUT"
+du -sh "$OUT" | sed 's/^/  总大小：/'
 echo
-ls -1sh "$OUT"/database.sql.gz "$OUT"/uploads.tar.gz "$OUT"/config.yaml \
-        "$OUT"/env.secrets "$OUT"/MANIFEST.txt | sed 's/^/    /'
+echo "  还原到别的机器："
+echo "    1. 那台机器上先正常部署好（git clone + ./deploy.sh），确认能打开"
+echo "    2. 把整个 $(basename "$OUT") 目录拷过去"
+echo "    3. sudo bash scripts/data-import.sh /路径/$(basename "$OUT")"
 echo
-echo "  整个文件夹拷到新服务器，然后在新服务器上执行："
-echo "      sudo bash scripts/data-import.sh /路径/$(basename "$OUT")"
-echo
-echo "  注意：env.secrets 里是明文口令，别放进 Git，也别发微信群。"
+echo "  这份备份**不含口令**，新机器沿用它自己的 .env，不会再出现口令对不上。"
 echo "=================================================="

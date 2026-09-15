@@ -22,6 +22,7 @@ import sys
 import pytest
 from alembic import command
 from alembic.config import Config
+import sqlalchemy as sa
 from sqlalchemy import create_engine, inspect
 
 BACKEND_DIR = pathlib.Path(__file__).resolve().parent.parent
@@ -207,3 +208,83 @@ def test_0010_fills_in_difficulty_for_existing_questions(blank_db):
     assert all(1 <= d <= 5 for d in got.values()), got
     # 判断题 < 操作题：估出来的难度要有区分度，不能三道题都是 3
     assert got[1] < got[3], got
+
+
+# ---------------------------------------------------------------- 数据导入导出
+def _seed_rows(url: str) -> None:
+    """往库里放几行数据，供导出/导入用例使用。"""
+    engine = create_engine(url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    "INSERT INTO questions (id, type, stem, stem_hash, answer, scope,"
+                    " source, is_pinned, is_deleted, difficulty)"
+                    " VALUES (1, '选择题', '导出用例的题干', 'h-export-1', 'A',"
+                    " '计算机硬件', '原卷', 0, 0, 4)"
+                )
+            )
+            conn.execute(
+                sa.text(
+                    "INSERT INTO users (id, username, password_hash, name, role,"
+                    " grade_class, contact, is_active, can_delete)"
+                    " VALUES (9, 'exp_t', 'x', '导出老师', 'teacher', '', '', 1, 0)"
+                )
+            )
+    finally:
+        engine.dispose()
+
+
+def test_export_then_import_into_a_newer_schema(blank_db, tmp_path, monkeypatch):
+    """老备份导进新版本系统：新增的列取默认值，删掉的列跳过，行数一条不少。
+
+    这是"原项目删掉、重新 clone 部署、再把数据导回来"那条路的核心保证。
+    """
+    import json
+    import subprocess
+
+    command.upgrade(_alembic_config(blank_db), "head")
+    _seed_rows(blank_db)
+
+    out = tmp_path / "导出"
+    env = dict(os.environ, DATABASE_URL=blank_db, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+    res = subprocess.run(
+        [sys.executable, "-m", "tools.export_data", str(out)],
+        cwd=BACKEND_DIR, env=env, capture_output=True, text=True, encoding="utf-8",
+    )
+    assert res.returncode == 0, res.stdout + res.stderr
+
+    meta = json.loads((out / "meta.json").read_text(encoding="utf-8"))
+    assert meta["表"]["questions"]["行数"] == 1
+    assert "alembic_version" not in meta["表"], "迁移版本不该跟着备份走"
+
+    # 把导出改造成"老备份"：去掉 2.4.0 才有的 difficulty，加一个早就删掉的列
+    qfile = out / "tables" / "questions.jsonl"
+    row = json.loads(qfile.read_text(encoding="utf-8").strip())
+    row.pop("difficulty")
+    row["早就没了的列"] = "旧值"
+    qfile.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+    (out / "tables" / "早年的表.jsonl").write_text('{"id": 1}\n', encoding="utf-8")
+
+    res = subprocess.run(
+        [sys.executable, "-m", "tools.import_data", str(out), "--write"],
+        cwd=BACKEND_DIR, env=env, capture_output=True, text=True, encoding="utf-8",
+    )
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "早就没了的列" in res.stdout, "删掉的列要明确报出来，不能悄悄丢"
+    assert "difficulty" in res.stdout, "新增的列要说明用了默认值"
+    assert "早年的表" in res.stdout, "已不存在的表要报出来"
+
+    engine = create_engine(blank_db)
+    try:
+        with engine.connect() as conn:
+            got = conn.execute(
+                sa.text("SELECT stem, difficulty FROM questions WHERE id = 1")
+            ).fetchone()
+            users = conn.execute(sa.text("SELECT COUNT(*) FROM users")).scalar()
+    finally:
+        engine.dispose()
+
+    assert got[0] == "导出用例的题干", "数据没导进来"
+    assert got[1] == 3, "备份里没有的列应该取默认值 3"
+    assert users == 1, "别的表也要照常导"
