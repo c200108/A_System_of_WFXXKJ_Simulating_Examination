@@ -11,15 +11,12 @@
 判分也还是在服务端做。这个文件不 import 任何会吐答案的东西。
 """
 
-import csv
 import io
 import json
-import re
-import time
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
-from openpyxl import Workbook, load_workbook
+from openpyxl import Workbook
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -44,19 +41,15 @@ from ..security import (
     verify_password,
 )
 from ..routers.take import _submit_out as submit_out
+from ..services import roster
 from ..services.exam import grade, group_items, load_items, strip_answers
+# 名单解析和入库都在 services/roster.py，上传表格和粘贴名单共用那一套。
+# 这里只保留单个增改用得到的几个小工具。
+from ..services.roster import STUDENT_NO_RE, norm_gender
 
 student_api = APIRouter(prefix="/api/student", tags=["学生平台"])
 admin_api = APIRouter(prefix="/api/students", tags=["学生账号管理"])
 
-STUDENT_NO_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
-
-# 批量建账号时每攒多少条提交一次，以及提交后歇多久（按这批实际耗时的比例）。
-# 0.25 = 每干 4 秒歇 1 秒，导入总时长多两成半，换来机房里其他人不卡。
-# 建一个账号要算一次 bcrypt（约 190 毫秒），1500 人近 5 分钟 —— 不让出 CPU
-# 的话，正在答题的学生会明显感觉到。
-IMPORT_CHUNK = 100
-IMPORT_THROTTLE = 0.25
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 PASSWORD_MIN = 6
 
@@ -96,43 +89,6 @@ def resolve_class(db: Session, class_id: int | None) -> SchoolClass | None:
     if not row:
         raise HTTPException(status_code=404, detail="选择的班级不存在，刷新页面看看")
     return row
-
-
-# 性别只认这两种写法，别的写法尽量认出来。认不出的当没填 —— 性别是补充信息，
-# 不该因为它写得花哨就把整个学生挡在门外。认不出的行会在导入结果里一并报出来。
-GENDER_ALIASES = {
-    "男": "男", "男生": "男", "m": "男", "male": "男", "boy": "男", "1": "男",
-    "女": "女", "女生": "女", "f": "女", "female": "女", "girl": "女", "2": "女",
-}
-
-
-def norm_gender(value) -> str:
-    """认出来就返回「男」或「女」，认不出（含空）返回空串。"""
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    return GENDER_ALIASES.get(text.lower(), "")
-
-
-HINTS = {
-    "split": "每行写成「学号 姓名」两部分，中间用空格或 Tab 隔开，例如：20260101 张三",
-    "no": "学号只能用字母、数字和 _ . -，不能有空格或中文，最长 32 位",
-}
-
-
-def batch_hint(kinds: set[str]) -> str:
-    """把这批里出现过的问题各给一句怎么改。一类只说一次。"""
-    return "\n".join(HINTS[k] for k in ("split", "no") if k in kinds)
-
-
-def clip(text: str, width: int = 16) -> str:
-    """错误信息里回显用户填的内容时截一下。
-
-    一行写了三十几个字的话，十几条错误堆起来提示框就没法看了；
-    截到十几个字足够让人认出是哪一行。
-    """
-    value = (text or "").strip()
-    return value if len(value) <= width else value[:width] + "…"
 
 
 def initial_password(student_no: str) -> str:
@@ -450,63 +406,27 @@ def create_student(
     return row
 
 
-@admin_api.post("/batch", summary="按班级批量建账号（一行一个「学号 姓名」）")
+@admin_api.post("/batch", summary="粘贴名单批量建账号")
 def batch_students(
     body: StudentBatchIn, me: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
-    """初始密码就是学号，学生登录后自己改。
+    """和「上传表格」共用同一套解析和入库逻辑（services/roster.py）。
 
-    已经存在的学号跳过而不是报错 —— 名单里混进几个已建的很正常，
-    不该因此让整批都导不进去。
+    一行四列：学号、姓名、班级、性别，后两列选填。从 Excel 复制粘贴过来
+    自带制表符分隔，直接粘就行；手打的用空格隔开「学号 姓名」两列。
+    班级留空的归到弹窗里选的那个班。
+
+    初始密码就是学号，学生登录后自己改。已存在的学号跳过而不是报错 ——
+    名单里混进几个已建的很正常，不该因此让整批都导不进去。
     """
-    cls = resolve_class(db, body.class_id)
-    added, skipped, bad = 0, 0, []
-    # 出现过哪几类问题。"该怎么写"按类别各给一句，不跟在每一行后面重复
-    kinds: set[str] = set()
-
-    existing = set(db.scalars(select(Student.student_no)))
-
-    for lineno, raw in enumerate(body.text.splitlines(), 1):
-        line = raw.strip()
-        if not line:
-            continue
-        # 学号和姓名之间用空格或制表符隔开，中间多几个空格也认
-        parts = line.split()
-        if len(parts) < 2:
-            kinds.add("split")
-            bad.append(f"第 {lineno} 行「{clip(line)}」：分不出学号和姓名")
-            continue
-
-        no, name = parts[0], " ".join(parts[1:])
-        if not STUDENT_NO_RE.match(no) or len(no) > 32:
-            kinds.add("no")
-            bad.append(f"第 {lineno} 行「{clip(no)}」：学号不合规")
-            continue
-        if no in existing:
-            skipped += 1
-            continue
-
-        db.add(
-            Student(
-                student_no=no,
-                name=name[:64],
-                class_id=cls.id if cls else None,
-                student_class=cls.display if cls else "",
-                password_hash=hash_password(initial_password(no)),
-                created_by=me.id,
-            )
-        )
-        existing.add(no)
-        added += 1
-
-    db.commit()
-    return {
-        "added": added,
-        "skipped": skipped,
-        "errors": bad[:20],
-        "error_count": len(bad),
-        "hint": batch_hint(kinds),
-    }
+    fallback = resolve_class(db, body.class_id)
+    rows = roster.paste_rows(body.text)
+    if not rows:
+        raise HTTPException(status_code=400, detail="名单是空的，没有可导入的内容")
+    return roster.ingest(
+        db, rows, me.id, fallback,
+        make_password=initial_password, hash_it=hash_password,
+    )
 
 
 @admin_api.patch("/{sid}", response_model=StudentOut, summary="改学生资料或重置密码")
@@ -583,46 +503,7 @@ def bulk_students(
 
 
 # ================================================================ 导入导出
-def _norm(cell) -> str:
-    """单元格转成干净的字符串。
 
-    Excel 里学号常被存成数字，openpyxl 读出来是 20260101.0 这种浮点数，
-    直接 str() 会带个 .0，和真实学号对不上，这里要特判掉。
-    """
-    if cell is None:
-        return ""
-    if isinstance(cell, float) and cell.is_integer():
-        return str(int(cell))
-    return str(cell).strip()
-
-
-def _decode_csv(raw: bytes) -> str:
-    """CSV 的编码猜一猜。学校里从 WPS/Excel 存出来的多半是 GBK。"""
-    for enc in ("utf-8-sig", "utf-8", "gbk", "gb18030"):
-        try:
-            return raw.decode(enc)
-        except UnicodeDecodeError:
-            continue
-    raise HTTPException(status_code=400, detail="这个 CSV 的编码认不出来，另存为 UTF-8 或 GBK 再传")
-
-
-def _rows_from_upload(filename: str, raw: bytes) -> list[list[str]]:
-    """把上传的文件读成一行行的单元格。xlsx 和 csv 走两条路，出口一样。"""
-    lower = (filename or "").lower()
-
-    if lower.endswith((".xlsx", ".xlsm")):
-        try:
-            wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
-        except Exception:
-            raise HTTPException(status_code=400, detail="这个 Excel 打不开，确认是 .xlsx 格式")
-        ws = wb.active
-        return [[_norm(c) for c in row] for row in ws.iter_rows(values_only=True)]
-
-    if lower.endswith((".csv", ".txt")):
-        text = _decode_csv(raw)
-        return [[c.strip() for c in row] for row in csv.reader(io.StringIO(text))]
-
-    raise HTTPException(status_code=400, detail="只支持 .xlsx 和 .csv 文件")
 
 
 @admin_api.get("/template.xlsx", summary="下载学生导入模板")
@@ -696,156 +577,43 @@ def import_students(
     me: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """四列：学号、姓名、班级、性别，按这个顺序读。
+    """四列：学号、姓名、班级、性别，按这个顺序读。和「粘贴名单」共用同一套
+    解析和入库逻辑（services/roster.py），两个入口的规则完全一致。
+
+    **工作簿里每一张表都会读** —— 一个年级一张表、按班分表都很常见。
+    模板自带的「填写说明」「可用班级」两页认得出来，会自动跳过。
 
     **这个函数是 `def` 不是 `async def`，别改回去。**
     每建一个账号都要算一次 bcrypt（约 190 毫秒），1500 人就是近 5 分钟纯 CPU。
-    写成 async 的话这 5 分钟全压在事件循环上，整个网站会彻底卡死 ——
-    真出过。写成同步的，FastAPI 会把它丢进线程池，bcrypt 在 C 层会释放 GIL，
+    写成 async 的话这 5 分钟全压在事件循环上，整个网站会彻底卡死 —— 真出过。
+    写成同步的，FastAPI 会把它丢进线程池，bcrypt 在 C 层会释放 GIL，
     别的请求照常有人服务。
-
-    班级名要和「班级」页面里的完全一致；写错的那一行会被跳过并报出来，
-    **其余行照常导入** —— 一个班几十号人，不该因为一行写错就全军覆没。
-    班级留空的行归到 class_id 指定的班；都没有就是未分班。
-
-    表头那一行认得出来就跳过，认不出来就当数据处理。
-    已存在的学号跳过而不是报错 —— 名单里混进几个已建的很正常。
     """
     # 同步读。上面那条注释说了为什么这个端点不能是 async
     raw = file.file.read()
     if len(raw) > 5 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="文件太大了，超过 5 MB")
 
-    rows = _rows_from_upload(file.filename or "", raw)
+    try:
+        rows, skipped_sheets = roster.sheet_rows(file.filename or "", raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     if not rows:
-        raise HTTPException(status_code=400, detail="文件是空的，没有可导入的内容")
+        extra = f"（跳过了这些工作表：{'、'.join(skipped_sheets)}）" if skipped_sheets else ""
+        raise HTTPException(
+            status_code=400,
+            detail=f"没读到任何学生{extra}。"
+            "表格要有「学号」「姓名」两列，第一行写表头即可。",
+        )
 
     fallback = resolve_class(db, class_id)
-
-    # 班级按显示名查。键上去掉空格，「七年级 1班」这种手滑也能认出来；
-    # 但别的差异（七(3)班 vs 七年级3班）一律算写错，照实报出来让人改对，
-    # 猜来猜去反而会把学生塞进错的班。
-    all_classes = list(db.scalars(select(SchoolClass)))
-    by_name = {c.display.replace(" ", ""): c for c in all_classes}
-    valid_hint = "、".join(c.display for c in all_classes[:6]) or "（还没有建班级）"
-
-    existing = set(db.scalars(select(Student.student_no)))
-    added, skipped, bad = 0, 0, []
-    used_classes: set[str] = set()
-    bad_classes: set[str] = set()   # 表里出现过、但系统里没有的班级名
-    kinds: set[str] = set()         # 出现过哪几类问题，每类只提示一次
-    bad_gender: list[str] = []      # 性别认不出的行号，只提示不拦人
-    pending = 0                     # 离上次提交攒了几条
-
-    chunk_started = time.perf_counter()
-    for lineno, row in enumerate(rows, 1):
-        cells = list(row or [])
-        if not any(c for c in cells):
-            continue
-
-        # 按列位置取，不要先把空单元格挤掉 —— 学号和姓名之间空一格的话，
-        # 挤掉之后班级会被当成姓名
-        no, name, cls_name, sex = (cells + ["", "", "", ""])[:4]
-        no, name, cls_name, sex = no.strip(), name.strip(), cls_name.strip(), sex.strip()
-
-        # 表头行：第一列写着"学号"之类的字样就跳过
-        if lineno == 1 and ("学号" in no or "姓名" in name or no in ("id", "no")):
-            continue
-
-        # 性别认不出来只记一笔、留空，不挡着建账号 —— 它是补充信息，
-        # 为了一个写法把学生挡在门外不划算
-        gender = norm_gender(sex)
-        if sex and not gender:
-            bad_gender.append(str(lineno))
-
-        if not no or not name:
-            kinds.add("empty")
-            bad.append(f"第 {lineno} 行：学号或姓名是空的")
-            continue
-        if not STUDENT_NO_RE.match(no) or len(no) > 32:
-            kinds.add("no")
-            bad.append(f"第 {lineno} 行「{clip(no)}」：学号不合规")
-            continue
-
-        if cls_name:
-            cls = by_name.get(cls_name.replace(" ", ""))
-            if cls is None:
-                # 只写"哪一行、错在哪"。"该怎么改"是所有错行共用的一句话，
-                # 放在 hint 里回一次就够 —— 每行都跟一遍"班级名要和……完全一致
-                # （如 七年级1班、七年级2班……）"，十几行错就刷出十几遍，
-                # 真正有用的行号反而被淹了。
-                bad_classes.add(cls_name)
-                bad.append(f"第 {lineno} 行：没有「{clip(cls_name)}」这个班")
-                continue
-        else:
-            cls = fallback
-
-        if no in existing:
-            skipped += 1
-            continue
-
-        db.add(
-            Student(
-                student_no=no,
-                name=name[:64],
-                class_id=cls.id if cls else None,
-                student_class=cls.display if cls else "",
-                gender=gender,
-                password_hash=hash_password(initial_password(no)),
-                created_by=me.id,
-            )
-        )
-        if cls:
-            used_classes.add(cls.display)
-        existing.add(no)
-        added += 1
-        pending += 1
-
-        # 分批提交并主动歇一下。一千多人的名单要算五分钟 bcrypt，
-        # 一口气占满 CPU 的话，机房里正在答题的学生会明显卡。
-        # 歇的时长按刚才这批实际花的时间算（见 IMPORT_THROTTLE），
-        # 所以机器快就少歇、机器慢就多歇，不用改代码去适配。
-        if pending >= IMPORT_CHUNK:
-            db.commit()
-            pending = 0
-            if IMPORT_THROTTLE > 0:
-                spent = time.perf_counter() - chunk_started
-                time.sleep(min(spent * IMPORT_THROTTLE, 2.0))
-            chunk_started = time.perf_counter()
-
-    db.commit()
-
-    # 所有错行共用的那些"该怎么改"，每类只回一次
-    tips = []
-    if bad_classes:
-        wrong = "、".join(sorted(bad_classes)[:5])
-        tips.append(
-            f"表里这些班级名系统里没有：{wrong}。"
-            f"班级名要和「班级」页面完全一致，例如：{valid_hint}。"
-            "模板第三页「可用班级」里有现成的，照抄就不会错。"
-        )
-    if "empty" in kinds:
-        tips.append("学号和姓名两列都必须填，空一个整行就导不进来。")
-    if "no" in kinds:
-        tips.append(HINTS["no"] + "。")
-    if bad_gender:
-        where = "、".join(bad_gender[:8]) + ("…" if len(bad_gender) > 8 else "")
-        tips.append(
-            f"第 {where} 行的性别没认出来，这几位的性别先留空了（账号已正常建好）。"
-            "性别填「男」或「女」即可，也可以之后在学生列表里补。"
-        )
-    hint = "\n".join(tips)
-
-    return {
-        "added": added,
-        "skipped": skipped,
-        "errors": bad[:20],
-        "error_count": len(bad),
-        "hint": hint,
-        # 表里逐行写了班级，所以回报的是"这批实际进了哪几个班"
-        "classes": sorted(used_classes),
-        "student_class": fallback.display if fallback else "",
-    }
+    result = roster.ingest(
+        db, rows, me.id, fallback,
+        make_password=initial_password, hash_it=hash_password,
+    )
+    result["sheets_skipped"] = skipped_sheets
+    return result
 
 
 @admin_api.get("/export.xlsx", summary="导出学生名单")

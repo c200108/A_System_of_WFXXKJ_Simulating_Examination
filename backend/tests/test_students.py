@@ -139,9 +139,12 @@ def test_batch_skips_existing(client, auth):
         json={"student_class": "八(1)班", "text": "20260021 已存在\n20260022 新的"},
         headers=auth,
     )
-    # 没有错行时 hint 是空串 —— 不该凭空给一堆"该怎么写"的说明
+    # 粘贴名单和上传表格共用一套逻辑，所以回的字段也完全一样
     assert res.json() == {
-        "added": 1, "skipped": 1, "errors": [], "error_count": 0, "hint": ""
+        "added": 1, "skipped": 1, "errors": [], "error_count": 0,
+        # 没有错行时 hint 是空串 —— 不该凭空给一堆"该怎么写"的说明
+        "hint": "",
+        "classes": [], "student_class": "",
     }
 
 
@@ -379,9 +382,9 @@ def test_batch_errors_do_not_repeat_the_same_advice(client, auth):
     assert len(body["errors"]) == 9
     # 每行只说错在哪，不带"该怎么写"
     assert all("第 " in e for e in body["errors"])
-    assert sum("Tab" in e for e in body["errors"]) == 0
+    assert sum("20260101" in e for e in body["errors"]) == 0
     # 怎么写整体只给一次
-    assert body["hint"].count("Tab") == 1
+    assert body["hint"].count("20260101 张三") == 1
 
     # 回显的原文要截断，否则一行三十几个字会把提示框撑爆
     assert all(len(e) < 40 for e in body["errors"]), body["errors"]
