@@ -721,3 +721,120 @@ def test_bulk_delete_needs_admin(client, teacher_auth):
 def test_bulk_delete_rejects_empty_selection(client, auth):
     res = client.post("/api/classes/bulk", json={"ids": []}, headers=auth)
     assert res.status_code == 400
+
+
+# ================================================================ 多工作表 / 两个入口一致
+def _xlsx_sheets(sheets: dict) -> bytes:
+    """按 {表名: 行} 造一个多工作表的 xlsx。"""
+    wb = Workbook()
+    wb.remove(wb.active)
+    for title, rows in sheets.items():
+        ws = wb.create_sheet(title)
+        for r in rows:
+            ws.append(r)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_import_reads_every_sheet(client, auth):
+    """一个年级一张表是常见排法，每一张都要读进来。"""
+    _cid(client, auth, "二年级", "81班")
+    _cid(client, auth, "二年级", "82班")
+    data = _xlsx_sheets({
+        "二年级81班": [
+            ["学号", "姓名", "班级", "性别"],
+            ["26810101", "一班甲", "二年级81班", "男"],
+            ["26810102", "一班乙", "二年级81班", "女"],
+        ],
+        "二年级82班": [
+            ["学号", "姓名", "班级", "性别"],
+            ["26810201", "二班甲", "二年级82班", "女"],
+        ],
+    })
+    body = client.post(
+        "/api/students/import",
+        files={"file": ("两个班.xlsx", data, "application/octet-stream")},
+        headers=auth,
+    ).json()
+
+    assert body["added"] == 3, "只读了第一张表？"
+    assert set(body["classes"]) == {"二年级81班", "二年级82班"}
+
+
+def test_import_skips_the_template_helper_sheets(client, auth):
+    """模板自带「填写说明」「可用班级」两页，不能被当成名单读出一堆错。"""
+    _cid(client, auth, "二年级", "83班")
+    data = _xlsx_sheets({
+        "学生名单": [["学号", "姓名", "班级"], ["26810301", "正常学生", "二年级83班"]],
+        "填写说明": [["把学生名单填在「学生名单」这一页，四列：学号、姓名、班级、性别。"]],
+        "可用班级": [["班级（照抄到名单的「班级」列）", "年级", "任课老师"],
+                     ["二年级83班", "二年级", "王老师"]],
+    })
+    body = client.post(
+        "/api/students/import",
+        files={"file": ("模板.xlsx", data, "application/octet-stream")},
+        headers=auth,
+    ).json()
+
+    assert body["added"] == 1
+    assert body["error_count"] == 0, f"说明页被当成名单读了：{body['errors']}"
+    assert set(body["sheets_skipped"]) == {"填写说明", "可用班级"}
+
+
+def test_multi_sheet_errors_say_which_sheet(client, auth):
+    """多表时错误要指明是哪张表的第几行，不然对着行号找不到人。"""
+    _cid(client, auth, "二年级", "84班")
+    data = _xlsx_sheets({
+        "好的一班": [["学号", "姓名", "班级"], ["26810401", "正常", "二年级84班"]],
+        "有问题的": [["学号", "姓名", "班级"], ["26810402", "班级写错", "二(84)班"]],
+    })
+    body = client.post(
+        "/api/students/import",
+        files={"file": ("多表.xlsx", data, "application/octet-stream")},
+        headers=auth,
+    ).json()
+
+    assert body["added"] == 1
+    assert body["error_count"] == 1
+    assert "「有问题的」第 2 行" in body["errors"][0], body["errors"]
+
+
+def test_paste_accepts_the_same_four_columns(client, auth):
+    """粘贴名单和上传表格认同样的四列 —— 换个入口不该换一套规矩。
+
+    从 Excel 复制出来是制表符分隔的，所以这里也用制表符。
+    """
+    _cid(client, auth, "二年级", "85班")
+    _cid(client, auth, "二年级", "86班")
+    text = (
+        "26810501\t粘贴甲\t二年级85班\t男\n"
+        "26810502\t粘贴乙\t二年级86班\t女\n"
+        "26810503\t粘贴丙\n"            # 只有两列，班级用弹窗里选的
+    )
+    body = client.post(
+        "/api/students/batch",
+        json={"class_id": _cid(client, auth, "二年级", "85班"), "text": text},
+        headers=auth,
+    ).json()
+
+    assert body["added"] == 3
+    assert set(body["classes"]) == {"二年级85班", "二年级86班"}
+
+    rows = {
+        r["student_no"]: r
+        for r in client.get("/api/students", params={"keyword": "268105"}, headers=auth).json()
+    }
+    assert rows["26810501"]["gender"] == "男"
+    assert rows["26810502"]["student_class"] == "二年级86班", "粘贴时逐行写的班级要生效"
+    assert rows["26810503"]["student_class"] == "二年级85班", "没写班级的归到弹窗里选的班"
+
+
+def test_paste_keeps_names_with_spaces(client, auth):
+    """单个空格不当列分隔符 —— 姓名里带空格比多列粘贴常见得多。"""
+    from app.services.roster import split_pasted
+
+    assert split_pasted("26810601 钱 七") == ["26810601", "钱 七"]
+    assert split_pasted("26810602\t李四\t二年级85班") == ["26810602", "李四", "二年级85班"]
+    assert split_pasted("26810603,王五,二年级85班,女") == ["26810603", "王五", "二年级85班", "女"]
+    assert split_pasted("26810604  赵 六") == ["26810604", "赵 六"]
