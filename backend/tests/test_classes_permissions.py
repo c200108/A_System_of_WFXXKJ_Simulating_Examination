@@ -4,7 +4,7 @@
 1. 公共资源（题库、练习文本、打字成绩）没有删除权就删不掉；
    更新日志不在其中 —— 那整个模块只有管理员碰得到，见 test_community；
 2. 老师只能给自己名下的班发考试，管理员发的全体学生都收得到；
-3. 学生名单能用 Excel/CSV 导进导出，三列：学号、姓名、班级。
+3. 学生名单能用 Excel/CSV 导进导出，四列：学号、姓名、班级、性别。
 """
 
 import csv
@@ -311,15 +311,17 @@ def test_batch_create_classes(client, auth):
 
 
 # ================================================================ 导入导出
-def test_template_has_three_columns_and_lists_classes(client, auth):
-    """模板三列：学号、姓名、班级，并把现有班级原样列出来供照抄。"""
+def test_template_columns_and_lists_classes(client, auth):
+    """模板四列：学号、姓名、班级、性别，并把现有班级原样列出来供照抄。"""
     _cid(client, auth, "七年级", "9班")
     res = client.get("/api/students/template.xlsx", headers=auth)
     assert res.status_code == 200
     assert res.content.startswith(XLSX_MAGIC)
 
     wb = load_workbook(io.BytesIO(res.content))
-    assert [c.value for c in wb["学生名单"][1]] == ["学号", "姓名", "班级"]
+    assert [c.value for c in wb["学生名单"][1]] == ["学号", "姓名", "班级", "性别"]
+    # 示例行也要带上性别，老师照着改就知道该填什么
+    assert wb["学生名单"][2][3].value in ("男", "女")
 
     # 「可用班级」那一页要能查到刚建的班，老师复制粘贴就不会写错
     names = {row[0] for row in wb["可用班级"].iter_rows(min_row=2, values_only=True)}
@@ -573,3 +575,64 @@ def test_export_round_trips_with_class(client, auth):
     assert body["added"] == 0
     assert body["skipped"] == 1
     assert body["error_count"] == 0
+
+
+def test_import_reads_gender_column(client, auth):
+    """模板第四列是性别，导入时按「男/女」存下来。"""
+    _cid(client, auth, "五年级", "9班")
+    data = _xlsx([
+        ["学号", "姓名", "班级", "性别"],
+        ["26059101", "男同学", "五年级9班", "男"],
+        ["26059102", "女同学", "五年级9班", "女"],
+        ["26059103", "写法不同", "五年级9班", "female"],
+        ["26059104", "没填的", "五年级9班", ""],
+    ])
+    res = client.post(
+        "/api/students/import",
+        files={"file": ("名单.xlsx", data, "application/octet-stream")},
+        headers=auth,
+    )
+    assert res.json()["added"] == 4
+
+    rows = client.get(
+        "/api/students", params={"student_class": "五年级9班"}, headers=auth
+    ).json()
+    got = {r["student_no"]: r["gender"] for r in rows}
+    assert got["26059101"] == "男"
+    assert got["26059102"] == "女"
+    assert got["26059103"] == "女", "female 这种写法也该认出来"
+    assert got["26059104"] == "", "没填就留空"
+
+
+def test_unreadable_gender_does_not_block_the_student(client, auth):
+    """性别写得认不出来时，账号照常建，只是那一栏留空并提示一句。
+
+    性别是补充信息，为了一个写法把学生挡在门外不划算。
+    """
+    _cid(client, auth, "五年级", "8班")
+    data = _xlsx([
+        ["学号", "姓名", "班级", "性别"],
+        ["26059201", "写错性别的", "五年级8班", "男女都行"],
+    ])
+    body = client.post(
+        "/api/students/import",
+        files={"file": ("名单.xlsx", data, "application/octet-stream")},
+        headers=auth,
+    ).json()
+
+    assert body["added"] == 1, "不该因为性别写法拦住建账号"
+    assert body["error_count"] == 0, "这不算错误行"
+    assert "性别" in body["hint"] and "第 2" in body["hint"]
+
+    rows = client.get(
+        "/api/students", params={"keyword": "26059201"}, headers=auth
+    ).json()
+    assert rows[0]["gender"] == ""
+
+
+def test_export_round_trips_gender(client, auth):
+    """导出的表前四列和导入模板一致，改完能直接再导回来。"""
+    res = client.get("/api/students/export.xlsx", headers=auth)
+    assert res.status_code == 200
+    wb = load_workbook(io.BytesIO(res.content))
+    assert [c.value for c in wb["学生名单"][1]][:4] == ["学号", "姓名", "班级", "性别"]
