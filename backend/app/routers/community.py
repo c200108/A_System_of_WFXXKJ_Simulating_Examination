@@ -360,6 +360,28 @@ def delete_feedback(
     return {"ok": True}
 
 
+def version_key(version: str) -> tuple[int, ...]:
+    """把 "2.4.10" 变成 (2, 4, 10)，用来给版本号排序。
+
+    为什么非得自己解析，两条都踩过：
+
+    1. **按字符串比**会把 2.4.10 排到 2.4.9 后面（比的是 '1' < '9'），
+       版本号一过 x.y.9 列表顺序就乱；
+    2. **按 id 比**更糟 —— seed_changelog 是从新到旧遍历插入的，同一天发的
+       几个版本里最旧的那个 id 反而最大，于是页脚显示的是那批里最旧的。
+       一天只发一版时日期能兜住，一天发好几版就露馅了。
+
+    认不出的段按 0 算（比如测试里的 "0.0.9-permtest"），不至于抛异常。
+    """
+    parts: list[int] = []
+    for chunk in (version or "").split("."):
+        digits = "".join(ch for ch in chunk if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:4])
+
+
 # ================================================================ 更新日志
 #
 # 整个模块收归管理员：更新日志讲的是"系统这次改了什么"，是维护者之间的事，
@@ -399,6 +421,10 @@ def get_changelog(_: User = Depends(require_admin), db: Session = Depends(get_db
             }
             v.groups.append(group)
         group["items"].append({"id": r.id, "content": r.content})
+
+    # 版本之间按「日期 + 版本号数值」倒序。SQL 里的 version DESC 是字符串比，
+    # 2.4.10 会被排到 2.4.9 下面，所以在这儿用解析出来的数字重排一次。
+    versions.sort(key=lambda v: (v.released_on, version_key(v.version)), reverse=True)
 
     # 组内顺序固定成规范里的排列，读起来更整齐
     order = {t: i for i, t in enumerate(CHANGE_TYPES)}
@@ -454,11 +480,16 @@ def delete_entry(
 
 @router.get("/changelog/latest", summary="最新版本号（公开，页脚显示用）")
 def latest_version(db: Session = Depends(get_db)):
-    row = db.execute(
-        select(ChangelogEntry.version, ChangelogEntry.released_on)
-        .order_by(ChangelogEntry.released_on.desc(), ChangelogEntry.id.desc())
-        .limit(1)
-    ).first()
-    if not row:
+    """页脚显示的版本号。
+
+    不能交给 SQL 排序：字符串比会把 2.4.10 排在 2.4.9 之前，
+    按 id 比会拿到同一天里最先插入的那条（见 version_key 的说明）。
+    版本数量就几十个，全取回来按数值挑最大的，代价可以忽略。
+    """
+    rows = db.execute(
+        select(ChangelogEntry.version, ChangelogEntry.released_on).distinct()
+    ).all()
+    if not rows:
         return {"version": "", "released_on": None}
-    return {"version": row[0], "released_on": row[1]}
+    top = max(rows, key=lambda r: (r[1], version_key(r[0])))
+    return {"version": top[0], "released_on": top[1]}

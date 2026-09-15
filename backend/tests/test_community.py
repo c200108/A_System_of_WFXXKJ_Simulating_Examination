@@ -351,3 +351,35 @@ def test_too_many_images_rejected(client):
     )
     assert res.status_code == 400
     assert "最多" in res.json()["detail"]
+
+
+def test_footer_version_matches_the_newest_entry(client, auth):
+    """页脚的版本号必须和更新日志第一条一致。
+
+    真出过：页脚落后两三个版本。两个原因叠在一起 ——
+    /changelog/latest 按 id 取（而 seed 是从新到旧插的，同一天里最旧的 id 最大），
+    列表按字符串排（2.4.10 会被排到 2.4.9 下面）。一天只发一版时日期能兜住，
+    一天发好几版就露馅了。
+    """
+    versions = client.get("/api/changelog", headers=auth).json()
+    latest = client.get("/api/changelog/latest").json()
+    assert versions[0]["version"] == latest["version"], (
+        f"页脚显示 {latest['version']}，列表第一条却是 {versions[0]['version']}"
+    )
+
+
+def test_version_order_is_numeric_not_alphabetical(client, auth):
+    """2.4.10 要排在 2.4.9 前面 —— 按字符串比就会反过来。"""
+    from app.routers.community import version_key
+
+    assert version_key("2.4.10") > version_key("2.4.9")
+    assert version_key("2.5.0") > version_key("2.4.10")
+    assert version_key("0.0.9-permtest") == (0, 0, 9), "认不出的段按 0 算，不能抛异常"
+
+    # 真实数据里也要成立：同一天发的版本按数值从大到小排
+    versions = client.get("/api/changelog", headers=auth).json()
+    by_date: dict[str, list] = {}
+    for v in versions:
+        by_date.setdefault(v["released_on"], []).append(version_key(v["version"]))
+    for day, keys in by_date.items():
+        assert keys == sorted(keys, reverse=True), f"{day} 这天的版本顺序乱了：{keys}"
