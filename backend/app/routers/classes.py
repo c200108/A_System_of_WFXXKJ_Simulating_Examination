@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..deps import get_current_user, require_admin
 from ..models import SchoolClass, Student, User
-from ..schemas import ClassBatchIn, ClassIn, ClassOut, ClassUpdate
+from ..schemas import ClassBatchIn, ClassBulkIn, ClassIn, ClassOut, ClassUpdate
 
 router = APIRouter(prefix="/api/classes", tags=["班级"])
 
@@ -207,3 +207,54 @@ def list_grades(_: User = Depends(get_current_user), db: Session = Depends(get_d
         select(SchoolClass.grade).distinct().order_by(SchoolClass.grade)
     ).all()
     return [r[0] for r in rows]
+
+
+@router.post("/bulk", summary="批量删除班级（管理员）")
+def bulk_classes(
+    body: ClassBulkIn,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """一次删掉勾选的班。
+
+    和单个删除同一条规矩：**班里还有学生时默认不删**，会把哪几个班有多少人
+    报回去让人确认。学期初批量建了十几个班、建错一批想清掉，一个个点太慢。
+
+    确认之后（force=True）学生不会跟着没，只是变成"未分班"，得重新分配 ——
+    这一点和单个删除完全一致，不因为是批量就变得更狠。
+    """
+    ids = [i for i in dict.fromkeys(body.ids) if i]
+    if not ids:
+        raise HTTPException(status_code=400, detail="没有选中任何班级")
+
+    rows = list(db.scalars(select(SchoolClass).where(SchoolClass.id.in_(ids))))
+    if not rows:
+        raise HTTPException(status_code=404, detail="选中的班级都不存在了，刷新看看")
+
+    # 一次查清每个班有多少人，别在循环里逐个 count
+    counts = dict(
+        db.execute(
+            select(Student.class_id, func.count())
+            .where(Student.class_id.in_([c.id for c in rows]))
+            .group_by(Student.class_id)
+        ).all()
+    )
+    occupied = [(c, counts.get(c.id, 0)) for c in rows if counts.get(c.id)]
+
+    if occupied and not body.force:
+        detail = "、".join(f"{c.display}（{n} 人）" for c, n in occupied[:6])
+        more = f" 等 {len(occupied)} 个班" if len(occupied) > 6 else ""
+        raise HTTPException(
+            status_code=409,
+            detail=f"{detail}{more}里还有学生。"
+            "先把他们转到别的班，或者确认后强制删除（这些学生会变成未分班）。",
+        )
+
+    detached = sum(n for _, n in occupied)
+    db.query(Student).filter(Student.class_id.in_([c.id for c in rows])).update(
+        {Student.class_id: None}, synchronize_session=False
+    )
+    for c in rows:
+        db.delete(c)
+    db.commit()
+    return {"ok": True, "deleted": len(rows), "detached": detached}

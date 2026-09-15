@@ -157,6 +157,8 @@ export const api = {
   classBatch: data => http.post('/classes/batch', data),
   classUpdate: (id, data) => http.patch(`/classes/${id}`, data),
   classDelete: (id, force) => http.delete(`/classes/${id}`, { params: { force } }),
+  // 批量删班。force 之前后端会先告诉你哪几个班里还有人
+  classBulkDelete: (ids, force) => http.post('/classes/bulk', { ids, force }),
 
   dicts: category => http.get('/dicts', { params: { category } }),
   addDict: data => http.post('/dicts', data),
