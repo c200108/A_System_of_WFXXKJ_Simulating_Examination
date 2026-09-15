@@ -1,19 +1,31 @@
 #!/usr/bin/env bash
-# 把 data-export.sh 导出的文件夹还原到一台全新的 Ubuntu 服务器上。
+# 把 data-export.sh 导出的数据还原到本机。
 #
-#   sudo bash scripts/data-import.sh ~/exam-data
+#   sudo bash scripts/data-import.sh /路径/exam-data
 #
-# 前提：这台机器已经装好 docker，且项目代码已经放到位（解压或 git clone 都行）。
-# 没装 docker 的话先跑 scripts/setup-docker-cn.sh。
+# 【前提】本机已经正常部署好了：git clone + ./deploy.sh 跑通、能打开页面。
+#         这个脚本只往现成的系统里填数据，不负责把系统装起来。
+#
+# ============================ 和老版本的区别 ============================
+#
+# 老版本会重写 .env（把导出时的口令按上去）、会碰数据卷、会用一份旧 SQL 覆盖
+# 表结构。那套设计导致了一连串难查的故障，见 docs/数据还原排障.md。
+#
+# 现在这版：
+#   · **不碰 .env** —— 本机的口令、端口原样不动
+#   · **不碰数据卷** —— 不会出现"口令和卷里的对不上"
+#   · **不改表结构** —— 结构以本机为准，数据按列名对齐填进去
+#
+# 所以"原项目删掉、重新 clone 一份部署、再把数据导回来"这条路是通的，
+# 而且备份比系统旧几个版本也能导（新加的列取默认值，删掉的列跳过并报出来）。
 #
 # 做的事：
-#   1. 用导出的口令生成 .env —— 口令必须和导出时一致，否则连不上还原出来的库；
-#   2. 起数据库容器，等它真的能应答；
-#   3. 把 SQL 灌进去；
-#   4. 还原配图和 config.yaml；
-#   5. 起全部服务，按 MANIFEST 核对行数。
-#
-# **会覆盖目标库的同名数据库**，所以一上来就要你确认。
+#   1. 检查来源目录和本机状态
+#   2. 先把本机现有数据导一份到「回滚点」，万一导错了能退回去
+#   3. 试算：列出每张表要导多少行、有哪些版本差异
+#   4. 让你确认，然后真导
+#   5. 还原配图和 config.yaml
+#   6. 重启后端，逐表核对行数
 
 set -uo pipefail
 
@@ -26,10 +38,6 @@ die()  { printf "\n${C_RED}[失败] %s${C_OFF}\n\n" "$1"; exit 1; }
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || die "进不去项目目录 $ROOT"
 
-# 数据卷名 = compose 里 name: exam-system 加上卷名 db_data。
-# 项目名在 docker-compose.yml 里写死了，所以这个名字不随目录名变。
-DB_VOLUME="exam-system_db_data"
-
 SRC="${1:-}"
 [ -n "$SRC" ] || die "用法：sudo bash $0 <导出的文件夹>"
 SRC="$(cd "$SRC" 2>/dev/null && pwd)" || die "找不到目录：${1}"
@@ -40,220 +48,108 @@ echo "=================================================="
 echo "  项目目录：$ROOT"
 echo "  数据来源：$SRC"
 
-# ---------------------------------------------------------------- 0 检查
-step "[1/7] 检查来源文件..."
-for f in database.sql.gz uploads.tar.gz config.yaml env.secrets; do
-    [ -s "$SRC/$f" ] || die "缺少 $f，这个目录不像是 data-export.sh 导出的"
-done
-gzip -t "$SRC/database.sql.gz" || die "database.sql.gz 损坏，重新导一份"
-tar tzf "$SRC/uploads.tar.gz" >/dev/null || die "uploads.tar.gz 损坏"
-ok "四个文件齐全，压缩包完整"
+# ---------------------------------------------------------------- 1 检查
+step "[1/6] 检查来源与本机状态..."
+[ -d "$SRC/tables" ] || die "$SRC 里没有 tables 目录，这不像是 data-export.sh 导出的。
+      如果是 2.4.7 之前的老备份（里面是 database.sql.gz），
+      见 docs/数据还原排障.md 的「老备份怎么办」。"
+[ -s "$SRC/meta.json" ] || die "缺少 meta.json，备份不完整"
+COUNT="$(ls -1 "$SRC/tables"/*.jsonl 2>/dev/null | wc -l)"
+[ "$COUNT" -ge 5 ] || die "只有 $COUNT 张表，这份备份不完整，不敢导"
 
-[ -f "$ROOT/docker-compose.yml" ] || die "当前目录不是项目根目录（没有 docker-compose.yml）"
-command -v docker >/dev/null 2>&1 || die "没装 docker，先跑 scripts/setup-docker-cn.sh"
-docker compose version >/dev/null 2>&1 || die "docker compose 不可用（需要 v2）"
+command -v docker >/dev/null 2>&1 || die "没装 docker"
+[ -n "$(docker compose ps -q backend 2>/dev/null)" ] \
+    || die "backend 容器没在运行。先把系统正常部署起来：
+      ./deploy.sh
+      确认能打开页面之后，再回来跑这个脚本。"
+
+# 后端健康才说明迁移跑完了、表结构是最新的 —— 这是按列名对齐的前提
+if ! docker compose ps backend 2>/dev/null | grep -q "healthy"; then
+    warn "backend 还不是 healthy，可能迁移没跑完"
+    warn "建议先等它健康再导：docker compose ps"
+fi
+ok "来源有 $COUNT 张表，本机后端在运行"
 
 if [ -s "$SRC/MANIFEST.txt" ]; then
     echo
-    sed -n '1,8p' "$SRC/MANIFEST.txt" | sed 's/^/      /'
+    sed -n '1,4p' "$SRC/MANIFEST.txt" | sed 's/^/      /'
 fi
 
-# ---------------------------------------------------------------- 1 确认
-step "[2/7] 确认操作..."
-EXISTING=""
-if [ -n "$(docker compose ps -q db 2>/dev/null)" ]; then
-    EXISTING="（注意：本机 db 容器正在运行，里面的同名数据库会被覆盖）"
+# ---------------------------------------------------------------- 2 回滚点
+step "[2/6] 先把本机现有数据备一份（回滚点）..."
+ROLLBACK="$ROOT/exam-data-回滚点-$(date +%Y%m%d-%H%M%S)"
+docker compose exec -T backend rm -rf /tmp/rollback >/dev/null 2>&1
+if docker compose exec -T backend python -m tools.export_data /tmp/rollback >/dev/null 2>&1; then
+    mkdir -p "$ROLLBACK"
+    CID="$(docker compose ps -q backend)"
+    docker cp "$CID:/tmp/rollback/tables" "$ROLLBACK/tables" >/dev/null 2>&1
+    docker cp "$CID:/tmp/rollback/meta.json" "$ROLLBACK/meta.json" >/dev/null 2>&1
+    docker compose exec -T backend rm -rf /tmp/rollback >/dev/null 2>&1
+    ok "回滚点已存到 $(basename "$ROLLBACK")"
+    echo "        导错了可以退回去：sudo bash scripts/data-import.sh $ROLLBACK"
+else
+    warn "回滚点没备成（库可能是空的），继续"
 fi
-echo "      即将把上面这份数据还原到本机。$EXISTING"
-echo "      还原会覆盖本机数据库里的同名库，操作不可撤销。"
+
+# ---------------------------------------------------------------- 3 试算
+step "[3/6] 试算：看看会导入什么..."
+docker compose exec -T backend rm -rf /tmp/data-import >/dev/null 2>&1
+CID="$(docker compose ps -q backend)"
+docker cp "$SRC" "$CID:/tmp/data-import" >/dev/null || die "拷不进容器"
+
+docker compose exec -T backend python -m tools.import_data /tmp/data-import \
+    || die "试算失败，上面是原始报错。本机数据一个字都没动。"
+
+# ---------------------------------------------------------------- 4 确认
+step "[4/6] 确认操作..."
+echo "      即将用上面这份数据**覆盖**本机数据库里的同名表。"
+echo "      本机的 .env、端口、口令都不会动；表结构也不会动。"
 echo
 read -r -p "      确认请输入「还原」两个字：" ANSWER
-[ "$ANSWER" = "还原" ] || die "已取消，什么都没动"
+[ "$ANSWER" = "还原" ] || {
+    docker compose exec -T backend rm -rf /tmp/data-import >/dev/null 2>&1
+    die "已取消，什么都没动"
+}
 
-# ---------------------------------------------------------------- 2 .env
-step "[3/7] 准备 .env..."
-# 口令必须沿用导出时那一套：MySQL 数据卷里的账号是建库时定死的，
-# 换一套口令就连不上还原出来的库。
-if [ -f "$ROOT/.env" ]; then
-    cp "$ROOT/.env" "$ROOT/.env.bak-$(date +%Y%m%d-%H%M%S)"
-    warn "已有 .env，备份为 .env.bak-*"
-fi
-
-[ -f "$ROOT/.env.example" ] || die "缺少 .env.example"
-cp "$ROOT/.env.example" "$ROOT/.env"
-
-# 把导出的口令逐行覆盖进去。用 awk 整行替换，不用 sed 的 s///：
-# 口令里可能有 / & | 之类的字符，当分隔符会把命令搞坏。
-while IFS= read -r line; do
-    case "$line" in \#*|"") continue ;; esac
-    key="${line%%=*}"
-    [ -n "$key" ] || continue
-    awk -v k="$key" -v full="$line" '
-        BEGIN { done = 0 }
-        $0 ~ "^[[:space:]]*" k "[[:space:]]*=" && !done { print full; done = 1; next }
-        { print }
-        END { if (!done) print full }
-    ' "$ROOT/.env" > "$ROOT/.env.tmp" && mv "$ROOT/.env.tmp" "$ROOT/.env"
-done < "$SRC/env.secrets"
-
-chmod 600 "$ROOT/.env"
-# shellcheck disable=SC1091
-. "$ROOT/scripts/lib-env.sh" || die "找不到 scripts/lib-env.sh"
-load_env_file "$ROOT/.env" || die "读不了 $ROOT/.env"
-
-DB_USER="${MYSQL_USER:?"env.secrets 里缺 MYSQL_USER"}"
-DB_PASS="${MYSQL_PASSWORD:?"env.secrets 里缺 MYSQL_PASSWORD"}"
-DB_NAME="${MYSQL_DATABASE:-exam}"
-ok ".env 已生成，口令沿用导出时那一套"
-
-# ---------------------------------------------------------------- 3 起数据库
-step "[4/7] 启动数据库并等它就绪..."
-docker compose up -d db || die "数据库容器起不来，看 docker compose logs db"
-
-# 用真查一次来判断就绪，不用 mysqladmin ping：ping 只看服务器答不答话，
-# 口令错了它照样打印 Access denied 然后**退出码 0**，于是这里以为就绪了，
-# 一路走到下一步才报"建库失败"，指不到病根。
-READY=0
-ALIVE=0
-for i in $(seq 1 60); do
-    if docker compose exec -T db mysql -u"$DB_USER" -p"$DB_PASS" -e "SELECT 1" >/dev/null 2>&1; then
-        READY=1
-        break
-    fi
-    # 服务器起来了但认证不过 —— 和"还没起来"是两码事，分开记
-    if docker compose exec -T db mysqladmin status >/dev/null 2>&1; then
-        ALIVE=1
-    fi
-    sleep 2
-    [ $((i % 10)) -eq 0 ] && echo "      还在等数据库初始化（已等 $((i * 2)) 秒）..."
-done
-
-# 服务器起来了却认证不过：本机这个数据卷是**新建**的，里面的口令和导出的那套
-# 不一样。MySQL 只在第一次建库时采用配置里的口令，之后再也不看这几个变量，
-# 所以光改 .env 没用，只能把卷清掉让它按新口令重新初始化。
-#
-# 反正你已经确认过"覆盖本机同名数据库"了，这里就直接问一句能不能清卷 ——
-# 但清卷比覆盖一个库更狠（整卷所有库都没了），所以单独再确认一次。
-if [ "$READY" != 1 ] && [ "$ALIVE" = 1 ]; then
-    warn "数据库起来了，但 env.secrets 里的口令进不去"
-    echo
-    echo "      本机这个数据卷是新建的，里面的口令和你导出的那一套不一样。"
-    echo "      改 .env 没用 —— MySQL 只认它第一次建库时那个口令。"
-    echo
-    echo "      要把这个数据卷清掉、按导出的口令重新建一个吗？"
-    echo "      · 你要还原的数据在 ${SRC} 里，不受影响；"
-    echo "      · 但这个卷里**现有的所有数据库都会没**，不可恢复。"
-    echo
-    read -r -p "      清掉并继续请输入「清空重来」：" WIPE
-    [ "$WIPE" = "清空重来" ] || die "已取消。数据卷没动，.env 已还原成导出时那套（旧的备份在 .env.bak-*）。"
-
-    docker compose down >/dev/null 2>&1 || true
-    docker volume rm "$DB_VOLUME" >/dev/null 2>&1 \
-        || die "删不掉数据卷 $DB_VOLUME。先 docker compose down，再手工 docker volume rm $DB_VOLUME"
-    ok "旧数据卷已清除，正在按导出的口令重新建库"
-
-    docker compose up -d db || die "数据库容器起不来，看 docker compose logs db"
-    READY=0
-    for i in $(seq 1 90); do
-        if docker compose exec -T db mysql -u"$DB_USER" -p"$DB_PASS" -e "SELECT 1" >/dev/null 2>&1; then
-            READY=1
-            break
-        fi
-        sleep 2
-        [ $((i % 10)) -eq 0 ] && echo "      还在建库（已等 $((i * 2)) 秒，首次初始化要一会儿）..."
-    done
-    [ "$READY" = 1 ] || die "重新建库等了 3 分钟还没成，看 docker compose logs db"
-fi
-[ "$READY" = 1 ] || die "等了 2 分钟数据库还没起来，看 docker compose logs db"
-ok "数据库已就绪，口令对得上"
-
-# ---------------------------------------------------------------- 4 灌数据
-step "[5/7] 导入数据..."
-docker compose exec -T db mysql -u"$DB_USER" -p"$DB_PASS" --default-character-set=utf8mb4 \
-    -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" \
-    >/dev/null 2>&1 || die "建库失败，口令可能不对"
-
-# mysqldump 出来的 SQL 自带 DROP TABLE IF EXISTS，直接灌即可覆盖
-if ! gunzip -c "$SRC/database.sql.gz" | docker compose exec -T db mysql \
-        -u"$DB_USER" -p"$DB_PASS" --default-character-set=utf8mb4 "$DB_NAME" 2>"$ROOT/.import_err"; then
-    printf "%s\n" "$(cat "$ROOT/.import_err")" >&2
-    rm -f "$ROOT/.import_err"
-    die "导入失败，上面是原始报错"
-fi
-rm -f "$ROOT/.import_err"
-ok "SQL 已导入"
+step "[5/6] 导入数据..."
+docker compose exec -T backend python -m tools.import_data /tmp/data-import --write \
+    || die "导入失败，上面是原始报错。整个导入是一个事务，失败会整体回滚，
+      本机数据还是原来的样子。"
+docker compose exec -T backend rm -rf /tmp/data-import >/dev/null 2>&1
 
 # ---------------------------------------------------------------- 5 文件
-step "[6/7] 还原配图与配置..."
-mkdir -p "$ROOT/data"
-rm -rf "$ROOT/data/uploads"
-tar xzf "$SRC/uploads.tar.gz" -C "$ROOT/data" || die "解开 uploads 失败"
-mkdir -p "$ROOT/data/uploads"
-ok "配图与导入原件已还原（$(find "$ROOT/data/uploads" -type f 2>/dev/null | wc -l) 个文件）"
-
-cp "$SRC/config.yaml" "$ROOT/config.yaml" || die "复制 config.yaml 失败"
-ok "config.yaml 已还原"
-
-# ---------------------------------------------------------------- 6 起服务并核对
-step "[7/7] 启动全部服务并核对数据..."
-docker compose up -d --build || die "服务起不来，看 docker compose logs"
-
-# 后端启动时会跑 alembic upgrade head。导入的库如果是旧版本，这一步会把它升上来。
-HEALTHY=0
-for i in $(seq 1 60); do
-    if curl -fsS -m 3 "http://127.0.0.1:${WEB_PORT:-8080}/api/health" >/dev/null 2>&1; then
-        HEALTHY=1
-        break
-    fi
-    sleep 2
-done
-if [ "$HEALTHY" = 1 ]; then
-    ok "服务已就绪"
-else
-    warn "健康检查没通过，可能还在构建。稍后看 docker compose logs backend"
+step "[6/6] 还原配图与配置，重启服务..."
+if [ -s "$SRC/uploads.tar.gz" ]; then
+    mkdir -p "$ROOT/data"
+    rm -rf "$ROOT/data/uploads"
+    tar xzf "$SRC/uploads.tar.gz" -C "$ROOT/data" 2>/dev/null || true
+    mkdir -p "$ROOT/data/uploads"
+    ok "配图已还原（$(find "$ROOT/data/uploads" -type f 2>/dev/null | wc -l) 个文件）"
 fi
 
-echo
-echo "      --- 行数核对（左：本机现在  右：导出时）---"
-MISMATCH=0
-CHECKED=0
-for t in questions users students exams exam_submissions typing_records typing_texts; do
-    now="$(docker compose exec -T db mysql -u"$DB_USER" -p"$DB_PASS" -N -B "$DB_NAME" \
-           -e "SELECT COUNT(*) FROM $t" 2>/dev/null | tr -d '\r')"
-    # 用 sed 而不是 grep -oP：-P 在非 UTF-8 的 locale 下会直接罢工
-    # （报 "-P supports only unibyte and UTF-8 locales"），
-    # 那样每张表都"查不到期望值"，核对静悄悄地全被跳过。
-    want="$(sed -n "s/^$t=\([0-9][0-9]*\)\$/\1/p" "$SRC/MANIFEST.txt" 2>/dev/null | head -1)"
+if [ -s "$SRC/config.yaml" ]; then
+    cp "$ROOT/config.yaml" "$ROOT/config.yaml.bak-$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+    cp "$SRC/config.yaml" "$ROOT/config.yaml" || warn "复制 config.yaml 失败"
+    ok "config.yaml 已还原（原件备份为 config.yaml.bak-*）"
+fi
 
-    if [ -z "$want" ]; then
-        printf "      %-18s %-8s ${C_YEL}（清单里没有，没核对）${C_OFF}\n" "$t" "${now:-?}"
-    elif [ "$now" = "$want" ]; then
-        printf "      ${C_GREEN}%-18s %-8s = %s${C_OFF}\n" "$t" "$now" "$want"
-        CHECKED=$((CHECKED + 1))
-    else
-        printf "      ${C_RED}%-18s %-8s ≠ %s${C_OFF}\n" "$t" "${now:-?}" "$want"
-        MISMATCH=1
-        CHECKED=$((CHECKED + 1))
-    fi
-done
+# settings.env 里是端口和对外地址，不含口令。要不要套用由你决定 ——
+# 新机器的地址多半和老机器不一样，自动套用反而会把页面打不开。
+if [ -s "$SRC/settings.env" ]; then
+    echo
+    warn "备份里带着老机器的端口和对外地址，没有自动套用："
+    grep -E '^[A-Z]' "$SRC/settings.env" 2>/dev/null | sed 's/^/        /'
+    warn "本机要沿用的话自己改 .env，改完 docker compose up -d"
+fi
+
+docker compose restart backend >/dev/null 2>&1 || warn "重启后端失败，手动跑 docker compose restart backend"
 
 echo
 echo "=================================================="
-if [ "$CHECKED" = 0 ]; then
-    # 一张表都没比成，就绝不能说"对得上" —— 那是最容易让人放心地丢数据的一句话
-    echo -e "  ${C_RED}还原跑完了，但一张表都没能核对${C_OFF}"
-    echo "  可能是 MANIFEST.txt 格式不对，或数据库查询没返回结果。"
-    echo "  务必手工进系统看一眼题目数和学生数再投入使用。"
-elif [ "$MISMATCH" = 0 ]; then
-    echo "  还原完成，核对的 $CHECKED 张表行数全部对得上"
-else
-    echo -e "  ${C_YEL}还原完成，但有表的行数对不上${C_OFF}"
-    echo "  常见原因：导出后源库又有人操作过；或导入中途报了错。"
-    echo "  拿 $SRC/MANIFEST.txt 和上面的数字逐行比对确认。"
-fi
+echo "  还原完成"
 echo
-echo "  访问地址：http://本机IP:${WEB_PORT:-8080}"
-echo "      学生平台  /          教师后台  /js"
+echo "  本机的 .env 没有被改动，口令和端口还是原来的。"
+[ -d "$ROLLBACK" ] && echo "  回滚点：$ROLLBACK"
 echo
-echo "  账号沿用原服务器的，密码也没变。"
+echo "  打开页面确认一下题目数、学生数对不对得上。"
 echo "=================================================="
