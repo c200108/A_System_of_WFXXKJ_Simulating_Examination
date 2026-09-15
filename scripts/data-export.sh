@@ -53,6 +53,18 @@ docker compose version >/dev/null 2>&1 || die "docker compose 不可用（需要
 [ -n "$(docker compose ps -q backend 2>/dev/null)" ] \
     || die "backend 容器没在运行。先 docker compose up -d 再导出。"
 ok "docker 就绪，后端容器在运行"
+# 脚本是宿主机上的文件，git pull 就更新了；但 tools/*.py 是**打进镜像**的
+# （backend/Dockerfile 里 COPY . .，没有挂载源码）。只 pull 不重建的话，
+# 新脚本会去调容器里还不存在的模块，报一句 "No module named tools.xxx"，
+# 看不出是怎么回事。这里提前认出来，把该敲的命令直接给出来。
+if ! docker compose exec -T backend python -c "import tools.export_data" >/dev/null 2>&1; then
+    die "容器里的后端代码还是旧的，没有 tools/export_data.py。
+      拉了新代码之后要重建镜像才生效：
+
+        docker compose up -d --build
+
+      等后端变成 healthy（docker compose ps）再回来跑本脚本。"
+fi
 
 mkdir -p "$OUT" || die "建不了目录 $OUT"
 OUT="$(cd "$OUT" && pwd)"

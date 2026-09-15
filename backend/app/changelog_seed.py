@@ -34,6 +34,13 @@ from datetime import date
 # 结构：(版本号, 发布日期, [(变动类型, 内容), ...])
 VERSIONS: list[tuple[str, date, list[tuple[str, str]]]] = [
     (
+        "2.4.10",
+        date(2026, 9, 15),
+        [
+            ("Fixed", "拉了新代码但没重建镜像时，导出/导入脚本会甩出一句「No module named tools.export_data」，看不出是怎么回事 —— 脚本在宿主机上、git pull 就更新了，而它调用的 Python 工具是打进镜像的。现在脚本会提前认出这种情况，直接告诉你跑 docker compose up -d --build。"),
+        ],
+    ),
+    (
         "2.4.9",
         date(2026, 9, 15),
         [

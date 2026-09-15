@@ -69,6 +69,18 @@ if ! docker compose ps backend 2>/dev/null | grep -q "healthy"; then
     warn "建议先等它健康再导：docker compose ps"
 fi
 ok "来源有 $COUNT 张表，本机后端在运行"
+# 脚本是宿主机上的文件，git pull 就更新了；但 tools/*.py 是**打进镜像**的
+# （backend/Dockerfile 里 COPY . .，没有挂载源码）。只 pull 不重建的话，
+# 新脚本会去调容器里还不存在的模块，报一句 "No module named tools.xxx"，
+# 看不出是怎么回事。这里提前认出来，把该敲的命令直接给出来。
+if ! docker compose exec -T backend python -c "import tools.import_data" >/dev/null 2>&1; then
+    die "容器里的后端代码还是旧的，没有 tools/import_data.py。
+      拉了新代码之后要重建镜像才生效：
+
+        docker compose up -d --build
+
+      等后端变成 healthy（docker compose ps）再回来跑本脚本。"
+fi
 
 if [ -s "$SRC/MANIFEST.txt" ]; then
     echo
