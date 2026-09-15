@@ -636,3 +636,88 @@ def test_export_round_trips_gender(client, auth):
     assert res.status_code == 200
     wb = load_workbook(io.BytesIO(res.content))
     assert [c.value for c in wb["学生名单"][1]][:4] == ["学号", "姓名", "班级", "性别"]
+
+
+def test_list_is_not_capped_at_500(client, auth):
+    """学生多于 500 人时，列表要把人全发下来。
+
+    真出过：1500 人的名单全导进去了，页面却只显示 500 —— 那是列表接口
+    limit 的默认值，不是导入丢了数据。
+
+    这里直接往库里插 600 条，不走导入接口 —— 建一个账号要算一次 bcrypt
+    （约 200 毫秒），600 人光哈希就两分多钟，为了验一个上限不值得。
+    """
+    from app.database import SessionLocal
+    from app.models import Student
+
+    cid = _cid(client, auth, "四年级", "99班")
+    db = SessionLocal()
+    try:
+        db.add_all([
+            Student(
+                student_no=f"2699{i:04d}",
+                name=f"学生{i}",
+                class_id=cid,
+                student_class="四年级99班",
+                password_hash="x",   # 这个用例不登录，不用真哈希
+            )
+            for i in range(1, 601)
+        ])
+        db.commit()
+    finally:
+        db.close()
+
+    listed = client.get(
+        "/api/students", params={"student_class": "四年级99班"}, headers=auth
+    ).json()
+    assert len(listed) == 600, f"列表只发下来 {len(listed)} 人，上限把人截了"
+
+
+# ================================================================ 批量删班
+def test_bulk_delete_classes(client, auth):
+    """管理员勾一批班一次删掉。"""
+    a = _cid(client, auth, "三年级", "21班")
+    b = _cid(client, auth, "三年级", "22班")
+
+    res = client.post("/api/classes/bulk", json={"ids": [a, b]}, headers=auth)
+    assert res.status_code == 200, res.text
+    assert res.json()["deleted"] == 2
+
+    left = {c["display"] for c in client.get("/api/classes", headers=auth).json()}
+    assert "三年级21班" not in left and "三年级22班" not in left
+
+
+def test_bulk_delete_warns_about_students_first(client, auth):
+    """班里还有人时先拦一道，并说清哪个班有几个人 —— 多半是点错了。"""
+    cid = _cid(client, auth, "三年级", "23班")
+    client.post(
+        "/api/students",
+        json={"student_no": "26032301", "name": "三年级学生", "class_id": cid},
+        headers=auth,
+    )
+
+    res = client.post("/api/classes/bulk", json={"ids": [cid]}, headers=auth)
+    assert res.status_code == 409
+    detail = res.json()["detail"]
+    assert "三年级23班" in detail and "1 人" in detail
+
+    # 确认之后才真删，学生变成未分班而不是跟着消失
+    res = client.post(
+        "/api/classes/bulk", json={"ids": [cid], "force": True}, headers=auth
+    )
+    assert res.status_code == 200
+    assert res.json() == {"ok": True, "deleted": 1, "detached": 1}
+
+    rows = client.get("/api/students", params={"keyword": "26032301"}, headers=auth).json()
+    assert rows[0]["class_id"] is None, "学生不该跟着班一起没"
+    assert rows[0]["student_no"] == "26032301"
+
+
+def test_bulk_delete_needs_admin(client, teacher_auth):
+    res = client.post("/api/classes/bulk", json={"ids": [1]}, headers=teacher_auth)
+    assert res.status_code == 403
+
+
+def test_bulk_delete_rejects_empty_selection(client, auth):
+    res = client.post("/api/classes/bulk", json={"ids": []}, headers=auth)
+    assert res.status_code == 400

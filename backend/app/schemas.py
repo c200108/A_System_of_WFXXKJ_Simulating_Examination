@@ -109,6 +109,13 @@ class ClassUpdate(BaseModel):
     sort_order: int | None = None
 
 
+class ClassBulkIn(BaseModel):
+    """管理员批量删除班级。force 之前会先告诉你哪几个班里还有人。"""
+
+    ids: list[int] = Field(default_factory=list)
+    force: bool = False
+
+
 class ClassBatchIn(BaseModel):
     """按年级批量建班：七年级 1~12 班一次建完。"""
 

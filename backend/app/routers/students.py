@@ -15,6 +15,7 @@ import csv
 import io
 import json
 import re
+import time
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
@@ -49,6 +50,13 @@ student_api = APIRouter(prefix="/api/student", tags=["学生平台"])
 admin_api = APIRouter(prefix="/api/students", tags=["学生账号管理"])
 
 STUDENT_NO_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+# 批量建账号时每攒多少条提交一次，以及提交后歇多久（按这批实际耗时的比例）。
+# 0.25 = 每干 4 秒歇 1 秒，导入总时长多两成半，换来机房里其他人不卡。
+# 建一个账号要算一次 bcrypt（约 190 毫秒），1500 人近 5 分钟 —— 不让出 CPU
+# 的话，正在答题的学生会明显感觉到。
+IMPORT_CHUNK = 100
+IMPORT_THROTTLE = 0.25
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 PASSWORD_MIN = 6
 
@@ -381,7 +389,10 @@ def list_students(
     student_class: str | None = None,
     keyword: str | None = None,
     is_active: bool | None = None,
-    limit: int = Query(500, ge=1, le=2000),
+    # 一个学校几千人很正常，默认就把全校发下去；界面那边分页显示，
+    # 不会因为一次拿太多把表格撑卡。10000 是硬上限，防止有人误传个巨大的值
+    # 把整库拉出来撑爆内存。
+    limit: int = Query(10000, ge=1, le=10000),
     _: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -679,13 +690,19 @@ def student_template(_: User = Depends(get_current_user), db: Session = Depends(
 
 
 @admin_api.post("/import", summary="从 Excel/CSV 导入学生")
-async def import_students(
+def import_students(
     class_id: int | None = Query(None, description="导进哪个班，留空则不分班"),
     file: UploadFile = File(...),
     me: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """三列：学号、姓名、班级，按这个顺序读。
+    """四列：学号、姓名、班级、性别，按这个顺序读。
+
+    **这个函数是 `def` 不是 `async def`，别改回去。**
+    每建一个账号都要算一次 bcrypt（约 190 毫秒），1500 人就是近 5 分钟纯 CPU。
+    写成 async 的话这 5 分钟全压在事件循环上，整个网站会彻底卡死 ——
+    真出过。写成同步的，FastAPI 会把它丢进线程池，bcrypt 在 C 层会释放 GIL，
+    别的请求照常有人服务。
 
     班级名要和「班级」页面里的完全一致；写错的那一行会被跳过并报出来，
     **其余行照常导入** —— 一个班几十号人，不该因为一行写错就全军覆没。
@@ -694,7 +711,8 @@ async def import_students(
     表头那一行认得出来就跳过，认不出来就当数据处理。
     已存在的学号跳过而不是报错 —— 名单里混进几个已建的很正常。
     """
-    raw = await file.read()
+    # 同步读。上面那条注释说了为什么这个端点不能是 async
+    raw = file.file.read()
     if len(raw) > 5 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="文件太大了，超过 5 MB")
 
@@ -717,7 +735,9 @@ async def import_students(
     bad_classes: set[str] = set()   # 表里出现过、但系统里没有的班级名
     kinds: set[str] = set()         # 出现过哪几类问题，每类只提示一次
     bad_gender: list[str] = []      # 性别认不出的行号，只提示不拦人
+    pending = 0                     # 离上次提交攒了几条
 
+    chunk_started = time.perf_counter()
     for lineno, row in enumerate(rows, 1):
         cells = list(row or [])
         if not any(c for c in cells):
@@ -779,6 +799,19 @@ async def import_students(
             used_classes.add(cls.display)
         existing.add(no)
         added += 1
+        pending += 1
+
+        # 分批提交并主动歇一下。一千多人的名单要算五分钟 bcrypt，
+        # 一口气占满 CPU 的话，机房里正在答题的学生会明显卡。
+        # 歇的时长按刚才这批实际花的时间算（见 IMPORT_THROTTLE），
+        # 所以机器快就少歇、机器慢就多歇，不用改代码去适配。
+        if pending >= IMPORT_CHUNK:
+            db.commit()
+            pending = 0
+            if IMPORT_THROTTLE > 0:
+                spent = time.perf_counter() - chunk_started
+                time.sleep(min(spent * IMPORT_THROTTLE, 2.0))
+            chunk_started = time.perf_counter()
 
     db.commit()
 

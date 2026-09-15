@@ -18,6 +18,15 @@ const picked = ref([])
 
 const query = reactive({ class_id: null, keyword: '' })
 
+// 一个学校上千人，全塞进一个表格浏览器会卡（DOM 节点太多）。
+// 数据一次取全（勾选、导出都要用完整列表），只把当前页交给表格渲染。
+const page = ref(1)
+const pageSize = ref(50)
+const paged = computed(() => {
+  const start = (page.value - 1) * pageSize.value
+  return rows.value.slice(start, start + pageSize.value)
+})
+
 const dialog = ref(false)
 const editing = ref(null)
 const form = reactive({ student_no: '', name: '', class_id: null, gender: '', password: '' })
@@ -38,6 +47,7 @@ async function load() {
     if (query.keyword.trim()) params.keyword = query.keyword.trim()
     rows.value = await api.students(params)
     classes.value = await api.classes()
+    page.value = 1   // 换了筛选条件就回第一页，否则会停在一个空页上
   } finally {
     loading.value = false
   }
@@ -255,7 +265,9 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
         @keyup.enter="load"
       />
       <el-button type="primary" @click="load">查询</el-button>
-      <span class="total">共 {{ rows.length }} 人</span>
+      <span class="total">
+        共 {{ rows.length }} 人<template v-if="rows.length > pageSize">，每页 {{ pageSize }} 条</template>
+      </span>
     </div>
   </el-card>
 
@@ -274,7 +286,7 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
     <el-empty v-if="!rows.length && !loading" description="还没有学生账号，先用「按班级批量建号」导一批" :image-size="80" />
     <el-table
       v-else
-      :data="rows"
+      :data="paged"
       v-loading="loading"
       border
       size="small"
@@ -282,9 +294,12 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
       @selection-change="picked = $event"
     >
       <el-table-column type="selection" width="42" />
-      <el-table-column label="序号" width="60" align="center">
-        <!-- 显示行号而不是数据库主键，删掉谁之后编号自动接上 -->
-        <template #default="{ $index }">{{ $index + 1 }}</template>
+      <el-table-column label="序号" width="70" align="center">
+        <!-- 显示行号而不是数据库主键，删掉谁之后编号自动接上。
+             翻页时要接着上一页数，不能每页都从 1 开始。 -->
+        <template #default="{ $index }">
+          {{ (page - 1) * pageSize + $index + 1 }}
+        </template>
       </el-table-column>
       <el-table-column prop="student_no" label="学号" width="130" />
       <el-table-column prop="name" label="姓名" width="110" show-overflow-tooltip />
@@ -314,6 +329,17 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
         </template>
       </el-table-column>
     </el-table>
+
+    <el-pagination
+      v-if="rows.length > pageSize"
+      class="pager"
+      background
+      layout="total, sizes, prev, pager, next, jumper"
+      :total="rows.length"
+      v-model:current-page="page"
+      v-model:page-size="pageSize"
+      :page-sizes="[50, 100, 200, 500]"
+    />
   </el-card>
 
   <!-- 单个增改 -->
@@ -428,6 +454,10 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
 .total {
   font-size: 12.5px;
   color: var(--el-text-color-secondary);
+}
+.pager {
+  margin-top: 14px;
+  justify-content: flex-end;
 }
 .blank {
   color: var(--el-text-color-placeholder);

@@ -13,6 +13,12 @@ import { api } from '../api'
 import { currentUser } from '../auth'
 
 const rows = ref([])
+// 勾中的班级 id。批量删班用 —— 学期初建错一批，一个个点太慢。
+const picked = ref([])
+const togglePick = (id, on) => {
+  picked.value = on ? [...new Set([...picked.value, id])] : picked.value.filter(x => x !== id)
+}
+const pickedRows = computed(() => rows.value.filter(c => picked.value.includes(c.id)))
 const teachers = ref([])
 const loading = ref(false)
 
@@ -110,6 +116,47 @@ async function remove(row) {
     res.detached ? `已删除，${res.detached} 名学生变成未分班` : '已删除'
   )
 }
+
+async function removePicked() {
+  const list = pickedRows.value
+  if (!list.length) return ElMessage.warning('先勾选要删的班')
+
+  const withStudents = list.filter(c => c.student_count > 0)
+  const total = withStudents.reduce((n, c) => n + c.student_count, 0)
+  const names = list.map(c => c.display).join('、')
+
+  // 把"有人的班"单独摆出来 —— 批量操作最怕的就是顺手把有学生的班一起删了
+  const lines = [`即将删除 ${list.length} 个班级：`, names]
+  if (withStudents.length) {
+    lines.push(
+      `其中 ${withStudents.length} 个班里还有学生，共 ${total} 人：`,
+      withStudents.map(c => `　${c.display}（${c.student_count} 人）`).join('\n'),
+      '删除后这些学生会变成「未分班」，需要重新分配。'
+    )
+  } else {
+    lines.push('这些班里都没有学生。')
+  }
+  lines.push('确认请输入「删除」两个字：')
+  const tip = lines.join('\n\n')
+
+  await ElMessageBox.prompt(tip, '批量删除班级', {
+    confirmButtonText: `确认删除 ${list.length} 个班`,
+    cancelButtonText: '取消',
+    confirmButtonClass: 'el-button--danger',
+    inputPlaceholder: '在这里输入：删除',
+    inputValidator: v => (v || '').trim() === '删除' || '请准确输入「删除」两个字',
+    inputErrorMessage: '请准确输入「删除」两个字'
+  })
+
+  const res = await api.classBulkDelete(list.map(c => c.id), withStudents.length > 0)
+  picked.value = []
+  await load()
+  ElMessage.success(
+    res.detached
+      ? `已删除 ${res.deleted} 个班，${res.detached} 名学生变成未分班`
+      : `已删除 ${res.deleted} 个班`
+  )
+}
 </script>
 
 <template>
@@ -138,6 +185,13 @@ async function remove(row) {
     </div>
   </el-card>
 
+  <!-- 勾了才出现，平时不占地方 -->
+  <el-card v-if="isAdmin && picked.length" shadow="never" class="picked-bar">
+    <span>已选中 <b>{{ picked.length }}</b> 个班级</span>
+    <el-button size="small" @click="picked = []">取消选择</el-button>
+    <el-button size="small" type="danger" @click="removePicked">批量删除</el-button>
+  </el-card>
+
   <el-card v-loading="loading" shadow="never">
     <el-empty v-if="!rows.length && !loading" description="还没有班级，先用「按年级批量建班」建一批" :image-size="80" />
 
@@ -151,6 +205,11 @@ async function remove(row) {
           :class="{ mine: c.owner_id === currentUser?.id, orphan: !c.owner_id }"
         >
           <div class="top">
+            <el-checkbox
+              v-if="isAdmin"
+              :model-value="picked.includes(c.id)"
+              @change="togglePick(c.id, $event)"
+            />
             <span class="cname">{{ c.name }}</span>
             <el-tag v-if="c.owner_id === currentUser?.id" size="small" type="success" effect="light">
               我的班
@@ -262,6 +321,17 @@ async function remove(row) {
   font-family: ui-monospace, Consolas, monospace;
 }
 
+.picked-bar {
+  margin-bottom: 12px;
+  display: flex;
+}
+.picked-bar :deep(.el-card__body) {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+}
 .gradeblock {
   margin-bottom: 24px;
 }
