@@ -449,3 +449,23 @@ def test_difficulty_does_not_collapse_to_one_level():
     levels = {estimate(t, stem, scope) for t, stem, scope in sample}
     assert len(levels) >= 3, f"难度没有区分度，估出来只有 {sorted(levels)}"
     assert min(levels) < 3 < max(levels), f"难度全挤在中间：{sorted(levels)}"
+
+
+# ---------- 启动时自动补难度的判定规则 ----------
+def test_auto_backfill_only_fires_on_a_uniform_bank():
+    """--auto 动不动手，只看"全库是不是同一个难度"。
+
+    这条规则是刻意选的：老师完全可能特意把某道题标成 3。要是每次启动都把
+    "难度是 3"的题重估一遍，人工判断就被悄悄覆盖了。而"全库一个难度"不可能
+    是人标出来的，只可能是灌库时没评过 —— 那时候重估才是纯收益。
+    """
+    from tools.fix_difficulty import uniform_level
+
+    # 全库一个值 → 认定没评过，要动手
+    assert uniform_level([3, 3, 3, 3]) == 3
+    assert uniform_level([1, 1]) == 1
+    # 有区分度 → 评过了，不碰
+    assert uniform_level([1, 2, 3, 4, 5]) is None
+    assert uniform_level([3, 3, 3, 4]) is None, "只要有一道不一样就该收手"
+    # 空库 / 单题不在判定范围内，交给调用方挡掉
+    assert uniform_level([]) is None

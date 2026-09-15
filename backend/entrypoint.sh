@@ -33,5 +33,12 @@ python -m app.seed
 echo "[start] 检查题库"
 python -m tools.migrate_from_html --if-empty
 
+# 从老库还原回来的数据可能整库一个难度（2.4.4 之前灌库脚本漏传过），
+# 那样组卷"按难度分摊分值"等于没生效。这一步只在**全库难度都一样**时才动手，
+# 正常题库原样跳过，所以每次启动跑也不会覆盖老师手工标的难度。
+# 加 || true：这只是锦上添花，出什么岔子都不该挡着服务起不来。
+echo "[start] 检查题目难度"
+python -m tools.fix_difficulty --auto || true
+
 echo "[start] 启动服务"
 exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers
