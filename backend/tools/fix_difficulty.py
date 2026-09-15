@@ -1,4 +1,9 @@
-"""给题库里没评过难度的题估一遍难度。
+"""给题库里没评过难度的题定难度。
+
+值从哪来，按这个顺序：
+1. `legacy/题目难度.json` —— 本地那份库里的**实际值**，跟着 Git 走，
+   含老师手工调过的部分。用题干哈希查。
+2. 查不到（老师后来加的题）才按题型和题干**估**一个。
 
 三种用法：
 
@@ -29,6 +34,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import Question
 from app.services.difficulty import estimate
+from app.services.difficulty_table import level_for, load as load_table
 
 DEFAULT_LEVEL = 3   # 没评过难度时的取值，见 models.Question.difficulty
 
@@ -46,11 +52,20 @@ def alive(db: Session) -> list[Question]:
     return list(db.scalars(select(Question).where(Question.is_deleted.is_(False))))
 
 
+def level_of(q: Question) -> int:
+    """这道题该是几级。
+
+    先查 legacy/题目难度.json —— 那是本地定好、跟着 Git 走的实际值，含老师
+    手工调过的部分；查不到（老师后来加的题）才按题型和题干估。
+    """
+    return level_for(q.stem_hash, estimate(q.type, q.stem, q.scope, len(q.options)))
+
+
 def backfill(db: Session, rows: list[Question]) -> int:
-    """把 rows 的难度重估一遍，返回改动了几道。调用方负责 commit。"""
+    """把 rows 的难度重新定一遍，返回改动了几道。调用方负责 commit。"""
     changed = 0
     for q in rows:
-        level = estimate(q.type, q.stem, q.scope, len(q.options))
+        level = level_of(q)
         if level != q.difficulty:
             q.difficulty = level
             changed += 1
@@ -76,7 +91,9 @@ def run_auto(db: Session) -> int:
 
     changed = backfill(db, rows)
     db.commit()
-    print(f"[难度] 题库 {len(rows)} 道题难度全是 {level}，看着是没评过，已自动评好 {changed} 道")
+    hit = sum(1 for q in rows if q.stem_hash in load_table())
+    print(f"[难度] 题库 {len(rows)} 道题难度全是 {level}，看着是没评过，已自动评好 {changed} 道"
+          f"（其中 {hit} 道按 legacy/题目难度.json 里存的值，其余按题型估）")
     print(f"[难度] 现在的分布：{spread_of(rows)}")
     return changed
 

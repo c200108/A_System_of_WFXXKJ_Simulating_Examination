@@ -7,6 +7,7 @@
 """
 
 import itertools
+import json
 
 import pytest
 
@@ -469,3 +470,46 @@ def test_auto_backfill_only_fires_on_a_uniform_bank():
     assert uniform_level([3, 3, 3, 4]) is None, "只要有一道不一样就该收手"
     # 空库 / 单题不在判定范围内，交给调用方挡掉
     assert uniform_level([]) is None
+
+
+def test_difficulty_table_beats_the_estimator(tmp_path):
+    """难度以 legacy/题目难度.json 里存的实际值为准，估算只是兜底。
+
+    这是"本地定好的难度跟着 Git 走到服务器"这条链路的关键：表里有就用表里的，
+    哪怕估算会给出别的值；表里没有（老师后来加的题）才估。
+    """
+    import json
+
+    from app.services.difficulty_table import level_for, load
+
+    f = tmp_path / "表.json"
+    f.write_text(
+        json.dumps({"题目": [{"hash": "abc123", "难度": 5}]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    table = load(str(f))
+    assert table == {"abc123": 5}
+
+    # 真实的表要读得出来，而且条数和分布都对得上
+    real = load()
+    assert len(real) >= 300, "legacy/题目难度.json 没读到，部署时难度就会退回估算"
+    assert set(real.values()) <= {1, 2, 3, 4, 5}
+    assert len(set(real.values())) >= 3, "表里的难度没有区分度，八成是哪一步出错了"
+
+    # 查不到就用兜底值，查得到就用表里的
+    assert level_for("表里没有这个哈希", 4) == 4
+
+
+def test_broken_difficulty_table_never_breaks_startup(tmp_path):
+    """表坏了、没了，都只能退回估算，绝不能让部署起不来。"""
+    from app.services.difficulty_table import load
+
+    assert load(str(tmp_path / "根本不存在.json")) == {}
+
+    bad = tmp_path / "坏的.json"
+    bad.write_text("{这不是合法 JSON", encoding="utf-8")
+    assert load(str(bad)) == {}
+
+    wrong = tmp_path / "结构不对.json"
+    wrong.write_text(json.dumps({"题目": "本该是数组"}), encoding="utf-8")
+    assert load(str(wrong)) == {}
