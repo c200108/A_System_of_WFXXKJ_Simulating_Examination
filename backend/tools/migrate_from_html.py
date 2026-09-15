@@ -23,6 +23,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app.models import Option, Question
 from app.services.difficulty import estimate
+from app.services.difficulty_table import level_for
 from app.services.importer import stem_hash
 
 DATA_URL_RE = re.compile(r"^data:image/(?P<ext>[a-zA-Z0-9.+-]+);base64,(?P<body>.+)$", re.S)
@@ -116,9 +117,11 @@ def main() -> None:
                 scope=scope,
                 source=item.get("s") or "原卷",
                 image_url=image_url,
-                # 原卷没写难度，按题型和题干估一个 —— 和导入、界面新增同一套规则。
-                # 不给的话会吃模型默认值 3，全库一个难度，组卷按难度分摊分值就失效了。
-                difficulty=estimate(qtype, stem, scope, len(options)),
+                # 先查 legacy/题目难度.json 里存的实际值（那是本地定好、
+                # 跟着 Git 走的一份，含老师手工调过的），查不到才按题型和题干估。
+                # 都不给的话会吃模型默认值 3，全库一个难度，
+                # 组卷"按难度分摊分值"就等于没生效。
+                difficulty=level_for(h, estimate(qtype, stem, scope, len(options))),
             )
             for i, pair in enumerate(options):
                 q.options.append(Option(label=pair[0], content=pair[1], sort_order=i))
