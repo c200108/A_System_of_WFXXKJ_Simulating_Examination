@@ -100,6 +100,9 @@ class Student(Base):
         ForeignKey("classes.id", ondelete="SET NULL"), nullable=True, index=True
     )
     student_class: Mapped[str] = mapped_column(String(64), index=True, default="")
+    # 男 / 女 / 空。选填 —— 名单里没写就留空，不挡着建账号。
+    # 存中文而不是 0/1：导出的 Excel 老师要直接看，存数字还得再对照一遍。
+    gender: Mapped[str] = mapped_column(String(8), default="")
     password_hash: Mapped[str] = mapped_column(String(128))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)

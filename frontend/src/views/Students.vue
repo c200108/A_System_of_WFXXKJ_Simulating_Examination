@@ -3,7 +3,7 @@
  * 教师端：学生账号管理。
  *
  * 一个班几十号人，一个个建太慢，所以有两条批量入口：
- *   导入 Excel/CSV —— 三列「学号 姓名 班级」，班级逐行写，可以跨班一次导完；
+ *   导入 Excel/CSV —— 四列「学号 姓名 班级 性别」，班级逐行写，可以跨班一次导完；
  *   粘贴名单     —— 从花名册复制「学号 姓名」两列，班级在弹窗里统一选。
  * 两条路的初始密码都是学号。
  */
@@ -20,7 +20,7 @@ const query = reactive({ class_id: null, keyword: '' })
 
 const dialog = ref(false)
 const editing = ref(null)
-const form = reactive({ student_no: '', name: '', class_id: null, password: '' })
+const form = reactive({ student_no: '', name: '', class_id: null, gender: '', password: '' })
 
 const batchDlg = ref(false)
 const batch = reactive({ class_id: null, text: '' })
@@ -53,6 +53,7 @@ function openCreate() {
     student_no: '',
     name: '',
     class_id: query.class_id || null,
+    gender: '',
     password: ''
   })
   dialog.value = true
@@ -64,6 +65,7 @@ function openEdit(row) {
     student_no: row.student_no,
     name: row.name,
     class_id: row.class_id,
+    gender: row.gender || '',
     password: ''
   })
   dialog.value = true
@@ -71,7 +73,7 @@ function openEdit(row) {
 
 async function save() {
   if (editing.value) {
-    const data = { name: form.name, class_id: form.class_id }
+    const data = { name: form.name, class_id: form.class_id, gender: form.gender }
     if (form.password) data.password = form.password
     await api.studentUpdate(editing.value.id, data)
   } else {
@@ -131,7 +133,7 @@ const className = id => classes.value.find(c => c.id === id)?.display || '全部
 
 async function downloadTemplate() {
   await download(api.studentTemplate(), '学生导入模板.xlsx')
-  ElMessage.success('模板已下载，三列：学号、姓名、班级；可用班级见表格第三页')
+  ElMessage.success('模板已下载，四列：学号、姓名、班级、性别；可用班级见表格第三页')
 }
 
 async function exportList() {
@@ -292,6 +294,12 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
           <span v-else class="blank">未分班</span>
         </template>
       </el-table-column>
+      <el-table-column prop="gender" label="性别" width="70" align="center">
+        <template #default="{ row }">
+          <span v-if="row.gender">{{ row.gender }}</span>
+          <span v-else class="blank">—</span>
+        </template>
+      </el-table-column>
       <el-table-column label="状态" width="80">
         <template #default="{ row }">
           <span :class="row.is_active ? 'on' : 'off'">{{ row.is_active ? '正常' : '已停用' }}</span>
@@ -323,6 +331,13 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
           <el-option v-for="c in classes" :key="c.id" :label="c.display" :value="c.id" />
         </el-select>
       </el-form-item>
+      <el-form-item label="性别">
+        <el-radio-group v-model="form.gender">
+          <el-radio value="男">男</el-radio>
+          <el-radio value="女">女</el-radio>
+          <el-radio value="">不填</el-radio>
+        </el-radio-group>
+      </el-form-item>
       <el-form-item :label="editing ? '重置密码' : '初始密码'">
         <el-input v-model="form.password" :placeholder="editing ? '留空则不改密码' : '留空则用学号当密码'" />
       </el-form-item>
@@ -344,10 +359,12 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
     </el-form>
 
     <div class="tip">
-      表格<b>三列：学号、姓名、班级</b>，第一行写表头会自动跳过。<br />
+      表格<b>四列：学号、姓名、班级、性别</b>，第一行写表头会自动跳过。<br />
       <b>班级要和「班级」页面里的名称完全一致</b>（如「七年级1班」）；写错的那一行会被跳过并报出来，
       其余行照常导入。模板的「可用班级」页里列好了所有班，照抄就不会错。<br />
       <b>班级列留空</b>的行归到上面选的班；上面也没选就是「未分班」。<br />
+      <b>性别</b>填「男」或「女」，<b>选填</b> —— 留空或写得认不出来都不影响建账号，
+      只是那一栏空着，之后可以在列表里补。<br />
       支持 <b>.xlsx</b> 和 <b>.csv</b>（UTF-8 或 GBK 编码都认）。已存在的学号会跳过，
       <b>初始密码就是学号</b>。
       <el-button link type="primary" size="small" @click="downloadTemplate">下载模板</el-button>

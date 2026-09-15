@@ -90,6 +90,22 @@ def resolve_class(db: Session, class_id: int | None) -> SchoolClass | None:
     return row
 
 
+# 性别只认这两种写法，别的写法尽量认出来。认不出的当没填 —— 性别是补充信息，
+# 不该因为它写得花哨就把整个学生挡在门外。认不出的行会在导入结果里一并报出来。
+GENDER_ALIASES = {
+    "男": "男", "男生": "男", "m": "男", "male": "男", "boy": "男", "1": "男",
+    "女": "女", "女生": "女", "f": "女", "female": "女", "girl": "女", "2": "女",
+}
+
+
+def norm_gender(value) -> str:
+    """认出来就返回「男」或「女」，认不出（含空）返回空串。"""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return GENDER_ALIASES.get(text.lower(), "")
+
+
 HINTS = {
     "split": "每行写成「学号 姓名」两部分，中间用空格或 Tab 隔开，例如：20260101 张三",
     "no": "学号只能用字母、数字和 _ . -，不能有空格或中文，最长 32 位",
@@ -413,6 +429,7 @@ def create_student(
         name=name[:64],
         class_id=cls.id if cls else None,
         student_class=cls.display if cls else "",
+        gender=norm_gender(body.gender),
         password_hash=hash_password(pwd),
         created_by=me.id,
     )
@@ -501,6 +518,10 @@ def update_student(
         cls = resolve_class(db, data.pop("class_id"))
         row.class_id = cls.id if cls else None
         row.student_class = cls.display if cls else ""
+
+    # 性别走归一：界面上是下拉，但接口也可能被别处调用，写法统一到「男/女/空」
+    if "gender" in data:
+        row.gender = norm_gender(data.pop("gender"))
 
     for k, v in data.items():
         setattr(row, k, v.strip()[:64] if isinstance(v, str) else v)
@@ -613,19 +634,22 @@ def student_template(_: User = Depends(get_current_user), db: Session = Depends(
     wb = Workbook()
     ws = wb.active
     ws.title = "学生名单"
-    ws.append(["学号", "姓名", "班级"])
-    ws.append(["20260101", "张三", sample_class])
-    ws.append(["20260102", "李四", sample_class])
-    for col, w in zip("ABC", [18, 14, 18]):
+    ws.append(["学号", "姓名", "班级", "性别"])
+    ws.append(["20260101", "张三", sample_class, "男"])
+    ws.append(["20260102", "李四", sample_class, "女"])
+    for col, w in zip("ABCD", [18, 14, 18, 8]):
         ws.column_dimensions[col].width = w
 
     note = wb.create_sheet("填写说明")
     for line in [
-        ["把学生名单填在「学生名单」这一页，三列：学号、姓名、班级。"],
+        ["把学生名单填在「学生名单」这一页，四列：学号、姓名、班级、性别。"],
         ["第一行的表头请保留，示例的两行可以直接改掉。"],
         ["", ],
         ["★ 班级必须和系统里的名称完全一致，可用的班级见「可用班级」那一页。"],
         ["  班级留空的话，会归到导入时选的那个班；都没有就是「未分班」。"],
+        ["", ],
+        ["性别填「男」或「女」，选填。留空或写别的都不影响建账号，"],
+        ["  只是这一栏空着，以后可以在学生列表里补。"],
         ["", ],
         ["初始密码就是学号，学生登录后自己改。"],
         ["已经存在的学号会自动跳过，不会覆盖原有账号。"],
@@ -692,6 +716,7 @@ async def import_students(
     used_classes: set[str] = set()
     bad_classes: set[str] = set()   # 表里出现过、但系统里没有的班级名
     kinds: set[str] = set()         # 出现过哪几类问题，每类只提示一次
+    bad_gender: list[str] = []      # 性别认不出的行号，只提示不拦人
 
     for lineno, row in enumerate(rows, 1):
         cells = list(row or [])
@@ -700,12 +725,18 @@ async def import_students(
 
         # 按列位置取，不要先把空单元格挤掉 —— 学号和姓名之间空一格的话，
         # 挤掉之后班级会被当成姓名
-        no, name, cls_name = (cells + ["", "", ""])[:3]
-        no, name, cls_name = no.strip(), name.strip(), cls_name.strip()
+        no, name, cls_name, sex = (cells + ["", "", "", ""])[:4]
+        no, name, cls_name, sex = no.strip(), name.strip(), cls_name.strip(), sex.strip()
 
         # 表头行：第一列写着"学号"之类的字样就跳过
         if lineno == 1 and ("学号" in no or "姓名" in name or no in ("id", "no")):
             continue
+
+        # 性别认不出来只记一笔、留空，不挡着建账号 —— 它是补充信息，
+        # 为了一个写法把学生挡在门外不划算
+        gender = norm_gender(sex)
+        if sex and not gender:
+            bad_gender.append(str(lineno))
 
         if not no or not name:
             kinds.add("empty")
@@ -739,6 +770,7 @@ async def import_students(
                 name=name[:64],
                 class_id=cls.id if cls else None,
                 student_class=cls.display if cls else "",
+                gender=gender,
                 password_hash=hash_password(initial_password(no)),
                 created_by=me.id,
             )
@@ -763,6 +795,12 @@ async def import_students(
         tips.append("学号和姓名两列都必须填，空一个整行就导不进来。")
     if "no" in kinds:
         tips.append(HINTS["no"] + "。")
+    if bad_gender:
+        where = "、".join(bad_gender[:8]) + ("…" if len(bad_gender) > 8 else "")
+        tips.append(
+            f"第 {where} 行的性别没认出来，这几位的性别先留空了（账号已正常建好）。"
+            "性别填「男」或「女」即可，也可以之后在学生列表里补。"
+        )
     hint = "\n".join(tips)
 
     return {
@@ -796,17 +834,18 @@ def export_students(
     wb = Workbook()
     ws = wb.active
     ws.title = "学生名单"
-    # 前两列和导入模板一致，导出的表改完可以直接再导回来
-    ws.append(["学号", "姓名", "班级", "状态", "创建时间"])
+    # 前四列和导入模板完全一致，导出的表改完可以直接再导回来
+    ws.append(["学号", "姓名", "班级", "性别", "状态", "创建时间"])
     for s in rows:
         ws.append([
             s.student_no,
             s.name,
             s.student_class or "未分班",
+            s.gender,
             "正常" if s.is_active else "已停用",
             s.created_at.strftime("%Y-%m-%d %H:%M") if s.created_at else "",
         ])
-    for col, w in zip("ABCDE", [16, 12, 16, 10, 18]):
+    for col, w in zip("ABCDEF", [16, 12, 16, 8, 10, 18]):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A2"
 

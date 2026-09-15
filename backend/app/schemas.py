@@ -125,6 +125,7 @@ class StudentOut(ORMModel):
     name: str
     class_id: int | None = None
     student_class: str = ""
+    gender: str = ""                 # 男 / 女 / 空（选填）
     is_active: bool
     created_at: datetime | None = None
 
@@ -135,6 +136,7 @@ class StudentCreate(BaseModel):
     student_no: str = Field(max_length=32)
     name: str = Field(max_length=64)
     class_id: int | None = None  # 从下拉里选，不再手打班级名
+    gender: str = Field(default="", max_length=8)     # 男 / 女，选填
     password: str = Field(default="", max_length=64)  # 留空则用学号当初始密码
 
 
@@ -143,6 +145,7 @@ class StudentUpdate(BaseModel):
 
     name: str | None = Field(default=None, max_length=64)
     class_id: int | None = None
+    gender: str | None = Field(default=None, max_length=8)
     is_active: bool | None = None
     password: str | None = Field(default=None, max_length=64)
 
