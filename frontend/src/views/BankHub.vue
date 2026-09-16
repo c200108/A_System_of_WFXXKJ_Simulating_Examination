@@ -19,6 +19,13 @@ const panels = [
     label: '批量导入',
     desc: '下载模板、上传 Excel 导题',
     component: defineAsyncComponent(() => import('./Import.vue'))
+  },
+  {
+    key: 'sims',
+    icon: '🖥',
+    label: '仿真操作题',
+    desc: '学生在网页里真做一遍，自动判分',
+    component: defineAsyncComponent(() => import('./Sims.vue'))
   }
 ]
 </script>

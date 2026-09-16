@@ -140,6 +140,11 @@ class Question(Base):
     # 难度 1~5，只用数字。历史题目由 0010 迁移按题型和题干长度估了一个初值，
     # 老师看着不对随时改（见 services/difficulty.py）。组卷时按它分摊分数。
     difficulty: Mapped[int] = mapped_column(Integer, default=3, index=True)
+    # 挂上仿真任务的操作题，学生在网页里做完，服务端按检查点自动判分
+    # （见 services/sim.py）。为空就是老规矩：老师在成绩页人工给分。
+    sim_task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("sim_tasks.id", ondelete="SET NULL"), nullable=True
+    )
     is_pinned: Mapped[bool] = mapped_column(Boolean, default=False)  # 必出题
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
@@ -148,6 +153,8 @@ class Question(Base):
         DateTime, server_default=func.now(), onupdate=func.now()
     )
 
+    # 选 selectin：题库列表一次几十道题，惰性加载会变成几十条 SQL
+    sim_task: Mapped["SimTask | None"] = relationship(lazy="selectin")
     options: Mapped[list["Option"]] = relationship(
         back_populates="question",
         cascade="all, delete-orphan",
@@ -415,3 +422,29 @@ class ChangelogEntry(Base):
     content: Mapped[str] = mapped_column(Text)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class SimTask(Base):
+    """一道仿真操作题的题面环境和判分规则。
+
+    env_json    初始环境：学生打开时看到的文件夹 / 文档 / 代码
+    checks_json 检查点：每小问一条针对**最终状态**的断言和一档分
+
+    checks_json 等同于答案，只在服务端读；发给学生的接口走
+    sim.sim_for_student()，那里只带 env。
+    """
+
+    __tablename__ = "sim_tasks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(16), index=True)      # win / wps / html
+    title: Mapped[str] = mapped_column(String(128), default="")
+    env_json: Mapped[str] = mapped_column(Text, default="{}")
+    checks_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )

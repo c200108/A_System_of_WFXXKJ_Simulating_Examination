@@ -239,6 +239,8 @@ class QuestionBase(BaseModel):
     # 省得老师为了加一道题先纠结难度该填几。
     difficulty: int | None = Field(default=None, ge=1, le=5)
     is_pinned: bool = False
+    # 操作题可以挂一个仿真任务，挂上之后学生在网页里做、服务端自动判分
+    sim_task_id: int | None = None
 
 
 class QuestionCreate(QuestionBase):
@@ -254,6 +256,7 @@ class QuestionUpdate(BaseModel):
     image_url: str | None = None
     difficulty: int | None = Field(default=None, ge=1, le=5)
     is_pinned: bool | None = None
+    sim_task_id: int | None = None
     options: list[OptionIn] | None = None
 
 
@@ -268,6 +271,10 @@ class QuestionOut(ORMModel):
     image_url: str | None = None
     difficulty: int = 3
     is_pinned: bool
+    # 挂着的仿真任务（只有操作题用）。sim_task 只带题型和标题，
+    # 检查点不在这里 —— 那是答案
+    sim_task_id: int | None = None
+    sim_task: "SimBrief | None" = None
     options: list[OptionOut] = []
     created_at: datetime | None = None
 
@@ -688,3 +695,57 @@ class ChangelogVersionOut(BaseModel):
     version: str
     released_on: date
     groups: list[dict] = []
+
+
+# ---------- 仿真操作题 ----------
+class SimBrief(ORMModel):
+    """题库列表里显示用：这道题挂着哪个仿真任务。不含检查点。"""
+
+    id: int
+    kind: str
+    title: str = ""
+
+
+class SimTaskOut(ORMModel):
+    """给老师的完整版，**含检查点**。学生那边走 sim.sim_for_student()。"""
+
+    id: int
+    kind: str
+    title: str = ""
+    env: dict = {}
+    checks: list[dict] = []
+    question_count: int = 0
+    created_at: datetime | None = None
+
+
+class SimTaskIn(BaseModel):
+    kind: str = Field(pattern="^(win|wps|html)$")
+    title: str = Field(default="", max_length=128)
+    env: dict = Field(default_factory=dict)
+    checks: list[dict] = Field(default_factory=list)
+
+
+class SimTaskUpdate(BaseModel):
+    title: str | None = Field(default=None, max_length=128)
+    env: dict | None = None
+    checks: list[dict] | None = None
+
+
+class SimProposeIn(BaseModel):
+    """老师把题做一遍，拿初始环境和终态的差异换一份检查点草稿。"""
+
+    kind: str = Field(pattern="^(win|wps|html)$")
+    env: dict = Field(default_factory=dict)
+    state: dict = Field(default_factory=dict)
+
+
+class SimTryIn(BaseModel):
+    """试判：拿一份终态跑一遍检查点，看看得几分。"""
+
+    state: dict = Field(default_factory=dict)
+    checks: list[dict] | None = None      # 不传就用库里存的
+
+
+# QuestionOut 里引用了下面才定义的 SimBrief，这里补一次解析。
+# 不补的话某些 FastAPI 版本在生成 OpenAPI 时会报 "class not fully defined"。
+QuestionOut.model_rebuild()

@@ -8,6 +8,9 @@ const rows = ref([])
 const total = ref(0)
 const scopes = ref([])
 const types = ref([])
+// 可挂的仿真任务（只有操作题用得上）
+const sims = ref([])
+const SIM_KINDS = { win: 'Windows 操作', wps: 'WPS 文字', html: '网页编程' }
 const sources = ref([])
 const stats = ref(null)
 const onlyPinned = ref(false)
@@ -42,6 +45,8 @@ const blank = () => ({
   // null = 不填，由后端按题型和题干估一个，省得为加一道题先纠结难度
   difficulty: null,
   is_pinned: false,
+  // 操作题可以挂一个仿真任务：挂上之后学生在网页里真做一遍，交卷自动判分
+  sim_task_id: null,
   options: [
     { label: 'A', content: '' },
     { label: 'B', content: '' },
@@ -88,6 +93,8 @@ onMounted(async () => {
   const dicts = await api.dicts()
   scopes.value = dicts.filter(d => d.category === 'scope').map(d => d.name)
   types.value = dicts.filter(d => d.category === 'qtype').map(d => d.name)
+  // 拿不到不影响出题，只是操作题那个下拉会是空的
+  sims.value = await api.sims().catch(() => [])
   await load()
 })
 
@@ -113,6 +120,7 @@ function openEdit(row) {
     image_url: row.image_url || '',
     difficulty: row.difficulty || null,
     is_pinned: row.is_pinned,
+    sim_task_id: row.sim_task_id || null,
     options: row.options.length
       ? row.options.map(o => ({ ...o }))
       : blank().options
@@ -226,6 +234,9 @@ async function uploadImage(options) {
       <el-table-column label="可选项" min-width="200">
         <template #default="{ row }">
           <span v-for="o in row.options" :key="o.label" class="opt">{{ o.label }}.{{ o.content }}</span>
+          <el-tag v-if="row.sim_task" size="small" type="success" effect="plain" class="simtag">
+            🖥 {{ SIM_KINDS[row.sim_task.kind] || row.sim_task.kind }}自动判分
+          </el-tag>
         </template>
       </el-table-column>
       <el-table-column prop="answer" label="答案" width="90" />
@@ -305,6 +316,20 @@ async function uploadImage(options) {
         </el-select>
         <span class="hint">
           只用数字 1~5。不选就按题型和题干长度自动估一个，之后随时能改。组卷时按它分配分值。
+        </span>
+      </el-form-item>
+      <el-form-item v-if="form.type === '操作题'" label="仿真任务">
+        <el-select v-model="form.sim_task_id" clearable placeholder="不挂（老师人工评阅）" style="width: 300px">
+          <el-option
+            v-for="t in sims"
+            :key="t.id"
+            :label="`${SIM_KINDS[t.kind] || t.kind} · ${t.title}`"
+            :value="t.id"
+          />
+        </el-select>
+        <span class="hint">
+          挂上之后，学生在网页里把操作真做一遍，交卷按检查点自动判分，分数预填到成绩页、老师能改。
+          去「题库 → 仿真操作题」里建。
         </span>
       </el-form-item>
       <el-form-item label="配图">

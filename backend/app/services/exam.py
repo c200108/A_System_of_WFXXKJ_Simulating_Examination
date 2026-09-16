@@ -19,12 +19,24 @@ has_scores()：卷面上有没有任何一道题带分值。
 
 import json
 import secrets
+from datetime import datetime
 
 from sqlalchemy.orm import Session
 
 from ..models import Exam, Paper, PaperItem, Question
 from ..siteconfig import site
+from . import sim
 from .paper import right_letter
+
+
+def _json(raw, fallback):
+    """读一段存在库里的 JSON。坏了就当默认值 —— 一道题的仿真数据格式不对，
+    不该让整场考试交不上卷。"""
+    try:
+        got = json.loads(raw or "")
+    except (ValueError, TypeError):
+        return fallback
+    return got if isinstance(got, type(fallback)) else fallback
 
 
 def new_token() -> str:
@@ -49,7 +61,7 @@ def has_scores(items: list[dict]) -> bool:
 def _item_from_row(item: PaperItem, q: Question) -> dict:
     """把试卷里的一题还原成完整结构（含打乱后的选项与答案）。"""
     snap = json.loads(item.snapshot_json) if item.snapshot_json else {}
-    return {
+    out = {
         "id": q.id,
         "code": q.code,
         "type": q.type,
@@ -64,6 +76,15 @@ def _item_from_row(item: PaperItem, q: Question) -> dict:
         "options": snap.get("options")
         or [{"label": o.label, "content": o.content} for o in q.options],
     }
+    if q.sim_task is not None:
+        # sim  —— 学生要拿到的：打开时看到什么
+        # sim_checks —— **等同于答案**，只在服务端读，由 strip_answers() 摘掉
+        out["sim"] = sim.sim_for_student({
+            "id": q.sim_task.id, "kind": q.sim_task.kind, "title": q.sim_task.title,
+            "env": _json(q.sim_task.env_json, {}),
+        })
+        out["sim_checks"] = _json(q.sim_task.checks_json, [])
+    return out
 
 
 def load_items(db: Session, paper: Paper) -> list[dict]:
@@ -101,7 +122,11 @@ def strip_answers(groups: list[dict]) -> list[dict]:
             "type": g["type"],
             "score": g.get("score", 0),
             "items": [
-                {k: v for k, v in it.items() if k not in ("answer", "source", "difficulty")}
+                # sim_checks 是仿真题的答案，和 answer 一样绝不能发给学生
+            {
+                k: v for k, v in it.items()
+                if k not in ("answer", "source", "difficulty", "sim_checks")
+            }
                 for it in g["items"]
             ],
         }
@@ -123,6 +148,8 @@ def grade(items: list[dict], answers: dict) -> dict:
     """
     scored = has_scores(items)
     detail = []
+    auto_manual: dict[str, int] = {}     # 仿真题自动判出来的分，预填给老师
+    auto_sub = 0
     right = 0
     objective = 0
     obj_score = 0
@@ -138,19 +165,37 @@ def grade(items: list[dict], answers: dict) -> dict:
             manual = is_manual(it)
             if manual:
                 sub_total += pts
-            detail.append(
-                {
-                    "id": it["id"],
-                    "type": it["type"],
-                    "scored": False,
-                    "manual": manual,
-                    "score": pts,
-                    "earned": 0,
-                    "mine": mine,
-                    "answer": it.get("answer") or "",
-                    "reason": "待老师评阅" if manual else "原卷未给答案，不计分",
-                }
-            )
+            entry = {
+                "id": it["id"],
+                "type": it["type"],
+                "scored": False,
+                "manual": manual,
+                "score": pts,
+                "earned": 0,
+                "mine": mine,
+                "answer": it.get("answer") or "",
+                "reason": "待老师评阅" if manual else "原卷未给答案，不计分",
+            }
+            # 挂了仿真任务的操作题：按检查点当场判分。判出来的分只是**预填**，
+            # 老师在成绩页照样能改（apply_manual 覆盖它）。
+            if manual and it.get("sim_checks"):
+                ran = sim.run_checks(
+                    (it.get("sim") or {}).get("kind"),
+                    it["sim_checks"],
+                    sim.load_state(mine),
+                )
+                earned = scale_sim(ran, pts)
+                auto_manual[str(it["id"])] = earned
+                auto_sub += earned
+                entry.update(
+                    earned=earned,
+                    auto=True,
+                    reason="仿真题自动判分，老师可复核",
+                    checks=ran["results"],
+                    check_passed=sum(1 for r in ran["results"] if r["ok"]),
+                    check_total=len(ran["results"]),
+                )
+            detail.append(entry)
             continue
 
         objective += 1
@@ -179,19 +224,57 @@ def grade(items: list[dict], answers: dict) -> dict:
         obj_score = round(right / objective * 100) if objective else 0
         obj_total = 100 if objective else 0
         sub_total = 0
+        auto_manual, auto_sub = {}, 0
 
     return {
         "right_count": right,
         "objective_count": objective,
         "objective_score": obj_score,
         "objective_total": obj_total,
-        "subjective_score": 0,
+        "subjective_score": auto_sub,
         "subjective_total": sub_total,
-        "score": obj_score,          # 主观题还没批，总分先等于客观题得分
+        # 仿真题已经判了，总分把那部分算进去；剩下的等老师批完再补
+        "score": obj_score + auto_sub,
         "full_score": obj_total + sub_total,
-        "pending_manual": sum(1 for d in detail if d.get("manual")),
+        "pending_manual": sum(1 for d in detail if d.get("manual") and not d.get("auto")),
+        "auto_manual": auto_manual,
         "detail": detail,
     }
+
+
+def scale_sim(ran: dict, pts: int) -> int:
+    """把检查点的得分折算成这道题在卷面上的分值。
+
+    检查点的总分是出题时定的（比如四小问各 2 分），而卷面分值是组卷时按难度
+    分摊出来的（这道题可能只占 7 分）—— 两者对不上是常态，必须按比例折算，
+    否则会出现"一道 7 分的题判出 8 分"。
+    """
+    full = int(ran.get("full") or 0)
+    if not full or pts <= 0:
+        return 0
+    got = int(round(pts * int(ran.get("score") or 0) / full))
+    return max(0, min(pts, got))
+
+
+def submission_scores(result: dict) -> dict:
+    """交卷时要落库的分数字段。两个交卷入口（学生端、凭链接）共用这一份，
+    省得一处加了字段另一处忘了加。"""
+    fields = {
+        "right_count": result["right_count"],
+        "objective_count": result["objective_count"],
+        "score": result["score"],
+        "objective_score": result["objective_score"],
+        "objective_total": result["objective_total"],
+        "subjective_score": result["subjective_score"],
+        "subjective_total": result["subjective_total"],
+        # 仿真题判出来的分预填进去，老师在成绩页能改
+        "manual_json": json.dumps(result.get("auto_manual") or {}, ensure_ascii=False),
+    }
+    # 主观题全是仿真题、已经当场判完的，就别再出现在老师的"待批"里了。
+    # graded_by 留空表示不是人批的，成绩页上会标「自动判分」。
+    if result["subjective_total"] > 0 and result["pending_manual"] == 0:
+        fields["graded_at"] = datetime.now()
+    return fields
 
 
 def apply_manual(detail: list[dict], manual_scores: dict) -> dict:
