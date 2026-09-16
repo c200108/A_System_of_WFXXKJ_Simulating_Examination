@@ -35,16 +35,17 @@ const teacherRoutes = {
   children: [
     { path: '', redirect: '/js/paper' },
     { path: 'paper', component: () => import('./views/Paper.vue'), meta: { title: '组卷' } },
-    // 题库 = 题库管理 + 批量导入；考试 = 考试 + 打字学情 + 练习文本。
+    // 题库 = 题库管理 + 批量导入；考试 = 考试 + 打字学情 + 练习文本；
+    // 学生 = 学生账号 + 班级。
     // 两个工作台页面用同一个折叠面板组件，加功能只改各自的 panels 数组。
     { path: 'bank', component: () => import('./views/BankHub.vue'), meta: { title: '题库' } },
     { path: 'exams', component: () => import('./views/ExamHub.vue'), meta: { title: '考试' } },
-    { path: 'students', component: () => import('./views/Students.vue'), meta: { title: '学生' } },
-    { path: 'classes', component: () => import('./views/Classes.vue'), meta: { title: '班级' } },
+    { path: 'students', component: () => import('./views/StudentHub.vue'), meta: { title: '学生' } },
 
     // 合并前的老地址：重定向到新位置，并带上要展开哪个面板。
     // 老师收藏夹里存的链接不会失效。
     { path: 'import', redirect: { path: '/js/bank', query: { panel: 'import' } } },
+    { path: 'classes', redirect: { path: '/js/students', query: { panel: 'classes' } } },
     { path: 'typing', redirect: { path: '/js/exams', query: { panel: 'typing' } } },
     {
       path: 'typing-texts',
