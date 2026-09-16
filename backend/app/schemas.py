@@ -116,6 +116,13 @@ class ClassBulkIn(BaseModel):
     force: bool = False
 
 
+class ClassBulkOwnerIn(BaseModel):
+    """管理员批量分配班主任。owner_id 留空 = 批量取消分配。"""
+
+    ids: list[int] = Field(default_factory=list)
+    owner_id: int | None = None
+
+
 class ClassBatchIn(BaseModel):
     """按年级批量建班：七年级 1~12 班一次建完。"""
 

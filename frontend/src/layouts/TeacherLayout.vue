@@ -77,7 +77,6 @@ function onUserCommand(cmd) {
           <el-menu-item index="/js/bank">题库</el-menu-item>
           <el-menu-item index="/js/exams">考试</el-menu-item>
           <el-menu-item index="/js/students">学生</el-menu-item>
-          <el-menu-item index="/js/classes">班级</el-menu-item>
         </template>
         <el-menu-item index="/js/feedback">反馈</el-menu-item>
         <template v-if="user?.role === 'admin'">

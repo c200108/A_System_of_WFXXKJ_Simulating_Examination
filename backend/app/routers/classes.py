@@ -18,7 +18,14 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..deps import get_current_user, require_admin
 from ..models import SchoolClass, Student, User
-from ..schemas import ClassBatchIn, ClassBulkIn, ClassIn, ClassOut, ClassUpdate
+from ..schemas import (
+    ClassBatchIn,
+    ClassBulkIn,
+    ClassBulkOwnerIn,
+    ClassIn,
+    ClassOut,
+    ClassUpdate,
+)
 
 router = APIRouter(prefix="/api/classes", tags=["班级"])
 
@@ -258,3 +265,35 @@ def bulk_classes(
         db.delete(c)
     db.commit()
     return {"ok": True, "deleted": len(rows), "detached": detached}
+
+
+@router.post("/bulk-owner", summary="批量分配班主任（管理员）")
+def bulk_owner(
+    body: ClassBulkOwnerIn,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """把勾中的班一次分给同一位老师，owner_id 留空就是批量取消分配。
+
+    开学时一位老师带一个年级六个班是常事，一个个下拉选六遍纯属浪费时间。
+    停用的账号不能接班 —— 接了也发不出考试，不如当场拦住。
+    """
+    ids = [i for i in dict.fromkeys(body.ids) if i]
+    if not ids:
+        raise HTTPException(status_code=400, detail="没有选中任何班级")
+
+    if body.owner_id is not None:
+        owner = db.get(User, body.owner_id)
+        if not owner:
+            raise HTTPException(status_code=404, detail="指定的教师不存在")
+        if not owner.is_active:
+            raise HTTPException(status_code=400, detail="不能把班分给已停用的账号")
+
+    rows = list(db.scalars(select(SchoolClass).where(SchoolClass.id.in_(ids))))
+    if not rows:
+        raise HTTPException(status_code=404, detail="选中的班级都不存在了，刷新看看")
+
+    for c in rows:
+        c.owner_id = body.owner_id
+    db.commit()
+    return {"ok": True, "updated": len(rows)}

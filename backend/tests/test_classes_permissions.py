@@ -838,3 +838,69 @@ def test_paste_keeps_names_with_spaces(client, auth):
     assert split_pasted("26810602\t李四\t二年级85班") == ["26810602", "李四", "二年级85班"]
     assert split_pasted("26810603,王五,二年级85班,女") == ["26810603", "王五", "二年级85班", "女"]
     assert split_pasted("26810604  赵 六") == ["26810604", "赵 六"]
+
+
+# ================================================================ 批量分配班主任
+def _teacher_id(client, auth, username: str) -> int:
+    for u in client.get("/api/auth/users", headers=auth).json():
+        if u["username"] == username:
+            return u["id"]
+    raise AssertionError(f"没找到账号 {username}")
+
+
+def test_bulk_owner_assigns_many_classes_at_once(client, auth, teacher_auth):
+    """开学时一位老师带一个年级好几个班，一次分完，不用一个个下拉选。"""
+    a = _cid(client, auth, "八年级", "31班")
+    b = _cid(client, auth, "八年级", "32班")
+    tid = _teacher_id(client, auth, "teacher_a")
+
+    res = client.post(
+        "/api/classes/bulk-owner", json={"ids": [a, b], "owner_id": tid}, headers=auth
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["updated"] == 2
+
+    rows = {c["id"]: c for c in client.get("/api/classes", headers=auth).json()}
+    assert rows[a]["owner_id"] == tid and rows[b]["owner_id"] == tid
+    assert rows[a]["owner_name"] == "甲老师"
+
+
+def test_bulk_owner_can_clear_the_assignment(client, auth, teacher_auth):
+    """owner_id 留空 = 批量取消分配，分错了一批能整批退回去。"""
+    cid = _cid(client, auth, "八年级", "33班")
+    tid = _teacher_id(client, auth, "teacher_a")
+    client.post(
+        "/api/classes/bulk-owner", json={"ids": [cid], "owner_id": tid}, headers=auth
+    )
+
+    res = client.post(
+        "/api/classes/bulk-owner", json={"ids": [cid], "owner_id": None}, headers=auth
+    )
+    assert res.status_code == 200
+    rows = {c["id"]: c for c in client.get("/api/classes", headers=auth).json()}
+    assert rows[cid]["owner_id"] is None
+
+
+def test_bulk_owner_needs_admin(client, auth, teacher_auth):
+    """分班是全校的组织结构，任课老师不能自己给自己划班。"""
+    cid = _cid(client, auth, "八年级", "34班")
+    tid = _teacher_id(client, auth, "teacher_a")
+    res = client.post(
+        "/api/classes/bulk-owner",
+        json={"ids": [cid], "owner_id": tid},
+        headers=teacher_auth,
+    )
+    assert res.status_code == 403
+
+
+def test_bulk_owner_rejects_unknown_teacher(client, auth):
+    cid = _cid(client, auth, "八年级", "35班")
+    res = client.post(
+        "/api/classes/bulk-owner", json={"ids": [cid], "owner_id": 999999}, headers=auth
+    )
+    assert res.status_code == 404
+
+
+def test_bulk_owner_rejects_empty_selection(client, auth):
+    res = client.post("/api/classes/bulk-owner", json={"ids": []}, headers=auth)
+    assert res.status_code == 400

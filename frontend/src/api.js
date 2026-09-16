@@ -159,6 +159,8 @@ export const api = {
   classDelete: (id, force) => http.delete(`/classes/${id}`, { params: { force } }),
   // 批量删班。force 之前后端会先告诉你哪几个班里还有人
   classBulkDelete: (ids, force) => http.post('/classes/bulk', { ids, force }),
+  // 批量分配班主任。owner_id 传 null 就是批量取消分配
+  classBulkOwner: (ids, owner_id) => http.post('/classes/bulk-owner', { ids, owner_id }),
 
   dicts: category => http.get('/dicts', { params: { category } }),
   addDict: data => http.post('/dicts', data),
