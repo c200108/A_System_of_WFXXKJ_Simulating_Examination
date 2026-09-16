@@ -13,7 +13,13 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Exam, ExamSubmission
 from ..schemas import SubmitIn, SubmitOut, TakePaperOut
-from ..services.exam import grade, group_items, load_items, strip_answers
+from ..services.exam import (
+    grade,
+    group_items,
+    load_items,
+    strip_answers,
+    submission_scores,
+)
 
 router = APIRouter(prefix="/api/take", tags=["学生答题"])
 
@@ -103,12 +109,7 @@ def submit(token: str, body: SubmitIn, db: Session = Depends(get_db)):
         student_no=body.student_no.strip(),
         answers_json=json.dumps(body.answers, ensure_ascii=False),
         detail_json=json.dumps(result["detail"], ensure_ascii=False),
-        right_count=result["right_count"],
-        objective_count=result["objective_count"],
-        score=result["score"],
-        objective_score=result["objective_score"],
-        objective_total=result["objective_total"],
-        subjective_total=result["subjective_total"],
+        **submission_scores(result),
     )
     db.add(sub)
     db.commit()

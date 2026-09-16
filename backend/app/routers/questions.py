@@ -198,6 +198,7 @@ def create_question(
         difficulty=body.difficulty
         or estimate(body.type, body.stem, body.scope, len(body.options)),
         is_pinned=body.is_pinned,
+        sim_task_id=body.sim_task_id,
         created_by=user.id,
     )
     for i, opt in enumerate(body.options):

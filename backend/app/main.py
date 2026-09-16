@@ -16,6 +16,7 @@ from .routers import (
     imports,
     papers,
     questions,
+    sims,
     students,
     take,
     typing_train,
@@ -44,6 +45,7 @@ app.include_router(auth.router)
 app.include_router(classes.router)  # 班级：老师能看，增删改要管理员
 app.include_router(dicts.router)
 app.include_router(questions.router)
+app.include_router(sims.router)  # 仿真操作题：题面环境与判分规则
 app.include_router(imports.router)
 app.include_router(papers.router)
 app.include_router(exams.router)

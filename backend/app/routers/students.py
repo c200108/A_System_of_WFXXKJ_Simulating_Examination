@@ -41,6 +41,7 @@ from ..security import (
     verify_password,
 )
 from ..routers.take import _submit_out as submit_out
+from ..services.exam import submission_scores
 from ..services import roster
 from ..services.exam import grade, group_items, load_items, strip_answers
 # 名单解析和入库都在 services/roster.py，上传表格和粘贴名单共用那一套。
@@ -265,12 +266,7 @@ def student_submit(
             student_no=me.student_no,
             answers_json=json.dumps(answers, ensure_ascii=False),
             detail_json=json.dumps(result["detail"], ensure_ascii=False),
-            right_count=result["right_count"],
-            objective_count=result["objective_count"],
-            score=result["score"],
-            objective_score=result["objective_score"],
-            objective_total=result["objective_total"],
-            subjective_total=result["subjective_total"],
+            **submission_scores(result),
         )
     )
     db.commit()

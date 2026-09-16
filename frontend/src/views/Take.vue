@@ -7,6 +7,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
+import SimHost from '../components/sim/SimHost.vue'
 
 const CN = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
 const route = useRoute()
@@ -164,7 +165,11 @@ async function submit() {
 
           <img v-if="q.image_url" :src="q.image_url" class="img" alt="配图" />
 
-          <div v-if="q.type === '操作题'" class="body">
+          <!-- 挂了仿真任务的操作题：在网页里真做一遍，交卷后按检查点自动判分 -->
+          <div v-if="q.sim" class="body">
+            <SimHost v-model="answers[q.id]" :sim="q.sim" :readonly="!!result" />
+          </div>
+          <div v-else-if="q.type === '操作题'" class="body">
             <el-input
               v-model="answers[q.id]"
               type="textarea"

@@ -162,6 +162,18 @@ export const api = {
   // 批量分配班主任。owner_id 传 null 就是批量取消分配
   classBulkOwner: (ids, owner_id) => http.post('/classes/bulk-owner', { ids, owner_id }),
 
+  // 仿真操作题：题面环境 + 检查点。检查点等同于答案，只有教师端拿得到
+  sims: params => http.get('/sims', { params }),
+  simBlank: kind => http.get('/sims/blank', { params: { kind } }),
+  simGet: id => http.get(`/sims/${id}`),
+  simCreate: data => http.post('/sims', data),
+  simUpdate: (id, data) => http.patch(`/sims/${id}`, data),
+  simDelete: id => http.delete(`/sims/${id}`),
+  // 老师把题做一遍，拿差异换一份检查点草稿
+  simPropose: data => http.post('/sims/propose', data),
+  // 试判：拿一份终态跑一遍检查点，存题之前自己验
+  simTry: (id, data) => http.post(`/sims/${id}/try`, data),
+
   dicts: category => http.get('/dicts', { params: { category } }),
   addDict: data => http.post('/dicts', data),
 

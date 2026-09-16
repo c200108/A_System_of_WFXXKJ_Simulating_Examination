@@ -442,7 +442,8 @@ const hardest = computed(() => {
       </p>
 
       <el-alert v-if="manualItems.length" type="warning" :closable="false" class="hint">
-        下面带输入框的是<b>操作题</b>，机器判不了，要你看着学生的作答给分。
+        下面带输入框的是<b>操作题</b>。挂了仿真任务的已经按检查点自动判过分，分数填在框里了，
+        你觉得不对可以改；没挂仿真的机器判不了，要你看着作答给分。
         给完保存，总分自动重算，学生在「我的考试」里就能看到更新后的分数。
         留空表示<b>还没评</b>，和给 0 分不是一回事。
       </el-alert>
@@ -451,6 +452,9 @@ const hardest = computed(() => {
         <div class="dstem">
           {{ i + 1 }}. {{ d.stem }}
           <span v-if="d.score" class="of">（{{ d.score }} 分）</span>
+          <el-tag v-if="d.auto" size="small" type="success" effect="plain">
+            自动判分 {{ d.check_passed }}/{{ d.check_total }} 问
+          </el-tag>
           <el-tag v-if="d.manual" size="small" :type="manual[d.id] === undefined ? 'warning' : 'success'">
             {{ manual[d.id] === undefined ? '待评阅' : '已给分' }}
           </el-tag>
@@ -458,7 +462,15 @@ const hardest = computed(() => {
           <el-tag v-else-if="d.ok" size="small" type="success">✓ {{ d.earned || '' }}</el-tag>
           <el-tag v-else size="small" type="danger">✕</el-tag>
         </div>
-        <div class="dans">
+        <!-- 仿真题：机器按检查点判过了，把每一问的结果摆出来，扣在哪一眼看清。
+             这类题的原始作答是一大段 JSON，显示出来没人看得懂，所以不显示。 -->
+        <div v-if="d.checks" class="checks">
+          <span v-for="c in d.checks" :key="c.no" class="chip" :class="{ no: !c.ok }">
+            {{ c.ok ? '✓' : '✕' }} {{ c.desc }}
+            <em v-if="!c.ok">（{{ c.why }}）</em>
+          </span>
+        </div>
+        <div v-else class="dans">
           学生作答：<span :class="d.scored && !d.ok ? 'no' : ''">{{ d.mine || '未作答' }}</span>
           <template v-if="d.answer">　参考答案：<b>{{ d.answer }}</b></template>
         </div>
@@ -583,4 +595,24 @@ const hardest = computed(() => {
   font-size: 13px;
   color: var(--el-text-color-regular);
 }
+.checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.checks .chip {
+  background: var(--el-color-success-light-9);
+  border: 1px solid var(--el-color-success-light-7);
+  border-radius: 10px;
+  padding: 1px 9px;
+  font-size: 12px;
+}
+.checks .chip.no {
+  background: var(--el-color-danger-light-9);
+  border-color: var(--el-color-danger-light-7);
+  color: var(--el-color-danger);
+}
+.checks .chip em { font-style: normal; opacity: 0.85; }
+
 </style>
