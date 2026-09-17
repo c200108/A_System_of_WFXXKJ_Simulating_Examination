@@ -26,6 +26,24 @@ from ..services import sim
 router = APIRouter(prefix="/api/sims", tags=["仿真操作题"])
 
 
+def _guard(env: dict, checks: list) -> None:
+    """环境和检查点都不能太大。
+
+    一份卷子要发给上百个学生，题面环境是**每人下载一份**的东西；老师要是把
+    一整篇长文粘进来，一个机房就多出几十兆流量。这里挡在存的时候，
+    比考试当天发现卡了再查要省事得多。
+    """
+    for name, data, limit in (("题面环境", env, sim.MAX_STATE_BYTES),
+                              ("检查点", checks, sim.MAX_STATE_BYTES // 2)):
+        size = len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+        if size > limit:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{name}太大了（{size // 1024} KB，上限 {limit // 1024} KB）。"
+                       "题面里的长文建议精简，或者拆成两道题。",
+            )
+
+
 def _load(raw: str, fallback):
     try:
         got = json.loads(raw or "")
@@ -55,7 +73,7 @@ def _get(db: Session, sid: int) -> SimTask:
 
 @router.get("", response_model=list[SimTaskOut], summary="仿真任务列表")
 def list_sims(
-    kind: str | None = Query(None, pattern="^(win|wps|html)$"),
+    kind: str | None = Query(None, pattern="^(win|wps|html|ai)$"),
     _: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -74,7 +92,7 @@ def list_sims(
 
 
 @router.get("/blank", summary="某种题型的空白环境")
-def blank(kind: str = Query(pattern="^(win|wps|html)$"), _: User = Depends(get_current_user)):
+def blank(kind: str = Query(pattern="^(win|wps|html|ai)$"), _: User = Depends(get_current_user)):
     """新建时给个能直接上手的起点，不用从空 JSON 开始编。"""
     return {"kind": kind, "env": sim.blank_env(kind)}
 
@@ -87,6 +105,7 @@ def get_sim(sid: int, _: User = Depends(get_current_user), db: Session = Depends
 @router.post("", response_model=SimTaskOut, summary="新建仿真任务")
 def create_sim(body: SimTaskIn, user: User = Depends(get_current_user),
                db: Session = Depends(get_db)):
+    _guard(body.env or {}, body.checks or [])
     row = SimTask(
         kind=body.kind,
         title=(body.title or "").strip()[:128],
@@ -105,6 +124,7 @@ def update_sim(sid: int, body: SimTaskUpdate, _: User = Depends(get_current_user
                db: Session = Depends(get_db)):
     row = _get(db, sid)
     data = body.model_dump(exclude_unset=True)
+    _guard(data.get("env") or _load(row.env_json, {}), data.get("checks") or [])
     if "title" in data:
         row.title = (data["title"] or "").strip()[:128]
     if "env" in data and data["env"] is not None:

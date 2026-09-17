@@ -10,7 +10,7 @@
  * 让它能跑脚本就等于让学生在同一个页面里随便执行 JS，考试页不该给这个口子。
  * 由此带来的限制：网页题考不了 JS 效果，只考结构和样式。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 const props = defineProps({
   env: { type: Object, required: true },
@@ -75,6 +75,44 @@ function run() {
   preview.value = buildPreview()
   emit('log', { at: Date.now(), op: 'preview' })
 }
+
+// ---------- 插入代码片段 ----------
+// 初中的网页题多半卡在"标签怎么写"上，给几个按钮直接插进去，
+// 让学生把注意力放在结构和样式上，而不是背尖括号。
+const HTML_SNIPS = [
+  ['标题', '<h1>标题文字</h1>\n'],
+  ['段落', '<p>段落文字</p>\n'],
+  ['超链接', '<a href="http://www.moe.gov.cn">链接文字</a>\n'],
+  ['图片', '<img src="logo.png" alt="说明文字">\n'],
+  ['列表', '<ul>\n  <li>第一项</li>\n  <li>第二项</li>\n</ul>\n'],
+  ['表格', '<table border="1">\n  <tr><td>一</td><td>二</td></tr>\n</table>\n'],
+  ['加粗', '<b>加粗文字</b>'],
+  ['换行', '<br>\n']
+]
+const CSS_SNIPS = [
+  ['文字颜色', 'h1 {\n  color: red;\n}\n'],
+  ['字号', 'p {\n  font-size: 16px;\n}\n'],
+  ['居中', 'h1 {\n  text-align: center;\n}\n'],
+  ['背景色', 'body {\n  background-color: #eef5ff;\n}\n'],
+  ['边框', 'table {\n  border: 1px solid #333;\n}\n']
+]
+const snips = computed(() => (active.value.endsWith('.css') ? CSS_SNIPS : HTML_SNIPS))
+
+const editor = ref(null)
+function insert(text) {
+  if (props.readonly) return
+  const el = editor.value
+  const v = String(files.value[active.value] || '')
+  const at = el ? el.selectionStart : v.length
+  files.value[active.value] = v.slice(0, at) + text + v.slice(el ? el.selectionEnd : v.length)
+  emit('update:modelValue', { files: JSON.parse(JSON.stringify(files.value)) })
+  // 光标落到插入内容的末尾，接着往下写
+  nextTick(() => {
+    if (!el) return
+    el.focus()
+    el.selectionStart = el.selectionEnd = at + text.length
+  })
+}
 </script>
 
 <template>
@@ -92,8 +130,16 @@ function run() {
       <button class="run" @click="run">▶ 运行</button>
     </div>
 
+    <div class="snipbar">
+      <span class="lab">{{ active.endsWith('.css') ? '常用样式' : '插入标签' }}</span>
+      <button v-for="[label, code] in snips" :key="label" :disabled="readonly" @click="insert(code)">
+        {{ label }}
+      </button>
+    </div>
+
     <div class="split">
       <textarea
+        ref="editor"
         class="code"
         :class="{ nowrap: !wrap }"
         :value="files[active]"
@@ -149,6 +195,17 @@ function run() {
   cursor: pointer;
   font: inherit;
 }
+.snipbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
+  padding: 5px 8px; background: #fafbfd; border-bottom: 1px solid #e3e8f0;
+}
+.snipbar .lab { font-size: 12px; color: #6b7480; margin-right: 2px; }
+.snipbar button {
+  border: 1px solid #ccd4e0; background: #fff; border-radius: 3px;
+  padding: 2px 9px; font: inherit; font-size: 12px; cursor: pointer;
+}
+.snipbar button:hover:not(:disabled) { border-color: #7aa7e0; background: #eef4ff; }
+.snipbar button:disabled { color: #aab; cursor: default; }
 .split { display: flex; min-height: 320px; }
 .code {
   flex: 1;

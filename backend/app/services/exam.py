@@ -178,12 +178,11 @@ def grade(items: list[dict], answers: dict) -> dict:
             }
             # 挂了仿真任务的操作题：按检查点当场判分。判出来的分只是**预填**，
             # 老师在成绩页照样能改（apply_manual 覆盖它）。
-            if manual and it.get("sim_checks"):
-                ran = sim.run_checks(
-                    (it.get("sim") or {}).get("kind"),
-                    it["sim_checks"],
-                    sim.load_state(mine),
-                )
+            kind = (it.get("sim") or {}).get("kind")
+            # AI 工具题老师不出检查点，按题干现算（sim.checks_for）
+            sim_checks = sim.checks_for(kind, it.get("sim_checks"), it.get("stem", ""), pts)
+            if manual and kind and sim_checks:
+                ran = sim.run_checks(kind, sim_checks, sim.load_state(mine))
                 earned = scale_sim(ran, pts)
                 auto_manual[str(it["id"])] = earned
                 auto_sub += earned
