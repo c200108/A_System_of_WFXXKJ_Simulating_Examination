@@ -33,8 +33,13 @@ import json
 import re
 from html.parser import HTMLParser
 
-KINDS = ("win", "wps", "html")
-KIND_NAMES = {"win": "Windows 操作", "wps": "WPS 文字", "html": "网页编程"}
+KINDS = ("win", "wps", "html", "ai")
+KIND_NAMES = {
+    "win": "Windows 操作", "wps": "WPS 文字", "html": "网页编程", "ai": "AI 工具",
+}
+# AI 工具题不用老师出检查点：题干本身就是要求，学生把要求提给 AI 就是得分点，
+# 检查点在判分时按题干现算（auto_checks_for_ai）。
+AUTO_KINDS = ("ai",)
 
 # 学生交上来的终态最大多大。正常一道题几 KB，这个上限只用来挡住恶意的超大包
 MAX_STATE_BYTES = 512 * 1024
@@ -53,8 +58,19 @@ def blank_env(kind: str) -> dict:
                      "orient": "portrait"},
             "header": "", "footer": "", "columns": 1,
         }
-    return {"files": {"index.html": "<html>\n<head>\n<title></title>\n</head>\n"
-                                    "<body>\n\n</body>\n</html>"}}
+    if kind == "ai":
+        # AI 工具题没有"初始文件"，只有这次用哪个工具、开场白说什么
+        return {"tool": "AI 助手", "greeting": "你好，把题目要求发给我，我来帮你完成。"}
+    return {
+        "files": {
+            "index.html": (
+                '<html>\n<head>\n<meta charset="utf-8">\n<title></title>\n'
+                '<link rel="stylesheet" href="style.css">\n</head>\n'
+                "<body>\n\n</body>\n</html>"
+            ),
+            "style.css": "/* 在这里写样式 */\n",
+        }
+    }
 
 
 def blank_para() -> dict:
@@ -62,7 +78,10 @@ def blank_para() -> dict:
     九成是「把某段设成……」，按段落记既够用又好断言。"""
     return {"font": "宋体", "size": "五号", "bold": False, "italic": False,
             "underline": False, "color": "", "align": "left", "indent": 0,
-            "line": None, "before": 0, "after": 0}
+            "line": None, "before": 0, "after": 0,
+            # 3.0 加的：贴着 WPS 工具栏上那一排按钮来
+            "strike": False, "sup": False, "sub": False, "highlight": "",
+            "shading": "", "border": False, "bullet": "none", "style": "正文"}
 
 
 def load_state(raw) -> dict:
@@ -109,7 +128,8 @@ def run_checks(kind: str, checks: list[dict], state: dict) -> dict:
 
     单条检查点抛异常时算没通过并把原因记下来，不让一条坏规则毁掉整道题。
     """
-    runner = {"win": _check_win, "wps": _check_wps, "html": _check_html}.get(kind)
+    runner = {"win": _check_win, "wps": _check_wps,
+              "html": _check_html, "ai": _check_ai}.get(kind)
     results = []
     got = full = 0
     for i, chk in enumerate(checks or []):
@@ -265,9 +285,13 @@ def _pick_para(paras: list[dict], at):
 
 PARA_LABELS = {
     "font": "字体", "size": "字号", "bold": "加粗", "italic": "倾斜",
-    "underline": "下划线", "color": "颜色", "align": "对齐方式",
-    "indent": "首行缩进", "before": "段前间距", "after": "段后间距",
+    "underline": "下划线", "strike": "删除线", "sup": "上标", "sub": "下标",
+    "color": "颜色", "highlight": "突出显示", "shading": "底纹",
+    "border": "边框", "bullet": "项目符号/编号", "style": "样式",
+    "align": "对齐方式", "indent": "首行缩进",
+    "before": "段前间距", "after": "段后间距",
 }
+BULLET_NAMES = {"none": "无", "dot": "项目符号", "number": "编号"}
 ALIGN_NAMES = {"left": "左对齐", "center": "居中", "right": "右对齐",
                "justify": "两端对齐", "distribute": "分散对齐"}
 
@@ -280,12 +304,17 @@ def _check_wps(a: dict, state: dict):
         p = _pick_para(paras, a.get("at", 0))
         if not p:
             return False, "找不到要检查的那一段（段落被删了，或者内容被改了）"
-        for key in ("font", "color"):
+        # 取值型：字体、颜色、突出显示、底纹、样式、项目符号
+        for key in ("font", "color", "highlight", "shading", "style"):
             if key in a and str(p.get(key) or "") != str(a[key]):
                 return False, f"{PARA_LABELS[key]}是「{p.get(key) or '默认'}」，要求「{a[key]}」"
+        if "bullet" in a and str(p.get("bullet") or "none") != str(a["bullet"]):
+            got = BULLET_NAMES.get(str(p.get("bullet") or "none"), p.get("bullet"))
+            return False, f"项目符号/编号是「{got}」，要求「{BULLET_NAMES.get(a['bullet'], a['bullet'])}」"
         if "size" in a and not same_size(p.get("size"), a["size"]):
             return False, f"字号是「{p.get('size') or '默认'}」，要求「{a['size']}」"
-        for key in ("bold", "italic", "underline"):
+        # 开关型
+        for key in ("bold", "italic", "underline", "strike", "sup", "sub", "border"):
             if key in a and bool(p.get(key)) != bool(a[key]):
                 want = "要" if a[key] else "不要"
                 return False, f"{want}{PARA_LABELS[key]}"
@@ -538,6 +567,26 @@ def _check_html(a: dict, state: dict):
         want = str(a.get("equals") or "")
         return (got == want, f"标题是「{got or '空'}」，要求「{want}」")
 
+    if op == "css":
+        # 样式写在 style.css 里、写在 <style> 块里、写成行内 style=""，都算
+        sel = re.sub(r"\s+", " ", str(a.get("selector") or "").strip().lower())
+        prop = str(a.get("prop") or a.get("name") or "").strip().lower()
+        want = norm_css_value(a.get("equals"))
+        found = []
+        for rule_sel, decls in _sheet_rules(state, raw):
+            if rule_sel == sel and prop in decls:
+                found.append(decls[prop])
+        for node in select(root, sel):
+            inline = _decls(node.attrs.get("style", ""))
+            if prop in inline:
+                found.append(inline[prop])
+        if not found:
+            return False, f"没找到「{sel}」的 {prop} 样式"
+        if not want:
+            return True, f"「{sel}」设了 {prop}"
+        hit = want in found
+        return hit, f"「{sel}」的 {prop} 是 {found[0]}，要求 {want}"
+
     return False, f"不认识的检查方式：{op}"
 
 
@@ -608,7 +657,8 @@ def _propose_wps(env: dict, state: dict) -> list[dict]:
                         {"op": "columns", "equals": int(state.get("columns") or 1)}))
 
     before = {str(p.get("text") or ""): p for p in _paras(env)}
-    keys = ("font", "size", "bold", "italic", "underline", "color",
+    keys = ("font", "size", "bold", "italic", "underline", "strike", "sup", "sub",
+            "color", "highlight", "shading", "border", "bullet", "style",
             "align", "indent", "before", "after", "line")
     for p in _paras(state):
         text = str(p.get("text") or "")
@@ -652,3 +702,167 @@ def _propose_html(env: dict, state: dict) -> list[dict]:
     if title and title != "".join(x.all_text() for x in select(before, "title")).strip():
         out.append(_chk(f"网页标题设为「{title}」", {"op": "title", "equals": title}))
     return out
+
+
+# ================================================================ html：样式
+_CSS_RULE = re.compile(r"([^{}]+)\{([^{}]*)\}")
+_STYLE_TAG = re.compile(r"<style[^>]*>(.*?)</style>", re.I | re.S)
+
+# 学生写 red、#f00、#FF0000 是同一个颜色，判分不该在这上面卡人
+_COLORS = {
+    "red": "#ff0000", "green": "#008000", "blue": "#0000ff", "black": "#000000",
+    "white": "#ffffff", "yellow": "#ffff00", "gray": "#808080", "grey": "#808080",
+    "orange": "#ffa500", "purple": "#800080", "pink": "#ffc0cb", "lime": "#00ff00",
+}
+
+
+def norm_css_value(value: str) -> str:
+    v = str(value or "").strip().strip(";").strip().strip("'\"").lower()
+    v = re.sub(r"\s+", " ", v)
+    if v in _COLORS:
+        return _COLORS[v]
+    m = re.fullmatch(r"#([0-9a-f])([0-9a-f])([0-9a-f])", v)
+    if m:                                   # #f00 → #ff0000
+        return "#" + "".join(c * 2 for c in m.groups())
+    return v
+
+
+def _decls(text: str) -> dict:
+    """把 "color:red; font-size:16px" 拆成字典。"""
+    out = {}
+    for part in str(text or "").split(";"):
+        if ":" not in part:
+            continue
+        k, v = part.split(":", 1)
+        out[k.strip().lower()] = norm_css_value(v)
+    return out
+
+
+def _sheet_rules(state: dict, html: str) -> list[tuple[str, dict]]:
+    """收集所有样式规则：独立的 .css 文件 + 页面里的 <style> 块。"""
+    css = []
+    files = state.get("files")
+    if isinstance(files, dict):
+        css += [str(v or "") for k, v in files.items() if str(k).lower().endswith(".css")]
+    css += _STYLE_TAG.findall(html)
+
+    rules = []
+    for block in css:
+        block = re.sub(r"/\*.*?\*/", " ", block, flags=re.S)
+        for sel, body in _CSS_RULE.findall(block):
+            decls = _decls(body)
+            for one in sel.split(","):
+                one = re.sub(r"\s+", " ", one.strip().lower())
+                if one:
+                    rules.append((one, decls))
+    return rules
+
+
+# ================================================================ ai
+"""AI 工具题。
+
+题干本身就是要求（「请使用给定的 AI 工具，生成一份……」），学生要做的是
+**把要求清楚地提给 AI 工具**。所以：
+
+- 老师不用做标准答案，也不用出检查点 —— 检查点在判分时按题干现算；
+- 判的是"有没有把要求提交给工具、提交的内容覆不覆盖题目要求"，
+  不判 AI 回了什么（那不该由学生负责，也没法客观判）。
+
+覆盖度按**相邻两字的组合**算，不是按单字。单字太容易撞（"的""一"到处都是），
+两字组合能区分"照着要求提问"和"随便打两个字"。
+"""
+
+# 这些词在任何题干里都出现，算覆盖度时先去掉，免得随便打几个字就够分
+AI_STOP = ("请使用", "请利用", "请用", "给定的", "完成要求", "完成下列", "按要求",
+           "如下", "以下", "要求", "操作", "同学", "小明", "小智", "题目")
+_CN = re.compile(r"[\u4e00-\u9fffA-Za-z0-9]+")
+
+
+def _grams(text: str) -> set[str]:
+    """把一段话拆成相邻两字的集合，英文和数字按词算。"""
+    out: set[str] = set()
+    for chunk in _CN.findall(str(text or "")):
+        if re.fullmatch(r"[A-Za-z0-9]+", chunk):
+            out.add(chunk.lower())
+            continue
+        for i in range(len(chunk) - 1):
+            out.add(chunk[i:i + 2])
+        if len(chunk) == 1:
+            out.add(chunk)
+    return out
+
+
+def requirement_of(stem: str) -> str:
+    """从题干里剥出"要求"部分：去掉路径和套话，剩下的就是学生该转述给 AI 的。"""
+    text = str(stem or "")
+    text = re.sub(r"[A-Za-z]:\\[^\s，。,；]*", " ", text)      # D:\EXAM… 这类路径
+    text = re.sub(r"\s+", " ", text)
+    for word in AI_STOP:
+        text = text.replace(word, " ")
+    return text.strip()
+
+
+def auto_checks_for_ai(stem: str, total: int = 10) -> list[dict]:
+    """按题干现算检查点。老师什么都不用填。
+
+    两档：提交了（占四成）+ 提交的内容覆盖题目要求（占六成）。
+    宁可松一点 —— 这类题考的是"会不会把需求说清楚"，不是默写题干。
+    """
+    ask = max(1, round(total * 0.4))
+    return [
+        {"desc": "向 AI 工具提交了提问", "score": ask,
+         "assert": {"op": "asked", "min_len": 8}},
+        {"desc": "提问内容覆盖题目要求", "score": max(1, total - ask),
+         "assert": {"op": "covers", "text": requirement_of(stem), "ratio": 0.5}},
+    ]
+
+
+def _messages(state: dict) -> list[dict]:
+    got = state.get("messages")
+    return [m for m in got if isinstance(m, dict)] if isinstance(got, list) else []
+
+
+def _asked_text(state: dict) -> str:
+    return " ".join(str(m.get("text") or "") for m in _messages(state)
+                    if str(m.get("role")) == "user")
+
+
+def _check_ai(a: dict, state: dict):
+    op = a.get("op")
+    mine = _asked_text(state)
+
+    if op == "asked":
+        n = len(re.sub(r"\s+", "", mine))
+        need = int(a.get("min_len") or 8)
+        if n == 0:
+            return False, "没有向 AI 工具提交任何内容"
+        return (n >= need, f"提交了 {n} 个字" if n >= need else f"只提交了 {n} 个字，太短了")
+
+    if op == "covers":
+        want = _grams(a.get("text") or "")
+        if not want:
+            return bool(mine.strip()), "题目没给出可比对的要求，只要提交过就算"
+        got = _grams(mine)
+        ratio = len(want & got) / len(want)
+        need = float(a.get("ratio") or 0.5)
+        pct = round(ratio * 100)
+        return (ratio >= need,
+                f"提问覆盖了题目要求的 {pct}%" if ratio >= need
+                else f"提问只覆盖了题目要求的 {pct}%，把要求说全一些")
+
+    if op == "turns":
+        n = sum(1 for m in _messages(state) if str(m.get("role")) == "user")
+        need = int(a.get("min") or 1)
+        return (n >= need, f"提问了 {n} 次，要求至少 {need} 次")
+
+    return False, f"不认识的检查方式：{op}"
+
+
+def checks_for(kind: str, checks: list[dict] | None, stem: str = "", total: int = 10):
+    """这道题实际要跑哪些检查点。
+
+    AI 工具题（老师没出检查点的）按题干现算；别的题型原样返回。
+    """
+    if kind in AUTO_KINDS and not checks:
+        return auto_checks_for_ai(stem, total)
+    return checks or []

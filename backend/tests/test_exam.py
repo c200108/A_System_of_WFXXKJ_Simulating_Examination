@@ -88,9 +88,12 @@ def test_answers_never_reach_the_student(client, exam):
             assert "source" not in q
             # 白名单是刻意写死的：以后谁往学生那边多塞一个字段，这里就会挂。
             # score 是本题分值，卷面上本来就印着，不算答案线索。
+            # sim 是仿真操作题的初始环境（3.0 加的），普通题是 null。
+            # 它只含 id/kind/title/env，检查点在服务端，见 test_sim.py 里那条断言。
             assert set(q.keys()) <= {
-                "id", "code", "type", "stem", "scope", "image_url", "score", "options"
+                "id", "code", "type", "stem", "scope", "image_url", "score", "options", "sim"
             }
+            assert not q.get("sim"), "这场考试里没有仿真题，不该冒出环境来"
 
 
 def test_bad_token_is_404(client):

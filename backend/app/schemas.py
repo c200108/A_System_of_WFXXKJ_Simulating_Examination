@@ -412,6 +412,10 @@ class TakeQuestionOut(BaseModel):
     image_url: str | None = None
     score: int = 0                        # 本题分值。卷面上本来就印着，不是答案线索
     options: list[OptionOut] = []
+    # 仿真操作题的**初始环境**：学生得拿到它才有东西可操作。
+    # 里面只有 id/kind/title/env，检查点（等同于答案）由 sim.sim_for_student()
+    # 和 exam.strip_answers() 两道关卡挡在服务端，见 test_checks_never_reach_the_student。
+    sim: dict | None = None
 
 
 class TakeGroupOut(BaseModel):
@@ -719,7 +723,7 @@ class SimTaskOut(ORMModel):
 
 
 class SimTaskIn(BaseModel):
-    kind: str = Field(pattern="^(win|wps|html)$")
+    kind: str = Field(pattern="^(win|wps|html|ai)$")
     title: str = Field(default="", max_length=128)
     env: dict = Field(default_factory=dict)
     checks: list[dict] = Field(default_factory=list)
@@ -734,7 +738,7 @@ class SimTaskUpdate(BaseModel):
 class SimProposeIn(BaseModel):
     """老师把题做一遍，拿初始环境和终态的差异换一份检查点草稿。"""
 
-    kind: str = Field(pattern="^(win|wps|html)$")
+    kind: str = Field(pattern="^(win|wps|html|ai)$")
     env: dict = Field(default_factory=dict)
     state: dict = Field(default_factory=dict)
 

@@ -19,9 +19,10 @@ import { api } from '../api'
 import SimHost from '../components/sim/SimHost.vue'
 
 const KINDS = [
-  { v: 'win', t: 'Windows 操作', d: '新建、改名、移动、删除文件和文件夹' },
-  { v: 'wps', t: 'WPS 文字', d: '字体字号、对齐、缩进、页面设置、查找替换' },
-  { v: 'html', t: '网页编程', d: '写 HTML/CSS，服务端解析标签判分' }
+  { v: 'win', t: 'Windows 操作', d: 'XP 桌面，二十多种文件类型，新建改名移动删除' },
+  { v: 'wps', t: 'WPS 文字', d: '照着 WPS 界面做的排版环境' },
+  { v: 'html', t: '网页编程', d: '写 HTML/CSS，服务端解析标签和样式判分' },
+  { v: 'ai', t: 'AI 工具', d: '对话界面。不用出检查点，按题干自动判分' }
 ]
 const KIND_NAME = Object.fromEntries(KINDS.map(k => [k.v, k.t]))
 
@@ -73,6 +74,10 @@ async function openEdit(row) {
   restart('env')
 }
 
+// AI 工具题是另一套：题干本身就是要求，学生把要求提交给工具就是得分点，
+// 所以既不用布置环境、也不用做标准答案、更不用出检查点 —— 判分时按题干现算。
+const isAi = computed(() => edit.value?.kind === 'ai')
+
 function saveEnv() {
   if (!workState.value) return ElMessage.warning('先在下面操作几步，再保存为初始环境')
   edit.value.env = workState.value
@@ -114,7 +119,9 @@ const totalScore = computed(() =>
 async function save() {
   const e = edit.value
   if (!e.title.trim()) return ElMessage.warning('给这道题起个名字')
-  if (!e.checks.length) return ElMessage.warning('至少要有一条检查点，否则学生做什么都是 0 分')
+  if (!isAi.value && !e.checks.length) {
+    return ElMessage.warning('至少要有一条检查点，否则学生做什么都是 0 分')
+  }
   const body = { kind: e.kind, title: e.title.trim(), env: e.env, checks: e.checks }
   const saved = e.id ? await api.simUpdate(e.id, body) : await api.simCreate(body)
   e.id = saved.id
@@ -216,7 +223,24 @@ const simFor = computed(() =>
         </el-form-item>
       </el-form>
 
-      <div class="steps">
+      <template v-if="isAi">
+        <el-form label-width="80px">
+          <el-form-item label="工具名称">
+            <el-input v-model="edit.env.tool" placeholder="如：通义千问 / 文心一言 / DeepSeek" style="max-width: 300px" />
+          </el-form-item>
+          <el-form-item label="开场白">
+            <el-input v-model="edit.env.greeting" placeholder="学生打开时 AI 说的第一句话" style="max-width: 460px" />
+          </el-form-item>
+        </el-form>
+        <el-alert type="success" :closable="false">
+          <b>这类题不用你做标准答案，也不用出检查点。</b>
+          学生要做的是把题干里的要求完整地描述给 AI 工具并发送，判分就看两条：提交过提问、
+          提问内容覆盖题目要求 —— 判分时按<b>题干</b>现算，所以题干把要求写清楚就行。
+          <br />对话里的回复由本地模板生成，不联网调用真实大模型（考试环境不往外发请求）。
+        </el-alert>
+      </template>
+
+      <div v-if="!isAi" class="steps">
         <button class="step" :class="{ on: mode === 'env' }" @click="restart('env')">
           <b>① 布置环境</b>
           <span>把学生打开时该看到的样子摆好</span>
@@ -227,7 +251,7 @@ const simFor = computed(() =>
         </button>
       </div>
 
-      <div class="actions">
+      <div v-if="!isAi" class="actions">
         <template v-if="mode === 'env'">
           <el-button size="small" type="primary" @click="saveEnv">把当前状态设为初始环境</el-button>
           <span class="tip">改完环境记得重新做一遍标准答案 —— 检查点是按环境算出来的。</span>
@@ -251,7 +275,7 @@ const simFor = computed(() =>
       <SimHost v-if="simFor" :key="seed + mode" v-model="work" :sim="simFor" />
     </el-card>
 
-    <el-card shadow="never">
+    <el-card v-if="!isAi" shadow="never">
       <template #header>
         <div class="head">
           <span>检查点（共 {{ edit.checks.length }} 条，满分 {{ totalScore }} 分）</span>

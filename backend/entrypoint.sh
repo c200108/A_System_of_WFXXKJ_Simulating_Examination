@@ -40,5 +40,9 @@ python -m tools.migrate_from_html --if-empty
 echo "[start] 检查题目难度"
 python -m tools.fix_difficulty --auto || true
 
-echo "[start] 启动服务"
-exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers
+# 一个机房五十到一百人同时交卷时，单进程会把请求排成一队。多开几个工作进程
+# 分摊，进程之间没有共享内存状态（配置只读、种子数据在上面已经灌完），可以放心多开。
+# 机器核少就调小：在 .env 里写 WEB_WORKERS=1。
+WORKERS="${WEB_WORKERS:-2}"
+echo "[start] 启动服务（$WORKERS 个工作进程）"
+exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers     --workers "$WORKERS" --timeout-keep-alive 20

@@ -330,14 +330,20 @@ def test_checks_never_reach_the_student(client, sim_exam):
     assert "北京冬奥" not in raw, "检查点里的关键字也不能露出去"
 
     body = client.get(f"/api/take/{sim_exam['exam']['token']}").json()
+    seen = 0
     for g in body["groups"]:
         for q in g["items"]:
             assert set(q.keys()) <= {
                 "id", "code", "type", "stem", "scope", "image_url", "score", "options", "sim"
             }
-            if "sim" in q:
+            if q.get("sim"):
+                seen += 1
                 # 学生要拿到初始环境（不然没法做），但只能拿到这些
                 assert set(q["sim"].keys()) == {"id", "kind", "title", "env"}
+                assert q["sim"]["env"], "环境是空的，学生打开就没东西可操作"
+    # 这一条是 3.0 补的：2.8.0 时响应模型里没有 sim 字段，环境被 FastAPI
+    # 过滤掉了，学生端根本渲染不出仿真器 —— 光断言"不含答案"发现不了这种事
+    assert seen, "卷子里应该有仿真题，而且学生要能拿到它的初始环境"
 
 
 def test_student_submission_is_graded_on_the_spot(client, auth, sim_exam):
@@ -432,3 +438,183 @@ def test_deleting_a_task_leaves_the_question_alone(client, auth):
     assert client.delete(f"/api/sims/{task['id']}", headers=auth).json()["detached"] == 1
     again = client.get(f"/api/questions/{q['id']}", headers=auth).json()
     assert again["sim_task_id"] is None, "题目还在，只是不挂仿真任务了"
+
+
+# ================================================================ 3.0：样式
+def test_css_written_in_stylesheet_or_inline_both_count():
+    """样式写在 style.css 里、写在 <style> 块里、写成行内 style=""，都该算对。"""
+    sheet = {"files": {"index.html": "<body><h1>标题</h1></body>",
+                       "style.css": "h1 { color: red; font-size: 16px; }"}}
+    block = {"files": {"index.html": "<head><style>h1{color:#FF0000}</style></head><h1>标题</h1>"}}
+    inline = {"files": {"index.html": '<h1 style="color:#f00">标题</h1>'}}
+    rule = {"op": "css", "selector": "h1", "prop": "color", "equals": "red"}
+    for name, state in (("外部样式表", sheet), ("style 块", block), ("行内", inline)):
+        ok, why = sim._check_html(rule, state)
+        assert ok, f"{name}没认出来：{why}"
+
+
+def test_css_color_forms_are_the_same_color():
+    assert sim.norm_css_value("red") == sim.norm_css_value("#FF0000") == sim.norm_css_value("#f00")
+    state = {"files": {"index.html": "<h1>标题</h1>", "style.css": "h1{color:#00FF00}"}}
+    assert sim._check_html({"op": "css", "selector": "h1", "prop": "color", "equals": "lime"}, state)[0]
+
+
+def test_css_missing_rule_says_so():
+    state = {"files": {"index.html": "<h1>标题</h1>", "style.css": ""}}
+    ok, why = sim._check_html({"op": "css", "selector": "h1", "prop": "color", "equals": "red"}, state)
+    assert not ok and "没找到" in why
+
+
+def test_wps_new_buttons():
+    """3.0 给 WPS 加的那一排：删除线、上标、突出显示、项目符号、样式。"""
+    state = {"paras": [para("列表项", strike=True, sup=True, highlight="#ffff00",
+                            bullet="dot", style="标题1")]}
+    assert sim._check_wps({"op": "para", "at": 0, "strike": True, "sup": True}, state)[0]
+    assert sim._check_wps({"op": "para", "at": 0, "highlight": "#ffff00"}, state)[0]
+    assert sim._check_wps({"op": "para", "at": 0, "bullet": "dot"}, state)[0]
+    assert sim._check_wps({"op": "para", "at": 0, "style": "标题1"}, state)[0]
+    ok, why = sim._check_wps({"op": "para", "at": 0, "bullet": "number"}, state)
+    assert not ok and "编号" in why
+
+
+# ================================================================ 3.0：AI 工具题
+AI_STEM = r"D:\EXAM生成式人工智能，请使用给定的AI工具，生成一篇介绍北京冬奥会吉祥物冰墩墩的短文，不少于200字。"
+
+
+def test_ai_checks_are_built_from_the_stem():
+    """老师什么都不用填：检查点按题干现算。"""
+    checks = sim.checks_for("ai", [], AI_STEM, 10)
+    assert len(checks) == 2
+    assert sum(c["score"] for c in checks) == 10
+    # 题干里的套话不该进比对目标，不然随便打几个字就够分
+    target = checks[1]["assert"]["text"]
+    assert "请使用" not in target and "D:" not in target
+    assert "冰墩墩" in target
+
+
+def test_ai_copying_the_requirement_scores_full():
+    checks = sim.checks_for("ai", [], AI_STEM, 10)
+    state = {"messages": [
+        {"role": "user", "text": "生成一篇介绍北京冬奥会吉祥物冰墩墩的短文，不少于200字"},
+        {"role": "ai", "text": "好的……"},
+    ]}
+    got = sim.run_checks("ai", checks, state)
+    assert got["score"] == got["full"] == 10
+
+
+def test_ai_rewording_the_requirement_still_scores():
+    """不是默写题：换个说法只要把要求说全了也得分。"""
+    checks = sim.checks_for("ai", [], AI_STEM, 10)
+    state = {"messages": [{"role": "user",
+                           "text": "请写一篇短文介绍冰墩墩，它是北京冬奥会的吉祥物，要求不少于200字"}]}
+    assert sim.run_checks("ai", checks, state)["score"] == 10
+
+
+def test_ai_nonsense_scores_almost_nothing():
+    checks = sim.checks_for("ai", [], AI_STEM, 10)
+    for text in ("你好", "在吗", "帮我写个东西"):
+        got = sim.run_checks("ai", checks, {"messages": [{"role": "user", "text": text}]})
+        assert got["score"] < got["full"], f"「{text}」不该拿满分"
+    assert sim.run_checks("ai", checks, {})["score"] == 0
+
+
+def test_ai_only_counts_what_the_student_said():
+    """AI 回的内容不算分 —— 那不该由学生负责，也没法客观判。"""
+    checks = sim.checks_for("ai", [], AI_STEM, 10)
+    state = {"messages": [
+        {"role": "user", "text": "你好"},
+        {"role": "ai", "text": "生成一篇介绍北京冬奥会吉祥物冰墩墩的短文，不少于200字……"},
+    ]}
+    assert sim.run_checks("ai", checks, state)["score"] < 10
+
+
+@pytest.fixture(scope="module")
+def ai_exam(client, auth):
+    """一道 AI 工具题：老师只建了个对话环境，没有任何检查点。"""
+    task = client.post("/api/sims", json={"kind": "ai", "title": "通义千问",
+                                          "env": {"tool": "通义千问"}, "checks": []},
+                       headers=auth)
+    assert task.status_code == 200, task.text
+    task = task.json()
+    assert task["checks"] == []
+
+    q = client.post(
+        "/api/questions",
+        json={"type": "操作题", "stem": AI_STEM, "answer": "略", "scope": "人工智能",
+              "sim_task_id": task["id"], "is_pinned": True, "options": []},
+        headers=auth,
+    ).json()
+    paper = client.post(
+        "/api/papers/generate",
+        json={"title": "AI 工具测验", "by_sections": True, "use_pinned": True, "save": True},
+        headers=auth,
+    ).json()
+    picked = next((x for x in paper["questions"] if x["id"] == q["id"]), None)
+    assert picked, "必出题没进卷子"
+    exam = client.post("/api/exams", json={"paper_id": paper["paper_id"], "show_score": True},
+                       headers=auth).json()
+    return {"exam": exam, "qid": q["id"], "score": picked.get("score") or 0}
+
+
+def test_ai_question_grades_without_any_teacher_checkpoints(client, auth, ai_exam):
+    """老师一条检查点都没出，学生把要求提交给 AI 就该得分。
+
+    这份卷子里还有别的操作题（按大题组卷出来的），那些没挂仿真任务的仍然等老师批 ——
+    所以这里只断言 AI 这一道判完了，不断言整份卷子没有待阅项。
+    """
+    answer = json.dumps({"state": {"messages": [
+        {"role": "user", "text": "生成一篇介绍北京冬奥会吉祥物冰墩墩的短文，不少于200字"},
+        {"role": "ai", "text": "好的，以下是……"},
+    ]}, "log": []}, ensure_ascii=False)
+
+    res = client.post(
+        f"/api/take/{ai_exam['exam']['token']}/submit",
+        json={"student_name": "戊同学", "student_class": "九年级1班", "student_no": "26990201",
+              "answers": {str(ai_exam["qid"]): answer}},
+    )
+    assert res.status_code == 200, res.text
+    out = res.json()
+    # 别的题没作答都是 0 分，所以总分就是这道 AI 题挣来的
+    assert out["score"] == ai_exam["score"] > 0
+
+    subs = client.get(f"/api/exams/{ai_exam['exam']['id']}/submissions", headers=auth).json()
+    sub = next(s for s in subs if s["student_no"] == "26990201")
+    detail = client.get(
+        f"/api/exams/{ai_exam['exam']['id']}/submissions/{sub['id']}", headers=auth
+    ).json()
+    item = next(d for d in detail["detail"] if d["id"] == ai_exam["qid"])
+    assert item["auto"] is True, "AI 题该是机器判的"
+    assert item["check_passed"] == item["check_total"] == 2
+    assert item["earned"] == ai_exam["score"]
+
+
+def test_ai_question_scores_zero_when_nothing_submitted(client, ai_exam):
+    res = client.post(
+        f"/api/take/{ai_exam['exam']['token']}/submit",
+        json={"student_name": "己同学", "student_class": "九年级1班", "student_no": "26990202",
+              "answers": {str(ai_exam["qid"]): ""}},
+    )
+    assert res.json()["score"] == 0
+
+
+def test_ai_env_reaches_the_student_but_nothing_else(client, ai_exam):
+    body = client.get(f"/api/take/{ai_exam['exam']['token']}").json()
+    for g in body["groups"]:
+        for q in g["items"]:
+            if (q.get("sim") or {}).get("kind") == "ai":
+                assert q["sim"]["env"].get("tool") == "通义千问"
+                assert "checks" not in q["sim"]
+                return
+    raise AssertionError("卷子里没找到那道 AI 题")
+
+
+# ================================================================ 3.0：体积上限
+def test_oversized_task_is_rejected(client, auth):
+    """一份题面要发给上百个学生，太大的直接在存的时候挡住。"""
+    huge = {"files": {"index.html": "x" * (sim.MAX_STATE_BYTES + 100)}}
+    res = client.post("/api/sims", json={"kind": "html", "title": "太大了", "env": huge,
+                                         "checks": [{"desc": "x", "score": 1,
+                                                     "assert": {"op": "raw", "has": "x"}}]},
+                      headers=auth)
+    assert res.status_code == 400
+    assert "太大" in res.json()["detail"]

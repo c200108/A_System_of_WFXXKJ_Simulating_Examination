@@ -6,10 +6,15 @@
  * 交上去。判分只看 state（服务端按检查点断言），log 只用于事后回放和申诉 ——
  * 按"点了哪几下"判分会把用了别的正确路径的学生判错。
  */
-import { computed, ref, watch } from 'vue'
-import SimWindows from './SimWindows.vue'
-import SimWps from './SimWps.vue'
-import SimHtml from './SimHtml.vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
+
+// 按需加载：四个仿真器加起来几十 KB，一道题只用得上其中一个。
+// 做客观题的学生一个字节都不会下载 —— 一个机房五十台机器同时开考，
+// 省下的是五十份流量和五十次解析。
+const SimWindows = defineAsyncComponent(() => import('./SimWindows.vue'))
+const SimWps = defineAsyncComponent(() => import('./SimWps.vue'))
+const SimHtml = defineAsyncComponent(() => import('./SimHtml.vue'))
+const SimAi = defineAsyncComponent(() => import('./SimAi.vue'))
 
 const props = defineProps({
   /** { kind, title, env } —— 服务端下发的那一份，不含检查点 */
@@ -20,8 +25,8 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:modelValue'])
 
-const KIND_NAMES = { win: 'Windows 操作', wps: 'WPS 文字', html: '网页编程' }
-const COMPONENTS = { win: SimWindows, wps: SimWps, html: SimHtml }
+const KIND_NAMES = { win: 'Windows 操作', wps: 'WPS 文字', html: '网页编程', ai: 'AI 工具' }
+const COMPONENTS = { win: SimWindows, wps: SimWps, html: SimHtml, ai: SimAi }
 
 const state = ref(null)
 const log = ref([])
@@ -74,7 +79,9 @@ const seed = ref(0)
       <span class="title">{{ sim.title }}</span>
       <span class="grow" />
       <span v-if="touched" class="saved">已记录你的操作</span>
-      <span v-else class="hint">按题目要求操作，系统自动记录结果</span>
+      <span v-else class="hint">
+        {{ sim.kind === 'ai' ? '把题目要求描述给 AI 工具并发送' : '按题目要求操作，系统自动记录结果' }}
+      </span>
       <button v-if="!readonly" class="reset" @click="reset">重来</button>
     </div>
 

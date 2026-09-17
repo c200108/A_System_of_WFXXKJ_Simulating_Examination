@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
+import { UploadFilled } from '@element-plus/icons-vue'
 
 const result = ref(null)
 const logs = ref([])
