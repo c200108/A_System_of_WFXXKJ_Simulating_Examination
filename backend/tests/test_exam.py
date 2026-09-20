@@ -93,7 +93,12 @@ def test_answers_never_reach_the_student(client, exam):
             assert set(q.keys()) <= {
                 "id", "code", "type", "stem", "scope", "image_url", "score", "options", "sim"
             }
-            assert not q.get("sim"), "这场考试里没有仿真题，不该冒出环境来"
+            # 抽到的操作题带不带仿真环境，要看题库里恰好抽中了哪一道 ——
+            # 所以这里不假设"没有仿真题"，而是断言**就算有，也只有能给学生的
+            # 那几样**：打开时看到什么可以给，检查点（等同于答案）绝不能给。
+            if q.get("sim"):
+                assert set(q["sim"]) <= {"id", "kind", "title", "env"}
+                assert "sim_checks" not in q
 
 
 def test_bad_token_is_404(client):

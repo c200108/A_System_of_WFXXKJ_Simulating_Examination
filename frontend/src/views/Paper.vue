@@ -10,6 +10,14 @@ const CN = siteConfig.paper.section_numerals
 const sections = computed(() => siteConfig.paper.sections || [])
 /** 改题量用的键：大题名 + 第几组。用名字而不是下标，配置调顺序也对得上。 */
 const slotKey = (sec, i) => `${sec.name}/${i}`
+/** 操作题的类别标签（config.yaml 里的 sim_kinds）。 */
+const KIND = {
+  win: 'Windows 操作',
+  wps: 'WPS 文字',
+  html: '网页文件',
+  ai: 'AI 工具',
+  drag: '拖拽 / 热区 / 流程图',
+}
 
 const scopes = ref([])
 const types = ref([])
@@ -266,7 +274,9 @@ function printPaper() {
                   <span class="tag t">{{ slot.type }}</span>
                   <span v-if="slot.scopes.length" class="tag k">{{ slot.scopes.join(' / ') }}</span>
                   <span v-if="slot.prefer === 'long_or_image'" class="tag p">长题干或带图</span>
-                  <span v-if="slot.label" class="slot-label">{{ slot.label }}</span>
+                  <span v-for="k in slot.sim_kinds || []" :key="k" class="tag s">
+                    {{ KIND[k] || k }}
+                  </span>
                 </div>
                 <el-input-number
                   v-model="form.section_counts[slotKey(sec, li)]"
@@ -638,10 +648,6 @@ function printPaper() {
   gap: 4px;
   align-items: center;
 }
-.slot-label {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-}
 .slot-n {
   width: 78px;
   flex: none;
@@ -672,6 +678,10 @@ function printPaper() {
 .tag.p {
   color: var(--el-color-warning);
   border-color: var(--el-color-warning-light-7);
+}
+.tag.s {
+  color: var(--el-color-success);
+  border-color: var(--el-color-success-light-7);
 }
 .pt {
   color: var(--el-text-color-secondary);

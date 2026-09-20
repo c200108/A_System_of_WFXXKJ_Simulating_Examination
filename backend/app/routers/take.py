@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Exam, ExamSubmission
+from ..models import Exam, ExamSubmission, Student
 from ..schemas import SubmitIn, SubmitOut, TakePaperOut
 from ..services.exam import (
     grade,
@@ -102,11 +102,20 @@ def submit(token: str, body: SubmitIn, db: Session = Depends(get_db)):
     items = load_items(db, exam.paper)
     result = grade(items, body.answers)
 
+    # **认领到学生账号上。** 这个接口是免登录的（网页链接、机房 exe 都走它），
+    # 但交上来的学号如果在名单里，就把这份卷子挂到那个账号名下 —— 否则学生在
+    # 自己的「我的考试」里看不到自己刚交的卷：列表还显示「开始考试」，回看也
+    # 说"你还没交过这场考试"。挂不上（校外链接、学号写错）就照旧留空，
+    # 成绩表里仍然有学号姓名，老师照样看得见。
+    no = body.student_no.strip()
+    mine = db.scalar(select(Student).where(Student.student_no == no)) if no else None
+
     sub = ExamSubmission(
         exam_id=exam.id,
+        student_id=mine.id if mine else None,
         student_name=body.student_name.strip(),
         student_class=body.student_class.strip(),
-        student_no=body.student_no.strip(),
+        student_no=no,
         answers_json=json.dumps(body.answers, ensure_ascii=False),
         detail_json=json.dumps(result["detail"], ensure_ascii=False),
         **submission_scores(result),

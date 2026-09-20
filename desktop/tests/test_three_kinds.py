@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
-"""三类操作题在同一场考试里，交卷后全部自动判分。
+"""各类操作题在同一场考试里，交卷后全部自动判分。
 
 这是这条链路的验收：一场考试里同时有
 
     Windows 系统操作   学生在真的资源管理器里新建/复制/删除 → 判文件夹快照
     WPS 文字（格式）   学生用真 WPS 改文档格式并保存        → 判段落格式
     AI 工具使用        学生把题目要求描述给对话框并提交      → 判提问内容
+    网页文件           学生在「网页」文件夹里改 html/css     → 判源码
 
-**三类的终态形状各不相同**，交错了就全判 0 分，而且两边日志都正常 —— 踩过：
+**几类的终态形状各不相同**，交错了就全判 0 分，而且两边日志都正常 —— 踩过：
 HTML 题交文件夹快照上去，判分器拿不到 `files`，整道题判 0。所以这里一道一道
 盯住"判出来的分对不对、说的原因对不对"。
 
@@ -71,6 +72,16 @@ def exam3(server, exam):
         "env": {}, "checks": [],          # **故意不出检查点**：服务器按题干现算
     }, tk)
 
+    web = call(server, "POST", "/api/sims", {
+        "kind": "html", "title": "三类·网页",
+        "env": {"files": {
+            "index.html": "<html><head><title></title></head><body></body></html>",
+            "style.css": "/* 在这里写样式 */",
+        }},
+        "checks": [{"desc": "网页标题改成「校园网」", "score": 5,
+                    "assert": {"op": "title", "equals": "校园网"}}],
+    }, tk)
+
     made = {}
     for scope, task, stem in (
         ("Windows系统操作", win, f"打开 lab三类：①新建「上交」文件夹；②把「素材」里的"
@@ -81,6 +92,7 @@ def exam3(server, exam):
                              "「让中华民族伟大复兴梦想成真。」"),
         ("人工智能", ai, "请使用给定的AI工具完成以下操作：①请对「树树皆秋色，山山唯落晖。」"
                          "这句诗，生成一段鉴赏文本。②请为「青州古城」，生成一幅宣传画。"),
+        ("物联网", web, "打开「网页」文件夹里的 index.html：将网页标题修改为“校园网”。"),
     ):
         q = call(server, "POST", "/api/questions", {
             "type": "操作题", "stem": stem, "answer": "略", "scope": scope,
@@ -156,7 +168,14 @@ def do_everything(root: Path, chats: dict, pack):
         {**sim.blank_para(), "text": "让中华民族伟大复兴梦想成真。"},
     ]}))
 
-    # ③ AI：把题目要求描述给对话框
+    # ③ 网页：在「网页」文件夹里改 index.html。**文件就在那一个文件夹里** ——
+    #    早先铺在考试文件夹根上，一张卷子两道网页题就会互相盖掉
+    web = next(x for x in pack.paper if (x.get("sim") or {}).get("kind") == "html")
+    (root / web["sim"]["open"] / "index.html").write_text(
+        "<html><head><title>校园网</title></head><body></body></html>",
+        encoding="utf-8")
+
+    # ④ AI：把题目要求描述给对话框
     q = next(x for x in pack.paper if (x.get("sim") or {}).get("kind") == "ai")
     chats[str(q["id"])] = [
         {"role": "user", "text": "请对「树树皆秋色，山山唯落晖。」这句诗生成一段鉴赏文本，"
@@ -182,15 +201,35 @@ def test_wps_question_ships_a_real_docx(server, exam3, lab):
     assert docx.read_docx(target)["paras"], "铺出去的文档读不回来"
 
 
+def test_web_question_ships_its_own_folder(server, exam3, lab):
+    """网页题的文件单独进「网页」文件夹，「打开」按钮打开的也是这个文件夹。
+
+    早先直接铺在考试文件夹根上：学生点开要在一堆别的题的素材里翻 index.html；
+    一张卷子上两道网页题时，后一道的 index.html 还会把前一道盖掉。
+    """
+    pack = package.ExamPackage(api.fetch_exam(server, exam3["exam"]["token"],
+                                              lab["out"] / "卷.ekb"))
+    snapshot.clear_root(lab["root"], force=True)
+    snapshot.mark_root(lab["root"])
+    pack.deploy_files(lab["root"])
+
+    web = next(q for q in pack.paper if (q.get("sim") or {}).get("kind") == "html")
+    assert web["sim"]["open"] == "网页"
+    folder = lab["root"] / web["sim"]["open"]
+    assert folder.is_dir(), "「网页」文件夹没铺出来"
+    assert (folder / "index.html").exists() and (folder / "style.css").exists()
+    assert not (lab["root"] / "index.html").exists(), "根目录上不该再有网页文件"
+
+
 def test_all_three_kinds_are_auto_graded(server, exam3, lab):
-    """**核心断言**：三类都不是"人工评阅"，包里也没漏答案。"""
+    """**核心断言**：四类都不是"人工评阅"，包里也没漏答案。"""
     pack = package.ExamPackage(api.fetch_exam(server, exam3["exam"]["token"],
                                               lab["out"] / "卷.ekb"))
     kinds = {q["sim"]["kind"] for q in pack.paper if q.get("sim")}
-    assert {"win", "wps", "ai"} <= kinds
+    assert {"win", "wps", "ai", "html"} <= kinds
     for q in pack.paper:
         sim_ = q.get("sim") or {}
-        if sim_.get("kind") in ("win", "wps", "ai"):
+        if sim_.get("kind") in ("win", "wps", "ai", "html"):
             assert not sim_.get("manual"), f"{sim_['kind']} 还挂着人工评阅"
 
     raw = (lab["out"] / "卷.ekb").read_bytes().decode("utf-8", "ignore")

@@ -1,4 +1,4 @@
-"""桌面客户端（desktop/）和网页后台之间的那条线。
+r"""桌面客户端（desktop/）和网页后台之间的那条线。
 
 ## 桌面端不是另一套系统
 
@@ -40,7 +40,7 @@
 
     win   仿真环境里的文件原样铺到真机，交卷时拍文件夹快照
     wps   段落模型写成真 .docx，学生用真 WPS 改，交卷时读回段落比格式
-    html  网页文件原样铺出去，学生用记事本改，交卷时读回源码
+    html  网页文件铺进单独的「网页」文件夹，学生用记事本改，交卷时读回源码
     ai    对话式的题，成果不在文件系统里，由客户端的对话框收集
 
 三类操作题**都是自动判分**，用的还是老师在网页仿真器里点出来的那份检查点。
@@ -70,6 +70,12 @@ router = APIRouter(prefix="/api/desk", tags=["桌面客户端"])
 PKG_FORMAT = 1
 DESK_KINDS = ("win", "html", "wps", "ai")
 
+# 网页题的文件单独放一个文件夹，不和考试文件夹根目录上的东西混在一起。
+# 两个原因：学生点「打开」直接看见 index.html 和 style.css，不用在一堆
+# 别的题的素材里翻；一张卷子上有两道网页题时，各自的 index.html 也不会
+# 互相盖掉 —— 盖掉的后果是两道题判同一份源码，一道必错。
+WEB_DIR = "网页"
+
 
 def _dump(obj) -> bytes:
     return json.dumps(obj, ensure_ascii=False, indent=1).encode("utf-8")
@@ -95,12 +101,14 @@ def _common_root(paths) -> str:
     return "/".join(parts or [])
 
 
-def _files_of(kind: str, env: dict) -> dict:
+def _files_of(kind: str, env: dict, folder: str = "") -> dict:
     """把仿真环境变成"要铺到考场机器上的文件"。
 
     返回 {相对路径: bytes 或 None}，None 表示这是个空文件夹 ——
     **空文件夹必须单独列出来**：「在『会徽』文件夹中新建……」这类题，
     会徽本身就是空的，漏了它学生打开就找不到地方。
+
+    folder 只给网页题用：它的文件统一放进「网页」文件夹（见 WEB_DIR）。
     """
     out: dict[str, bytes | None] = {}
     if kind == "win":
@@ -122,8 +130,10 @@ def _files_of(kind: str, env: dict) -> dict:
                 text = str((node or {}).get("content") or "")
                 out[rel] = text.encode("gbk", "replace") if text else b""
     elif kind == "html":
+        base = (folder or WEB_DIR).strip("/")
+        out[base] = None                       # 一个文件都没配时也得有这个文件夹
         for name, text in (env.get("files") or {}).items():
-            out[str(name)] = str(text or "").encode("utf-8")
+            out[f"{base}/{str(name).lstrip('/')}"] = str(text or "").encode("utf-8")
     elif kind == "wps":
         # 仿真环境里文档是一串段落，不是文件。桌面端要让学生在**真 WPS 里**做，
         # 就得先有个真文件 —— 这里把段落写成标准 .docx。
@@ -160,6 +170,11 @@ def build_package(db: Session, exam: Exam, server: str = "") -> bytes:
     paper, files, logical_root = [], {}, ""
     pics: dict[str, bytes] = {}
     no = 0
+    # 一张卷子上不止一道网页题时，各给一个子文件夹 —— 否则两道题的
+    # index.html 会盖在一起，交上去的源码是同一份，必有一道判错
+    webs = sum(1 for g in groups for q in g["items"]
+               if (q.get("sim") or {}).get("kind") == "html")
+    web_no = 0
     for g in groups:
         for q in g["items"]:
             no += 1
@@ -184,14 +199,18 @@ def build_package(db: Session, exam: Exam, server: str = "") -> bytes:
                     # 没见过的题型，桌面端不敢瞎判，题目照出、按人工评阅走
                     row["sim"] = {"kind": kind or "", "open": "", "manual": True}
                 else:
-                    got = _files_of(kind, sim.get("env") or {})
+                    web = ""
+                    if kind == "html":
+                        web_no += 1
+                        web = WEB_DIR if webs <= 1 else f"{WEB_DIR}/第{web_no}题"
+                    got = _files_of(kind, sim.get("env") or {}, web)
                     files.update(got)
                     logical_root = logical_root or _root_of(kind, sim.get("env") or {})
                     first = sorted(got)[0] if got else ""
                     row["sim"] = {
                         "kind": kind,
-                        # win 题打开所在文件夹，wps/html 题直接打开那个文件
-                        "open": first.split("/")[0] if kind == "win" else first,
+                        # win / html 题打开所在文件夹，wps 题直接打开那个文档
+                        "open": web or (first.split("/")[0] if kind == "win" else first),
                         # 三类都能自动判分了：win 看文件夹快照、wps 看文档格式、
                         # html 看源码。manual 只留给没配仿真环境的题
                         "manual": False,

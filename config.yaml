@@ -58,7 +58,10 @@ paper:
   #   count   抽几道（组卷页上还能临时改）
   #   scopes  限定知识范围，留空 = 不限。名字要和 bank.scopes 完全一致
   #   prefer  long_or_image = 优先挑长题干或带图的题（不够时用普通题补齐，不会空着）
-  #   label   组卷页上这一组的说明文字
+  #   sim_kinds 限定操作题的类别，留空 = 不限。和 scopes 是两回事 ——
+  #           同一个知识范围里既有网页文件题也有拖拽题，光靠 scopes 分不开。
+  #             win  Windows 系统操作   wps  WPS 文字      html 网页文件
+  #             ai   AI 工具对话        drag 拖拽类（热区、流程图）
   #
   # score 怎么摊到每道题：weight_by_difficulty: true 按题目难度（1~5）分，
   # 并保证**操作题的分高于同一大题里任何一道客观题**；false 则平均分，
@@ -81,9 +84,9 @@ paper:
     - name: "操作题"
       score: 20
       slots: # 三道题的顺序钉死：Windows → WPS 文字 → 人工智能
-        - { type: "操作题", count: 1, scopes: ["Windows系统操作"], label: "Windows 操作" }
-        - { type: "操作题", count: 1, scopes: ["WPS文字操作"], label: "WPS 文字" }
-        - { type: "操作题", count: 1, scopes: ["人工智能"], label: "人工智能" }
+        - { type: "操作题", count: 1, scopes: ["Windows系统操作"] }
+        - { type: "操作题", count: 1, scopes: ["WPS文字操作"] }
+        - { type: "操作题", count: 1, scopes: ["人工智能"] }
 
     - name: "算法与程序设计"
       score: 10
@@ -93,7 +96,6 @@ paper:
             count: 3,
             scopes: ["Python编程基础"],
             prefer: "long_or_image",
-            label: "长题干或带图的选择题",
           }
 
     - name: "互联网原理与创新"
@@ -104,19 +106,21 @@ paper:
             count: 3,
             scopes: ["计算机网络基础"],
             prefer: "long_or_image",
-            label: "长题干或带图的选择题",
           }
+        # 这个大题的操作题**只出拖拽类（热区、流程图）**。同属"计算机网络基础"
+        # 的网页文件题要在真机上建文件夹、改源码，和本大题考的"原理与创新"
+        # 不是一回事，出在这儿学生会当场卡住。
         - {
             type: "操作题",
             count: 3,
             scopes: ["计算机网络基础"],
-            label: "计算机网络基础操作题",
+            sim_kinds: ["drag"],
           }
 
     - name: "物联网实践与探索"
       score: 10
       slots:
-        - { type: "操作题", count: 2, scopes: ["物联网"], label: "物联网操作题" }
+        - { type: "操作题", count: 2, scopes: ["物联网"] }
         - { type: "选择题", count: 3, scopes: ["物联网"] }
 
 exam:

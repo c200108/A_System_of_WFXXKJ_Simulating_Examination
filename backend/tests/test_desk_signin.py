@@ -54,8 +54,9 @@ def lab(client, auth):
         "type": "操作题", "stem": "在 lab01 下新建「上交」文件夹。", "answer": "略",
         # 知识范围要挑**卷面结构里给操作题留了槽位**的那几个（见 config.yaml 的
         # sections），否则必出题没地方放，整个组卷会以「抽不到题目」失败。
+        # 「计算机网络基础」那个槽位只收拖拽题（sim_kinds），win 题进不去。
         # 槽位是全局的，所以下面组完卷立刻把「必出」摘掉。
-        "scope": "计算机网络基础", "sim_task_id": task["id"], "is_pinned": True, "options": [],
+        "scope": "物联网", "sim_task_id": task["id"], "is_pinned": True, "options": [],
     }, headers=auth).json()
 
     paper = client.post("/api/papers/generate", json={

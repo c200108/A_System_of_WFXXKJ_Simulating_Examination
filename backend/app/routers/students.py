@@ -43,7 +43,7 @@ from ..security import (
 from ..routers.take import _submit_out as submit_out
 from ..services.exam import submission_scores
 from ..services import roster
-from ..services.exam import grade, group_items, load_items, strip_answers
+from ..services.exam import grade, group_items, load_items, manual_types, strip_answers
 # 名单解析和入库都在 services/roster.py，上传表格和粘贴名单共用那一套。
 # 这里只保留单个增改用得到的几个小工具。
 from ..services.roster import STUDENT_NO_RE, norm_gender
@@ -275,6 +275,101 @@ def student_submit(
     return submit_out(exam, result).model_dump()
 
 
+def _mine_text(item: dict, raw: str) -> str:
+    """把学生交上去的东西变成一句人看得懂的话。
+
+    操作题交的是一份终态（文件夹快照、文档段落模型、网页源码），几十 KB 的
+    JSON —— 原样摆在回看页上没人看得懂，还白白多传一份。AI 工具题是例外：
+    学生交的就是他问出去的那几句话，那恰恰是"我做了什么"。
+    """
+    text = (raw or "").strip()
+    if item.get("type") not in manual_types():
+        return text
+    if (item.get("sim") or {}).get("kind") == "ai":
+        try:
+            msgs = ((json.loads(text) or {}).get("state") or {}).get("messages") or []
+        except (ValueError, AttributeError):
+            msgs = []
+        said = [str(m.get("text") or "").strip() for m in msgs if m.get("role") == "user"]
+        return "\n".join(x for x in said if x) or "（没有提交对话）"
+    return "已在本机完成操作，系统已记录操作结果" if text else "（未作答）"
+
+
+@student_api.get("/exams/{exam_id}/review", summary="回看自己交的卷")
+def student_review(
+    exam_id: int, me: Student = Depends(get_current_student), db: Session = Depends(get_db)
+):
+    """交过卷之后回看自己写了什么。
+
+    **默认只给"我选了什么"，不给对错。** 考试常常分批考（上午一个班、下午
+    一个班），先考完的学生若能看到对错，题目当场就传出去了。所以：
+
+        show_answer 关着  ——  只有自己的作答，没有对错、没有每题得分、
+                              也没有操作题的检查项（检查项本身就是答案）
+        show_answer 开着  ——  每题正确与否、每题得分、正确答案一起给
+
+    总分另走 `show_score`，和考试列表、交卷页一个口径。
+
+    老师评阅完操作题，这里读到的分数当场就变 —— 明细是从这份答卷本身读的，
+    不是交卷那一刻的快照。
+    """
+    exam = _exam_for(db, me, exam_id)
+    sub = db.scalar(
+        select(ExamSubmission)
+        .where(ExamSubmission.exam_id == exam.id, ExamSubmission.student_id == me.id)
+        .order_by(ExamSubmission.id.desc())
+    )
+    if sub is None:
+        raise HTTPException(status_code=404, detail="你还没交过这场考试")
+
+    try:
+        rows = json.loads(sub.detail_json or "[]") or []
+    except ValueError:
+        rows = []
+    detail = {str(d.get("id")): d for d in rows if isinstance(d, dict)}
+
+    no = 0
+    groups = []
+    # 和取卷同一个函数：答案和检查点在 strip_answers() 那一步就没了
+    for g in strip_answers(group_items(load_items(db, exam.paper))):
+        got = []
+        for q in g["items"]:
+            no += 1
+            d = detail.get(str(q["id"])) or {}
+            row = {
+                "id": q["id"],
+                "no": no,
+                "type": q["type"],
+                "stem": q.get("stem", ""),
+                "options": q.get("options") or [],
+                "image_url": q.get("image_url") or "",
+                "score": int(q.get("score") or 0),
+                "mine": _mine_text(q, d.get("mine", "")),
+            }
+            if exam.show_answer:
+                row["ok"] = d.get("ok")
+                row["earned"] = d.get("earned")
+                row["answer"] = d.get("answer") or ""
+                row["checks"] = [
+                    {"desc": str(c.get("desc") or ""), "ok": bool(c.get("ok"))}
+                    for c in (d.get("checks") or [])
+                ]
+            got.append(row)
+        groups.append({"name": g.get("name") or "", "items": got})
+
+    full = (sub.objective_total or 0) + (sub.subjective_total or 0)
+    return {
+        "title": exam.title,
+        "submitted_at": sub.submitted_at,
+        "show_score": exam.show_score,
+        "show_answer": exam.show_answer,
+        "score": sub.score if exam.show_score else None,
+        "full_score": full if exam.show_score else None,
+        "pending_manual": bool(sub.subjective_total and sub.graded_at is None),
+        "groups": groups,
+    }
+
+
 @student_api.get("/typing/records", summary="我的打字练习记录")
 def student_typing_records(
     limit: int = Query(50, ge=1, le=200),
@@ -300,6 +395,34 @@ def student_typing_records(
         }
         for r in rows
     ]
+
+
+def _avg_score(db: Session, me: Student, exams: list[Exam]) -> int | None:
+    """这个学生所有考试的平均分，折成百分制。
+
+    **为什么折百分制**：卷面总分各场不一样（100 分的期末、50 分的小测），
+    把 92 和 46 直接平均出来的数谁也看不懂。折成得分率再平均，才是一句
+    "我平时大概考多少"。
+
+    **口径跟着「交卷后看分数」走**：老师关掉那个开关的考试不计入 —— 否则
+    学生从平均分里就能倒推出被藏起来的那一场考了多少。
+
+    老师评阅完操作题，`score` 当场就变，所以这个平均分是**刷新即更新**的。
+    """
+    allowed = {e.id for e in exams if e.show_score}
+    if not allowed:
+        return None
+    rates = []
+    for s in db.scalars(
+        select(ExamSubmission).where(
+            ExamSubmission.student_id == me.id,
+            ExamSubmission.exam_id.in_(allowed),
+        )
+    ):
+        full = (s.objective_total or 0) + (s.subjective_total or 0)
+        if full > 0:
+            rates.append((s.score or 0) / full * 100)
+    return round(sum(rates) / len(rates)) if rates else None
 
 
 @student_api.get("/home", response_model=StudentHomeOut, summary="首页要的汇总数字")
@@ -328,6 +451,7 @@ def student_home(me: Student = Depends(get_current_student), db: Session = Depen
         student=StudentOut.model_validate(me),
         exam_total=len(exams),
         exam_done=done,
+        exam_avg_score=_avg_score(db, me, exams),
         typing_count=typing_count,
         typing_best_speed=int(best),
         typing_avg_accuracy=round(avg_acc),

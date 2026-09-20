@@ -10,7 +10,7 @@ from ..database import get_db
 from ..deps import get_current_user
 from ..models import Paper, PaperItem, Question, User
 from ..schemas import PaperGenerateIn, PaperGenerateOut, PaperOut
-from ..services.blueprint import slot_key
+from ..services.blueprint import slot_hint, slot_key, slot_pool
 from ..services.export import questions_to_xlsx, student_html
 from ..services.paper import build_by_sections, build_paper
 from ..services.sampler import allocate
@@ -174,21 +174,16 @@ def _preview_sections(body: PaperGenerateIn, db: Session) -> dict:
             want = slot.count if want is None else max(0, int(want))
             if not want:
                 continue
-            stmt = select(Question).where(
-                Question.is_deleted.is_(False), Question.type == slot.type
-            )
-            wanted = slot.scopes or body.scopes
-            if wanted:
-                stmt = stmt.where(Question.scope.in_(wanted))
-            pool = list(db.scalars(stmt))
-            if body.require_answer or slot.type not in site.exam.manual_types:
-                pool = [q for q in pool if (q.answer or "").strip()]
+            # **和真正抽题用同一个函数。** 自己再写一遍筛选条件的话，多一个
+            # 筛选维度（比如"只要拖拽题"）就会漏掉一处：预览说够，组卷说不够。
+            pool = slot_pool(db, slot, scopes_filter=body.scopes,
+                             require_answer=body.require_answer)
 
             have = min(want, len(pool))
             want_sum += want
             have_sum += have
             if have < want:
-                where = f"「{sec.name}」" + (f"·{slot.label}" if slot.label else "")
+                where = f"「{sec.name}」·{slot_hint(slot)}"
                 shortfall.append(f"{where}要 {want} 道，只有 {len(pool)} 道可选")
             # 走和真正抽题同一个名额分配函数。不能直接数 pool 的前 have 条 ——
             # 那是按 id 排的，不限范围的大题会显示成「全是 Python 编程基础」，

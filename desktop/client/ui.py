@@ -263,6 +263,7 @@ class ShellFrame(ttk.Frame):
         self.app = app
         self.page = page
         self.body = None
+        self.reviewing: dict = {}          # 正在回看哪一场（"review" 页用）
         self._build()
         self.go(page)
 
@@ -302,22 +303,43 @@ class ShellFrame(ttk.Frame):
         self.refresh_btn = tk.Button(top, text="⟳ 刷新", font=(FONT, 10), relief="groove",
                                      cursor="hand2", command=self.refresh)
         self.refresh_btn.pack(side="right", padx=16, pady=9)
+        # 回看页上才出现：回到考试列表
+        self.back_btn = tk.Button(top, text="← 返回", font=(FONT, 10), relief="groove",
+                                  cursor="hand2", command=lambda: self.go("exam"))
         self.hint = tk.Label(top, text="", bg=CARD, fg=GRAY, font=(FONT, 9))
         self.hint.pack(side="right")
 
         self.holder = tk.Frame(right, bg=BG)
         self.holder.pack(fill="both", expand=True)
 
-    def go(self, key: str):
+    def go(self, key: str, exam: dict | None = None):
+        """换页。`review` 是「考试」下面的一层，不在侧边栏上单列。
+
+        刷新走的也是这里，所以**回看页刷新一次就能看到老师刚批出来的分**。
+        """
         self.page = key
+        if key == "review":
+            self.reviewing = exam or self.reviewing
+        else:
+            self.reviewing = {}
+        lit = "exam" if key == "review" else key
         for k, b in self.tabs.items():
-            b.config(bg=SIDE_ON if k == key else SIDE,
-                     fg="white" if k == key else "#cdd8e4")
-        self.title_lbl.config(text=dict((k, n) for k, _i, n in self.PAGES)[key])
+            b.config(bg=SIDE_ON if k == lit else SIDE,
+                     fg="white" if k == lit else "#cdd8e4")
+        names = dict((k, n) for k, _i, n in self.PAGES)
+        self.title_lbl.config(
+            text=names[lit] + (f"　·　回看：{self.reviewing.get('title', '')}"
+                               if key == "review" else ""))
+        self.back_btn.pack_forget()
+        if key == "review":
+            self.back_btn.pack(side="right", padx=(0, 6), pady=9)
         if self.body:
             self.body.destroy()
-        self.body = {"home": HomePage, "exam": ExamListPage,
-                     "typing": TypingPage}[key](self.holder, self.app)
+        if key == "review":
+            self.body = ReviewPage(self.holder, self.app, self.reviewing)
+        else:
+            self.body = {"home": HomePage, "exam": ExamListPage,
+                         "typing": TypingPage}[key](self.holder, self.app)
         self.body.pack(fill="both", expand=True)
 
     def refresh(self):
@@ -379,10 +401,15 @@ class HomePage(Page):
                          f"{who.get('student_class', '')}",
                  bg=CARD, fg=GRAY, font=(FONT, 10)).pack(anchor="w", padx=16, pady=(0, 14))
 
+        # 「已交卷」换成「平均分」：交没交卷，下面的考试列表上一眼就看得见，
+        # 首页再数一遍没什么用；学生真正想知道的是"我平时考多少"。
+        # 平均分**折成百分制**（各场卷面总分不一样），老师批完操作题，
+        # 点一下刷新这个数就变。
+        avg = got.get("exam_avg_score")
         nums = tk.Frame(self.box, bg=BG)
         nums.pack(fill="x", pady=4)
         for label, value in (("能参加的考试", got.get("exam_total", 0)),
-                             ("已交卷", got.get("exam_done", 0)),
+                             ("平均分", f"{avg} 分" if avg is not None else "—"),
                              ("打字练习", got.get("typing_count", 0)),
                              ("最快速度", f"{got.get('typing_best_speed', 0)} 字/分"),
                              ("平均正确率", f"{got.get('typing_avg_accuracy', 0)}%")):
@@ -469,12 +496,12 @@ class ExamListPage(Page):
             bits = [f"{e.get('total', 0)} 题"]
             if e.get("submitted"):
                 bits.append("已交卷")
-                if e.get("score") is not None:
-                    bits.append(f"得分 {e['score']}/{e.get('full_score', '')}")
-                elif not e.get("show_score"):
+                if e.get("submitted_at"):
+                    bits.append(str(e["submitted_at"])[:16].replace("T", " "))
+                if e.get("score") is None and not e.get("show_score"):
                     bits.append("成绩由老师公布")
                 if e.get("pending_manual"):
-                    bits.append("操作题待评阅")
+                    bits.append("操作题待老师评阅")
             tk.Label(left, text="　·　".join(bits), bg=CARD, fg=GRAY,
                      font=(FONT, 9), anchor="w").pack(fill="x")
 
@@ -485,8 +512,30 @@ class ExamListPage(Page):
                           width=12, command=lambda x=e: self.start(x)
                           ).pack(side="right", padx=16)
             else:
-                tk.Label(c, text="已交卷", bg=CARD, fg=GREEN,
-                         font=(FONT, 11, "bold")).pack(side="right", padx=26)
+                # 交过卷就不该再有「开始考试」—— 点下去只会撞一个 409。
+                # 换成「查看」：看自己写了什么，对错要等老师放开才显示。
+                tk.Button(c, text="查 看", font=(FONT, 11, "bold"), relief="groove",
+                          cursor="hand2", width=12,
+                          command=lambda x=e: self.app.frame.go("review", x)
+                          ).pack(side="right", padx=16)
+            self._score_badge(c, e)
+
+    def _score_badge(self, card, e: dict):
+        """卷面右边那个分数。**考完就能看见自己考了多少**，这是学生最想知道的。
+
+        分数来自服务器，不是本机算的 —— 所以老师改完分，点一下刷新这里就跟着变。
+        老师关掉「交卷后看分数」时服务器不发分数，这里也就什么都不显示。
+        """
+        if not e.get("submitted") or e.get("score") is None:
+            return
+        box = tk.Frame(card, bg=CARD)
+        box.pack(side="right", padx=(0, 6))
+        pending = e.get("pending_manual")
+        tk.Label(box, text=str(e["score"]), bg=CARD, fg=AMBER if pending else GREEN,
+                 font=(FONT, 20, "bold")).pack()
+        full = e.get("full_score")
+        tk.Label(box, text=(f"/ {full} 分" if full else "分") + ("（未批完）" if pending else ""),
+                 bg=CARD, fg=GRAY, font=(FONT, 8)).pack()
 
     def start(self, e: dict):
         self.msg.pack(anchor="w", padx=28, pady=(14, 0))
@@ -503,6 +552,106 @@ class ExamListPage(Page):
                 return self.msg.config(text=err, fg=RED)
             self.app.start_exam(pack)
         in_thread(self, work, done)
+
+
+# ================================================================ 交卷后回看
+class ReviewPage(Page):
+    """交过卷之后回看自己写了什么。
+
+    **默认不显示对错。** 考试常常分批考（上午一个班、下午一个班），先考完的
+    学生要是能看到对错，题目当场就传出去了。对错、每题得分、正确答案一律等
+    老师在网页后台打开「考后可看答案」之后才出现 —— 而且是**服务器决定发不发**，
+    不是客户端自己藏起来：exe 能被反编译，藏在客户端等于没藏。
+    """
+
+    def __init__(self, parent, app, exam: dict):
+        self.exam = exam or {}
+        super().__init__(parent, app)
+
+    def load(self):
+        def done(got, err):
+            self.msg.config(text=err or "", fg=RED if err else GRAY)
+            if err:
+                return
+            self.msg.pack_forget()
+            self._show(got or {})
+        in_thread(self, lambda: api.review(self.app.server, self.app.token,
+                                           self.exam.get("id")), done)
+
+    def _show(self, got: dict):
+        head = self.card()
+        tk.Label(head, text=got.get("title") or self.exam.get("title", "考试"), bg=CARD,
+                 font=(FONT, 14, "bold"), anchor="w").pack(fill="x", padx=16, pady=(14, 2))
+        line = [f"交卷 {str(got.get('submitted_at') or '')[:16].replace('T', ' ')}"]
+        if got.get("score") is not None:
+            line.append(f"得分 {got['score']}/{got.get('full_score', '')}")
+        else:
+            line.append("成绩由老师统一公布")
+        if got.get("pending_manual"):
+            line.append("操作题还在评阅中，分数会变")
+        if not got.get("show_answer"):
+            line.append("老师尚未开放答案，本页只显示你的作答")
+        tk.Label(head, text="　·　".join(line), bg=CARD, fg=GRAY, font=(FONT, 9),
+                 anchor="w").pack(fill="x", padx=16, pady=(0, 12))
+
+        wrap = tk.Frame(self.box, bg=BG)
+        wrap.pack(fill="both", expand=True)
+        canvas = tk.Canvas(wrap, bg=BG, highlightthickness=0)
+        bar = tk.Scrollbar(wrap, command=canvas.yview)
+        inner = tk.Frame(canvas, bg=BG)
+        inner.bind("<Configure>",
+                   lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=inner, anchor="nw", width=760)
+        canvas.configure(yscrollcommand=bar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        bar.pack(side="right", fill="y")
+        canvas.bind_all("<MouseWheel>",
+                        lambda ev: canvas.yview_scroll(int(-ev.delta / 120), "units"))
+
+        for g in got.get("groups") or []:
+            if g.get("name"):
+                tk.Label(inner, text=g["name"], bg=BG, fg=BLUE,
+                         font=(FONT, 11, "bold"), anchor="w").pack(fill="x", pady=(10, 2))
+            for q in g.get("items") or []:
+                self._one(inner, q, bool(got.get("show_answer")))
+
+    def _one(self, parent, q: dict, told: bool):
+        c = tk.Frame(parent, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+        c.pack(fill="x", pady=3)
+        top = tk.Frame(c, bg=CARD)
+        top.pack(fill="x", padx=12, pady=(10, 0))
+        tk.Label(top, text=f"{q.get('no', '')}．{q.get('type', '')}", bg=CARD, fg=GRAY,
+                 font=(FONT, 9)).pack(side="left")
+        tk.Label(top, text=f"{q.get('score', 0)} 分", bg=CARD, fg=GRAY,
+                 font=(FONT, 9)).pack(side="right")
+        if told:
+            ok = q.get("ok")
+            mark = "✓ 正确" if ok else ("✗ 错误" if ok is False else "已评阅")
+            tk.Label(top, text=f"{mark}　得 {q.get('earned', 0)} 分", bg=CARD,
+                     fg=GREEN if ok else (RED if ok is False else AMBER),
+                     font=(FONT, 9, "bold")).pack(side="right", padx=10)
+
+        tk.Label(c, text=q.get("stem", ""), bg=CARD, font=(FONT, 11), anchor="w",
+                 justify="left", wraplength=700).pack(fill="x", padx=12, pady=(2, 4))
+        for o in q.get("options") or []:
+            tk.Label(c, text=f"{o.get('label', '')}．{o.get('content', '')}", bg=CARD,
+                     fg="#4a5563", font=(FONT, 10), anchor="w", justify="left",
+                     wraplength=690).pack(fill="x", padx=24)
+
+        mine = str(q.get("mine") or "").strip()
+        tk.Label(c, text="我的作答：" + (mine or "（未作答）"), bg=CARD,
+                 fg=BLUE if mine else GRAY, font=(FONT, 10, "bold"), anchor="w",
+                 justify="left", wraplength=700).pack(fill="x", padx=12, pady=(6, 0))
+        if told:
+            if q.get("answer"):
+                tk.Label(c, text="正确答案：" + str(q["answer"]), bg=CARD, fg=GREEN,
+                         font=(FONT, 10), anchor="w", justify="left",
+                         wraplength=700).pack(fill="x", padx=12)
+            for ck in q.get("checks") or []:
+                tk.Label(c, text=("　✓ " if ck.get("ok") else "　✗ ") + ck.get("desc", ""),
+                         bg=CARD, fg=GREEN if ck.get("ok") else RED, font=(FONT, 9),
+                         anchor="w", justify="left", wraplength=690).pack(fill="x", padx=12)
+        tk.Frame(c, bg=CARD, height=8).pack()
 
 
 # ================================================================ 打字练习

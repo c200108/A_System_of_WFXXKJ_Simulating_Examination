@@ -298,6 +298,96 @@ def test_home_counts(client, auth, exam):
     assert after["exam_total"] == before["exam_total"]
 
 
+def test_home_average_score(client, auth, exam):
+    """首页那个平均分：折成百分制，老师改完分刷新就变。
+
+    折百分制是因为各场卷面总分不一样（100 分的期末、50 分的小测），把两个
+    原始分直接平均出来的数没人看得懂。
+    """
+    hdr = _stoken(client, auth, no="20260171")
+    assert client.get("/api/student/home", headers=hdr).json()["exam_avg_score"] is None
+
+    paper = client.get(f"/api/student/exams/{exam['id']}/paper", headers=hdr).json()
+    ids = [q["id"] for g in paper["groups"] for q in g["items"]]
+    client.post(f"/api/student/exams/{exam['id']}/submit",
+                json={"answers": {str(i): "A" for i in ids}}, headers=hdr)
+
+    got = client.get("/api/student/home", headers=hdr).json()
+    assert isinstance(got["exam_avg_score"], int)
+    assert 0 <= got["exam_avg_score"] <= 100
+
+
+def test_paper_submitted_from_the_exe_lands_in_my_account(client, auth, exam):
+    """机房 exe 走的是免登录的那个交卷接口（补传时手上没有令牌，只有 .ans）。
+
+    交上来的学号在名单里，就要把卷子挂到那个账号名下 —— 不挂的话学生在自己的
+    「我的考试」里看不见自己刚交的卷：列表还显示「开始考试」，回看也说"你还
+    没交过这场考试"。
+    """
+    hdr = _stoken(client, auth, no="20260211")
+    res = client.post(f"/api/take/{exam['token']}/submit", json={
+        "student_name": "张三", "student_class": "七年级1班",
+        "student_no": "20260211", "answers": {}})
+    assert res.status_code == 200, res.text
+
+    mine = next(e for e in client.get("/api/student/exams", headers=hdr).json()
+                if e["id"] == exam["id"])
+    assert mine["submitted"], "免登录交的卷没认领到账号上"
+    assert client.get(f"/api/student/exams/{exam['id']}/review",
+                      headers=hdr).status_code == 200
+
+
+# ---------- 交卷后回看 ----------
+def test_review_needs_a_submission(client, auth, exam):
+    hdr = _stoken(client, auth, no="20260181")
+    assert client.get(f"/api/student/exams/{exam['id']}/review", headers=hdr).status_code == 404
+
+
+def test_review_shows_my_answers_but_not_right_or_wrong(client, auth, exam):
+    """**默认只给"我选了什么"，不给对错。**
+
+    考试常常分批考（上午一个班、下午一个班）。先考完的学生要是能看到对错，
+    题目当场就传出去了。所以对错、每题得分、正确答案一律跟着老师那个
+    「考后可看答案」开关走。
+    """
+    hdr = _stoken(client, auth, no="20260191")
+    paper = client.get(f"/api/student/exams/{exam['id']}/paper", headers=hdr).json()
+    ids = [q["id"] for g in paper["groups"] for q in g["items"]]
+    client.post(f"/api/student/exams/{exam['id']}/submit",
+                json={"answers": {str(ids[0]): "A"}}, headers=hdr)
+
+    res = client.get(f"/api/student/exams/{exam['id']}/review", headers=hdr)
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["show_answer"] is False
+    assert body["score"] is not None            # 总分照给，那归 show_score 管
+    rows = [q for g in body["groups"] for q in g["items"]]
+    assert len(rows) == len(ids)
+    mine = {q["id"]: q["mine"] for q in rows}
+    assert mine[ids[0]] == "A" and mine[ids[1]] == ""
+    for q in rows:
+        assert "ok" not in q and "answer" not in q and "earned" not in q, q
+    assert '"answer"' not in res.text
+
+
+def test_review_tells_all_once_the_teacher_opens_it(client, auth, exam):
+    """老师开了「考后可看答案」，才给每题对错、每题得分和正确答案。"""
+    two = client.post("/api/exams",
+                      json={"paper_id": exam["paper_id"], "show_score": True,
+                            "show_answer": True}, headers=auth).json()
+    hdr = _stoken(client, auth, no="20260201")
+    paper = client.get(f"/api/student/exams/{two['id']}/paper", headers=hdr).json()
+    ids = [q["id"] for g in paper["groups"] for q in g["items"]]
+    client.post(f"/api/student/exams/{two['id']}/submit",
+                json={"answers": {str(i): "A" for i in ids}}, headers=hdr)
+
+    body = client.get(f"/api/student/exams/{two['id']}/review", headers=hdr).json()
+    assert body["show_answer"] is True
+    rows = [q for g in body["groups"] for q in g["items"]]
+    assert all("ok" in q and "answer" in q and "earned" in q for q in rows)
+    assert any(q["ok"] for q in rows), "全选 A 总该对几道"
+
+
 # ---------- 改密码 ----------
 def test_change_own_password(client, auth):
     hdr = _stoken(client, auth, no="20260121")

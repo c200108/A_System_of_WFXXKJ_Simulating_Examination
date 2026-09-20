@@ -58,6 +58,22 @@ def has_scores(items: list[dict]) -> bool:
     return any(int(it.get("score") or 0) for it in items)
 
 
+def sim_kind_of(q: Question) -> str:
+    """这道操作题属于哪一类仿真：win / wps / html / ai，或者 drag。
+
+    判法和出卷、判分那条路**完全一致**（先看老师配的仿真任务，没配就按题干推），
+    所以组卷时筛出来的题，学生在考场上看到的就是那一类，不会出现"卷子上说是
+    网页题、客户端铺出来却是别的"。
+
+    `drag` 不是一种仿真环境，而是"没有仿真环境"——热区拖拽、流程图补全这类
+    题目现在就落在这儿。组卷配置里用它来指定"这一组只要拖拽类的题"。
+    """
+    if q.sim_task is not None:
+        return (q.sim_task.kind or "").strip() or "drag"
+    got = stem_rules.auto_sim(q.stem or "", q.scope or "")
+    return got["kind"] if got else "drag"
+
+
 def _item_from_row(item: PaperItem, q: Question) -> dict:
     """把试卷里的一题还原成完整结构（含打乱后的选项与答案）。"""
     snap = json.loads(item.snapshot_json) if item.snapshot_json else {}

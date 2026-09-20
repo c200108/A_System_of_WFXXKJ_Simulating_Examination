@@ -48,7 +48,9 @@ def desk_exam(client, auth):
         json={"type": "操作题", "stem": "在 win09 下新建「作业」文件夹，把「说明.txt」复制进去。",
               # 知识范围刻意不用「Windows系统操作」：那个必出题槽位被 test_sim
               # 占着，两边抢同一个槽，后跑的那个就进不了卷子。
-              "answer": "略", "scope": "计算机网络基础", "sim_task_id": task["id"],
+              # 也不能用「计算机网络基础」：那个槽位现在只收拖拽题（见
+              # config.yaml 的 sim_kinds），这道 win 题进不去，组卷会空。
+              "answer": "略", "scope": "物联网", "sim_task_id": task["id"],
               "is_pinned": True, "options": []},
         headers=auth,
     ).json()
@@ -120,6 +122,47 @@ def test_operation_question_tells_the_client_what_to_open(client, auth, desk_exa
     assert op["sim"]["kind"] == "win"
     assert op["sim"]["open"] == "win09"
     assert not op["sim"].get("manual")
+
+
+@pytest.fixture(scope="module")
+def web_exam(client, auth):
+    """一场带网页题的考试。网页题的文件要单独进「网页」文件夹。"""
+    task = client.post("/api/sims", json={
+        "kind": "html", "title": "网页题",
+        "env": {"files": {"index.html": "<html><title></title><body></body></html>",
+                          "style.css": "/* 样式 */"}},
+        "checks": [{"desc": "网页标题改成「校园网」", "score": 5,
+                    "assert": {"op": "title", "equals": "校园网"}}],
+    }, headers=auth).json()
+    q = client.post("/api/questions", json={
+        "type": "操作题", "stem": "把网页标题修改为“校园网”。", "answer": "略",
+        "scope": "物联网", "sim_task_id": task["id"], "is_pinned": True, "options": [],
+    }, headers=auth).json()
+    paper = client.post("/api/papers/generate", json={
+        "title": "网页题测验", "by_sections": True, "use_pinned": True, "save": True},
+        headers=auth).json()
+    client.put(f"/api/questions/{q['id']}", json={"is_pinned": False}, headers=auth)
+    exam = client.post("/api/exams", json={"paper_id": paper["paper_id"]},
+                       headers=auth).json()
+    return {"exam": exam, "qid": q["id"]}
+
+
+def test_web_question_gets_its_own_folder(client, auth, web_exam):
+    """网页题的文件铺在「网页」文件夹里，「打开」按钮打开的也是这个文件夹。
+
+    早先是直接铺在考试文件夹根上，两个毛病：学生点开要在一堆别的题的素材里
+    翻 index.html；一张卷子上两道网页题时，后一道的 index.html 会把前一道盖掉，
+    交上去的源码是同一份，必有一道判错。
+    """
+    raw = client.get(f"/api/desk/export/{web_exam['exam']['id']}", headers=auth).content
+    _, paper, names, _ = open_pkg(raw)
+    op = next(q for q in paper if str(q["id"]) == str(web_exam["qid"]))
+    assert op["sim"]["kind"] == "html"
+    assert op["sim"]["open"] == "网页"
+    assert "files/网页/index.html" in names
+    assert "files/网页/style.css" in names
+    # 根目录上不该再有这两个文件
+    assert "files/index.html" not in names
 
 
 def test_server_url_can_be_given_at_export_time(client, auth, desk_exam):

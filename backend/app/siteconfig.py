@@ -48,7 +48,16 @@ class PaperSlotConf(_Base):
     scopes: list[str] = Field(default_factory=list)  # 限定知识范围，留空 = 不限
     # long_or_image：优先挑长题干或带图的题（抽不够时仍会用普通题补齐，不会空着）
     prefer: Literal["", "long_or_image"] = ""
-    label: str = ""                              # 组卷界面上这一组的说明文字
+    # 限定操作题的类别，留空 = 不限。可填：
+    #   win  Windows 系统操作    wps  WPS 文字     html 网页文件
+    #   ai   AI 工具对话         drag 拖拽类（热区、流程图）—— 即没有仿真环境的那些
+    # **和知识范围是两回事**：同一个知识范围里既有网页文件题也有拖拽题，
+    # 「互联网原理与创新」要的是后者，光靠 scopes 分不开。
+    sim_kinds: list[str] = Field(default_factory=list)
+    # 组卷界面上这一组的说明文字。**界面已经不显示它了** —— 题型、知识范围、
+    # 类别都各是一个标签，再跟一句"Windows 操作"纯属重复。字段留着是为了
+    # 已经写了 label 的 config.yaml 还能照常加载（这里 extra="forbid"）。
+    label: str = ""
 
 
 class PaperSectionConf(_Base):
@@ -69,31 +78,34 @@ def _default_sections() -> list[PaperSectionConf]:
     不用动代码。
     """
     raw = [
-        ("选择题", 30, False, [("选择题", 30, [], "", "")]),
-        ("判断题", 20, False, [("判断题", 10, [], "", "")]),
+        ("选择题", 30, False, [("选择题", 30, [], "", [])]),
+        ("判断题", 20, False, [("判断题", 10, [], "", [])]),
         (
             "操作题",
             20,
             True,
             [
-                ("操作题", 1, ["Windows系统操作"], "", "Windows 操作"),
-                ("操作题", 1, ["WPS文字操作"], "", "WPS 文字"),
-                ("操作题", 1, ["人工智能"], "", "人工智能"),
+                ("操作题", 1, ["Windows系统操作"], "", []),
+                ("操作题", 1, ["WPS文字操作"], "", []),
+                ("操作题", 1, ["人工智能"], "", []),
             ],
         ),
         (
             "算法与程序设计",
             10,
             True,
-            [("选择题", 3, ["Python编程基础"], "long_or_image", "长题干或带图的选择题")],
+            [("选择题", 3, ["Python编程基础"], "long_or_image", [])],
         ),
         (
             "互联网原理与创新",
             10,
             True,
             [
-                ("选择题", 3, ["计算机网络基础"], "long_or_image", "长题干或带图的选择题"),
-                ("操作题", 3, ["计算机网络基础"], "", "计算机网络基础操作题"),
+                ("选择题", 3, ["计算机网络基础"], "long_or_image", []),
+                # 这个大题的操作题**只出拖拽类（热区、流程图）**。同属「计算机
+                # 网络基础」的网页文件题要在真机上建文件夹、改源码，和本大题
+                # 考的"原理与创新"不是一回事，出在这儿学生会当场卡住。
+                ("操作题", 3, ["计算机网络基础"], "", ["drag"]),
             ],
         ),
         (
@@ -101,8 +113,8 @@ def _default_sections() -> list[PaperSectionConf]:
             10,
             True,
             [
-                ("操作题", 2, ["物联网"], "", "物联网操作题"),
-                ("选择题", 3, ["物联网"], "", ""),
+                ("操作题", 2, ["物联网"], "", []),
+                ("选择题", 3, ["物联网"], "", []),
             ],
         ),
     ]
@@ -112,8 +124,9 @@ def _default_sections() -> list[PaperSectionConf]:
             score=score,
             weight_by_difficulty=by_diff,
             slots=[
-                PaperSlotConf(type=t, count=c, scopes=list(sc), prefer=pf, label=lb)
-                for t, c, sc, pf, lb in slots
+                PaperSlotConf(type=t, count=c, scopes=list(sc), prefer=pf,
+                              sim_kinds=list(ks))
+                for t, c, sc, pf, ks in slots
             ],
         )
         for name, score, by_diff, slots in raw

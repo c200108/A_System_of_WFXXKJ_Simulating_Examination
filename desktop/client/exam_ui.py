@@ -210,7 +210,8 @@ class ExamFrame(ttk.Frame):
                  font=(FONT, 9), anchor="w").pack(fill="x", padx=14)
         how = {"win": "在资源管理器里按题目要求操作文件和文件夹。",
                "wps": "用 WPS 文字打开这个文档，按要求改好后**原名原位置保存**。",
-               "html": "用记事本打开网页文件，按要求改好后保存。"}
+               "html": "打开「网页」文件夹，用记事本改里面的 index.html 和 style.css，"
+                       "按要求改好后原名保存。"}
         note = (how.get(sim.get("kind"), "按题目要求操作。")
                 + "完成后回到本窗口继续答题。"
                 + ("这道题由老师评阅。" if sim.get("manual")
