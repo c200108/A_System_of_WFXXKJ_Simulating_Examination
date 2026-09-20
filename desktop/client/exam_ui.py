@@ -459,7 +459,7 @@ class DoneFrame(ttk.Frame):
         wrap = tk.Frame(self, bg=BG)
         wrap.pack(fill="both", expand=True)
 
-        tk.Label(wrap, text="✓", bg=BG, fg=GREEN, font=(FONT, 46)).pack(pady=(52, 0))
+        tk.Label(wrap, text="√", bg=BG, fg=GREEN, font=(FONT, 46)).pack(pady=(52, 0))
         tk.Label(wrap, text="交卷成功" + ("（时间到，自动交卷）" if auto else ""),
                  bg=BG, font=(FONT, 18, "bold")).pack(pady=6)
         tk.Label(wrap, text=f"本机备份：{path.name}　"
@@ -470,12 +470,12 @@ class DoneFrame(ttk.Frame):
         box = tk.Frame(wrap, bg=CARD, highlightbackground=LINE, highlightthickness=1)
         box.pack(pady=16, ipadx=20, ipady=12)
         if uploaded:
-            tk.Label(box, text="✓ 已上传到教师端", bg=CARD, fg=GREEN,
+            tk.Label(box, text="√ 已上传到教师端", bg=CARD, fg=GREEN,
                      font=(FONT, 12, "bold")).pack()
             tk.Label(box, text=msg or "老师那边已经能看到你的答卷", bg=CARD, fg=GRAY,
                      font=(FONT, 9), wraplength=540, justify="left").pack(pady=(3, 0))
         elif app.server:
-            tk.Label(box, text="⚠ 答卷已存到本机，但没能上传", bg=CARD, fg=AMBER,
+            tk.Label(box, text="※ 答卷已存到本机，但没能上传", bg=CARD, fg=AMBER,
                      font=(FONT, 12, "bold")).pack()
             tk.Label(box, text=(msg or "") + "　卷子没丢，网络恢复后可以补传。请举手告诉监考老师。",
                      bg=CARD, fg=GRAY, font=(FONT, 9), wraplength=540,
@@ -494,7 +494,7 @@ class DoneFrame(ttk.Frame):
             tk.Label(wrap, text="考试文件夹已自动清空，可以直接关机或交给下一位考生。",
                      bg=BG, fg=GRAY, font=(FONT, 9)).pack()
         else:
-            tk.Label(wrap, text="⚠ 考试文件夹没清干净，还剩：" + "、".join(left or []),
+            tk.Label(wrap, text="※ 考试文件夹没清干净，还剩：" + "、".join(left or []),
                      bg=BG, fg=AMBER, font=(FONT, 9), wraplength=560,
                      justify="left").pack()
             tk.Button(wrap, text="再清一次", font=(FONT, 9), relief="groove",

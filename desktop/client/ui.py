@@ -6,7 +6,7 @@
 同一批学生，一会儿在家用网页、一会儿在机房用 exe，两边的菜单、页面、说法都
 对得上才不会懵。所以这里照搬网页端学生平台的结构：
 
-    左边侧边栏   🏠 首页    📝 考试    ⌨ 打字练习
+    左边侧边栏   ◎ 首页    ◆ 考试    ★ 打字练习
     右边内容区   打开默认停在首页
     顶栏         姓名班级 · 刷新 · 退出登录
 
@@ -35,7 +35,7 @@ from . import api, cleanup, package, snapshot, states, store
 from .exam_ui import DoneFrame, ExamFrame
 from .shell import (AMBER, APP_NAME, BG, BLUE, CARD, CLIENT_VER, FONT, GRAY,
                     GREEN, LINE, RED, baked_server, build_stamp, in_thread,
-                    server_from_name)
+                    server_from_name, set_window_icon)
 
 
 def default_server() -> str:
@@ -147,9 +147,9 @@ class LoginFrame(ttk.Frame):
         def done(ok, _err):
             tail = f"　有 {len(pend)} 份答卷没传上去" if pend else ""
             if ok:
-                self.net_lbl.config(text=f"✓ 已连上教师端{tail}", fg=GREEN)
+                self.net_lbl.config(text=f"√ 已连上教师端{tail}", fg=GREEN)
             else:
-                self.net_lbl.config(text=f"✗ 连不上教师端，请叫监考老师{tail}", fg=AMBER)
+                self.net_lbl.config(text=f"× 连不上教师端，请叫监考老师{tail}", fg=AMBER)
         in_thread(self, lambda: api.ping(server), done)
 
     def do_retry(self):
@@ -256,7 +256,7 @@ def student_of(raw: dict) -> dict:
 class ShellFrame(ttk.Frame):
     """登录之后的壳子：左边侧边栏，右边内容区，**打开默认停在首页**。"""
 
-    PAGES = [("home", "🏠", "首页"), ("exam", "📝", "考试"), ("typing", "⌨", "打字练习")]
+    PAGES = [("home", "◎", "首页"), ("exam", "◆", "考试"), ("typing", "★", "打字练习")]
 
     def __init__(self, app, page: str = "home"):
         super().__init__(app.root, padding=0)
@@ -300,7 +300,7 @@ class ShellFrame(ttk.Frame):
         self.title_lbl = tk.Label(top, text="", bg=CARD, font=(FONT, 12, "bold"))
         self.title_lbl.pack(side="left", padx=18)
         # 刷新：考试是老师随时发布的，学生不该为了看见新考试去重开程序
-        self.refresh_btn = tk.Button(top, text="⟳ 刷新", font=(FONT, 10), relief="groove",
+        self.refresh_btn = tk.Button(top, text="刷 新", font=(FONT, 10), relief="groove",
                                      cursor="hand2", command=self.refresh)
         self.refresh_btn.pack(side="right", padx=16, pady=9)
         # 回看页上才出现：回到考试列表
@@ -351,7 +351,7 @@ class ShellFrame(ttk.Frame):
         self.hint.config(text="")
         self.update_idletasks()
         self.go(self.page)
-        self.refresh_btn.config(state="normal", text="⟳ 刷新")
+        self.refresh_btn.config(state="normal", text="刷 新")
         self.hint.config(text=f"已更新 {time.strftime('%H:%M:%S')}")
 
 
@@ -626,7 +626,7 @@ class ReviewPage(Page):
                  font=(FONT, 9)).pack(side="right")
         if told:
             ok = q.get("ok")
-            mark = "✓ 正确" if ok else ("✗ 错误" if ok is False else "已评阅")
+            mark = "√ 正确" if ok else ("× 错误" if ok is False else "已评阅")
             tk.Label(top, text=f"{mark}　得 {q.get('earned', 0)} 分", bg=CARD,
                      fg=GREEN if ok else (RED if ok is False else AMBER),
                      font=(FONT, 9, "bold")).pack(side="right", padx=10)
@@ -653,7 +653,7 @@ class ReviewPage(Page):
                          font=(FONT, 10), anchor="w", justify="left",
                          wraplength=700).pack(fill="x", padx=12)
             for ck in q.get("checks") or []:
-                tk.Label(c, text=("　✓ " if ck.get("ok") else "　✗ ") + ck.get("desc", ""),
+                tk.Label(c, text=("　√ " if ck.get("ok") else "　× ") + ck.get("desc", ""),
                          bg=CARD, fg=GREEN if ck.get("ok") else RED, font=(FONT, 9),
                          anchor="w", justify="left", wraplength=690).pack(fill="x", padx=12)
         tk.Frame(c, bg=CARD, height=8).pack()
@@ -798,6 +798,7 @@ class ExamApp:
         # 每次都不一样，一看就是内存被踩了）。正式跑的时候它就是 None。
         self.root = root or tk.Tk()
         self.root.title(APP_NAME)
+        set_window_icon(self.root)             # 窗口左上角换成校徽，别用 Tk 那根羽毛
         self.root.geometry("1000x680")
         self.root.minsize(900, 620)
         self.root.configure(bg=BG)
