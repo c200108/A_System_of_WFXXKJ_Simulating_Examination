@@ -20,7 +20,21 @@ from tkinter import filedialog, messagebox, ttk
 from . import api
 
 APP_NAME = "信息技术考试系统"
-CLIENT_VER = "2.0"
+CLIENT_VER = "2.1"
+
+
+def build_stamp() -> str:
+    """这个 exe 是什么时候打的。
+
+    机房里常常同时存在好几份 exe（ghost 过去的、U 盘拷的、上次留下的），
+    "修好的问题怎么还在"十有八九是跑了旧的那份。**把构建时间显示在登录页**，
+    一眼就能对上，不用去比文件日期。
+    """
+    try:
+        from . import _build
+        return _build.BUILT_AT
+    except Exception:                                   # noqa: BLE001
+        return "开发版"
 
 BG = "#f2f5fa"
 CARD = "#ffffff"

@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Exam, Paper, PaperItem, Question
 from ..siteconfig import site
-from . import sim
+from . import sim, stem as stem_rules
 from .paper import right_letter
 
 
@@ -84,6 +84,23 @@ def _item_from_row(item: PaperItem, q: Question) -> dict:
             "env": _json(q.sim_task.env_json, {}),
         })
         out["sim_checks"] = _json(q.sim_task.checks_json, [])
+    elif q.type in manual_types():
+        # **没配仿真任务的操作题：按题干当场推一份。**
+        #
+        # 这一支是整条链路的兜底。老师从旧版本导出数据再导进来时，
+        # sim_task_id 全是空 —— 只认库里配好的那份的话，所有操作题会一夜之间
+        # 变成"不能自动判分"，而且表面上看不出毛病：题目照出，就是没有文件、
+        # 没有检查点，学生打开一看是个空壳。
+        #
+        # 题干跟着题目走，导库不会丢。**所以以题干为准**，环境和检查点一起算，
+        # 出包和判分走的是同一个函数，两边不可能对不上。
+        auto = stem_rules.auto_sim(q.stem or "", q.scope or "")
+        if auto:
+            out["sim"] = sim.sim_for_student({
+                "id": 0, "kind": auto["kind"], "title": (q.stem or "")[:60],
+                "env": auto["env"],
+            })
+            out["sim_checks"] = auto["checks"]
     return out
 
 

@@ -41,8 +41,9 @@ from __future__ import annotations
 import argparse
 import shutil
 import subprocess
-import tempfile
 import sys
+import tempfile
+from datetime import datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -155,6 +156,13 @@ def main() -> int:
         return 1
 
     print("② 打包（第一次会慢一点）")
+    # 把构建时间写进去，登录页会显示 —— 机房里"修好的问题怎么还在"，
+    # 十有八九是跑了旧 exe，有这个戳一眼就能对上
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    (HERE / "client" / "_build.py").write_text(
+        "# -*- coding: utf-8 -*-\n"
+        '"""打包时自动生成，不要手改。"""\n'
+        f'BUILT_AT = "{stamp}"\n', encoding="utf-8")
     clear_dist()
     cmd = [py, "-m", "PyInstaller", "--clean", "--noconfirm",
            "--onedir" if args.onedir else "--onefile",
@@ -181,6 +189,7 @@ def main() -> int:
     print(f"\n完成：{exe}（{size:.1f} MB）")
     print(f"把整个「{DIST.name}」文件夹拷到机房机器上，双击 {NAME}.exe 即可。")
     print(f"目标系统：{floor_of((major, minor))}")
+    print(f"构建标记：{stamp}（登录页左下角会显示，用来分辨机房里跑的是哪一版）")
     return 0
 
 

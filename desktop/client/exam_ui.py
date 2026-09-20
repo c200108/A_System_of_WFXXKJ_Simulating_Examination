@@ -148,18 +148,25 @@ class ExamFrame(ttk.Frame):
         self.pic_label.config(image=self.pic)
         self.pic_label.pack(anchor="w", padx=18, pady=(0, 6))
 
+    # 「没作答」在界面上用的值。**不能用空串**：Tk 的 Radiobutton 有个"第三态"
+    # —— 绑定变量正好等于 `tristatevalue`（默认就是空串）时，它画成"值未定"的
+    # 样子，在 Windows 上就是一个实心黑点。于是学生一进题就看见四个选项全是
+    # 黑点，以为自己选过了。
+    NOT_ANSWERED = "\x00未作答"
+
     def _render_choice(self, q, qid):
-        """选择题 / 判断题。
+        """选择题 / 判断题。**没选时每个选项都得是空框。**
 
-        **没选时每个选项都得是空框。** Tk 的 Radiobutton 有个"第三态"：当绑定的
-        变量既不等于任何一个选项的值、又正好等于 `tristatevalue`（默认是空串）
-        时，它会画成"值未定"的样子 —— 在 Windows 上就是一个实心黑点。于是学生
-        一进题就看见四个选项全是黑点，以为自己选过了。
+        两道保险一起上：
 
-        把 `tristatevalue` 换成一个选项值里绝不会出现的字符，空串就只是"没选"，
-        四个框干干净净。
+          · 变量初值给一个选项里绝不会出现的值（不是空串）
+          · `tristatevalue` 也换掉
+
+        只做后者其实就够，但这一条坏掉的表现是"全班看见四个黑点"，而代码和
+        测试都看不出毛病 —— 多一道保险便宜。
         """
-        var = tk.StringVar(value=self.answers.get(qid, ""))
+        picked = self.answers.get(qid) or self.NOT_ANSWERED
+        var = tk.StringVar(value=picked)
         opts = q.get("options") or ([{"label": "A", "content": "正确"},
                                      {"label": "B", "content": "错误"}]
                                     if q["type"] == "判断题" else [])
@@ -167,7 +174,7 @@ class ExamFrame(ttk.Frame):
             tk.Radiobutton(
                 self.area, text=f"{o['label']}．{o['content']}", value=o["label"],
                 variable=var, bg=BG, font=(FONT, 11), anchor="w", justify="left",
-                wraplength=680, tristatevalue="\x00",
+                wraplength=680, tristatevalue="\x01",
                 command=lambda v=var, k=qid: self.answer(k, v.get()),
             ).pack(fill="x", pady=3)
 

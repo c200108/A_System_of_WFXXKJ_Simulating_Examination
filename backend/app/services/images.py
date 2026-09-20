@@ -28,6 +28,11 @@ from ..config import settings
 MAX_WIDTH = 700
 MAX_HEIGHT = 520
 
+# 减到多少色。256 色对图表、截图这类考试插图足够，体积能小一半还多
+PALETTE = 256
+# 减色结果超过这个大小才回头和原样 PNG 比一比（编码一次不便宜）
+COMPARE_ABOVE = 150 * 1024
+
 # Tkinter 原生就能显示的，不用转
 NATIVE = {".png", ".gif"}
 
@@ -80,8 +85,24 @@ def as_png(image_url: str) -> tuple[str, bytes] | None:
         with image_mod.open(io.BytesIO(raw)) as im:
             im = im.convert("RGB")
             im.thumbnail((MAX_WIDTH, MAX_HEIGHT))
+            # **必须减色。** PNG 是无损格式，照片直接转过去会比原 JPEG 大一倍
+            # ——实测四张图 194 KB 的 JPEG 变成 399 KB 的 PNG，一份考试包因此
+            # 涨到 900 KB，五十个学生同时开考要传 45 MB。
+            # 减到 256 色之后只剩 173 KB，比原图还小；考试插图基本是图表和
+            # 截图，肉眼看不出差别。
+            small = im.convert("P", palette=image_mod.ADAPTIVE, colors=PALETTE)
             buf = io.BytesIO()
-            im.save(buf, format="PNG", optimize=True)
-        return path.stem + ".png", buf.getvalue()
+            small.save(buf, format="PNG", optimize=True)
+            out = buf.getvalue()
+
+            # 万一减色反而更大（色块极多的图偶尔会），就用原样的 PNG。
+            # 只在减色结果仍然偏大时才比一次 —— PNG 编码不便宜，
+            # 小图上白编一遍是纯浪费
+            if len(out) > COMPARE_ABOVE:
+                plain = io.BytesIO()
+                im.save(plain, format="PNG", optimize=True)
+                if plain.tell() < len(out):
+                    out = plain.getvalue()
+        return path.stem + ".png", out
     except Exception:                                   # noqa: BLE001
         return None                      # 图坏了不能连累整场考试导不出来
