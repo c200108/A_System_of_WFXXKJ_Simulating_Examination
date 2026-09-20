@@ -15,6 +15,8 @@ data/
 # 备份产物
 backup/*.sql*
 backup/*.tar.gz
+# 仿真任务的备份里**带着检查点，那就是答案**，绝不能进版本库
+backup/*.json
 
 # data-export.sh 的产物：整库数据 + 明文口令，绝不能进版本库
 exam-data/
@@ -23,6 +25,10 @@ env.secrets
 
 # 配置里有密钥和密码，只提交 .env.example
 .env
+
+# 桌面客户端的打包产物；「答案包」里是学生的真实答卷，更不能进版本库
+desktop/发布/
+desktop/build/
 
 # 编辑器与系统
 .idea/
