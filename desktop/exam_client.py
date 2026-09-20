@@ -48,18 +48,18 @@ def selftest(report: Path, server: str = "") -> int:
         # ① 该导的模块一个不落（email 那次就是死在这一步）
         from client import api, package, snapshot, store, ui        # noqa: F401
         import tkinter, urllib.request, zipfile, json, hashlib      # noqa: F401
-        lines.append("✓ 模块都导进来了")
+        lines.append("√ 模块都导进来了")
 
         # ② 真建一次窗口再关掉：Tk 的运行时没打进去的话，这里会炸
         root = tkinter.Tk()
         root.withdraw()
         root.destroy()
-        lines.append("✓ Tkinter 能建窗口")
+        lines.append("√ Tkinter 能建窗口")
 
         # ③ 真发一次 HTTP：urllib 的依赖（email / http / ssl）缺一个都不行。
         #    连不上没关系 —— 要的是"能走到连不上"，而不是 ImportError
         api.ping("http://127.0.0.1:9")
-        lines.append("✓ 网络那条路走得通")
+        lines.append("√ 网络那条路走得通")
 
         # ④ 拍一次真快照 + 写一次 zip：判分和存卷全靠这两样
         import tempfile
@@ -70,11 +70,18 @@ def selftest(report: Path, server: str = "") -> int:
             shot = snapshot.snapshot(box)
             assert shot["fs"], "快照是空的"
             assert "a.txt" in str(shot["fs"]), "快照没看见文件"
-            lines.append(f"✓ 快照能拍（{shot['meta']['count']} 个对象）")
+            lines.append(f"√ 快照能拍（{shot['meta']['count']} 个对象）")
             zipfile.ZipFile(Path(tmp) / "t.zip", "w").close()
-            lines.append("✓ 能写压缩包")
+            lines.append("√ 能写压缩包")
 
-        # ⑤ 这台机器会连哪儿。**装机时最常被问的就是这一句。**
+        # ⑤ 校徽图标在不在包里。exe 自己的图标是打包时钉进去的，**窗口左上角
+        #    那个**要在运行时从附带文件里读 —— 源码下好好的、打包之后找不到，
+        #    是这类"附带文件"最典型的毛病（和当年排掉 email 一个性质）。
+        from client.shell import asset
+        lines.append("√ 窗口图标带上了" if asset("考试客户端.ico")
+                     else "※ 没找到窗口图标，窗口会用 Tk 默认的那根羽毛")
+
+        # ⑥ 这台机器会连哪儿。**装机时最常被问的就是这一句。**
         #    地址有三个来源（exe 文件名、本机记录、打包时烤进去的），机房里很容易
         #    对不上 —— 比如网管改了文件名，但这台机器上还留着上学期的记录。
         #    三个都写出来，谁盖住谁一目了然。
@@ -91,13 +98,13 @@ def selftest(report: Path, server: str = "") -> int:
         lines.append("自检通过")
         code = 0
 
-        # ⑤ 给了地址就真去连一次教师端。**连不上不算自检失败** ——
+        # ⑦ 给了地址就真去连一次教师端。**连不上不算自检失败** ——
         #    打包好不好和机房网通不通是两回事，混在一起会让人误判。
         if server:
             if api.ping(server):
-                lines.insert(-2, f"✓ 连得上教师端 {api.norm(server)}")
+                lines.insert(-2, f"√ 连得上教师端 {api.norm(server)}")
             else:
-                lines.insert(-2, f"✗ 连不上教师端 {api.norm(server)}"
+                lines.insert(-2, f"× 连不上教师端 {api.norm(server)}"
                                  "（地址写错了？教师机没开？防火墙？）")
     except Exception as exc:                            # noqa: BLE001
         import traceback
@@ -108,7 +115,9 @@ def selftest(report: Path, server: str = "") -> int:
 
     text = "\n".join(lines)
     try:
-        Path(report).write_text(text, encoding="utf-8")
+        # **GBK 落盘**：这份报告是给机房老师看的，考场机器是中文 Windows，
+        # 记事本双击打开 UTF-8 的 txt 会是一屏乱码（考试记录 CSV 同理）。
+        Path(report).write_text(text, encoding="gbk", errors="replace")
     except OSError:
         pass
     # **别指望 stdout。** 打包成窗口程序（--windowed）之后 sys.stdout 是 None，

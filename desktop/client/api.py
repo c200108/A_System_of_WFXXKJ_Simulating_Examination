@@ -33,8 +33,10 @@
 from __future__ import annotations
 
 import gzip
+import http.client
 import json
 import socket
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -43,15 +45,66 @@ from pathlib import Path
 TIMEOUT = 15
 PING_TIMEOUT = 4
 
-# **连接复用。** 默认每次请求都新建一条 TCP 连接，光握手就要一个来回 ——
-# 实测连学校服务器一个来回约 50 ms，而一次最轻的接口调用总共才 100 ms，
-# 也就是说**一半时间花在握手上**。一个学生从登录到进考试要打四五个接口，
-# 复用之后这部分全省掉。
+# ================================================================ 连接复用
 #
-# HTTPHandler 本身不带连接池，但 urllib 会在同一个 opener 上沿用
-# keep-alive 的底层连接（服务端 nginx 默认开着 keep-alive）。
-_opener = urllib.request.build_opener()
-_opener.addheaders = []            # 自己逐个请求加，别让它塞默认 User-Agent
+# **一半的等待花在握手上。** 实测连学校那台服务器（111.170.33.3:3315）：
+#
+#     TCP 建连                  约 35 ms
+#     一次最轻的接口调用        60 ~ 95 ms      ← 新连接，握手 + 一个来回
+#     同一条连接上再发一次      **33 ms**       ← 只剩一个来回
+#
+# 也就是说复用连接能让每次调用**直接减半**。学生从登录到进考试要打四五个接口，
+# 每换一页又是一次，省下来的是能感觉到的。
+#
+# 早先这里给请求加了个 `Connection: keep-alive` 头就以为完事了 —— **没用**：
+# urllib 每次 urlopen 都新建一个 HTTPConnection，头写得再好也照样重新握手。
+# 上面那组数就是这么量出来的（加了头的 urllib 仍然 61~93 ms）。要真复用，
+# 就得自己攥着连接。
+#
+# 规矩：**GET 才进池子，POST 一律用新连接。**
+# 池子里的连接可能已经被服务器按 keep-alive 超时悄悄关掉了，发出去才发现，
+# 这时重发一次是安全的 —— 对 GET 而言。POST 不行：交卷那一下要是服务器已经
+# 收到、只是回程断了，重发就成了交两次卷。多花一次握手，换交卷这件事不出岔子。
+_pool_lock = threading.Lock()
+_pool: dict = {}                   # {(scheme, host, port): 闲着的那条连接}
+
+
+def _take(scheme: str, host: str, port: int, timeout: int, reuse: bool):
+    """借一条连接。返回 (连接, 是不是从池子里拿的)。"""
+    if reuse:
+        with _pool_lock:
+            conn = _pool.pop((scheme, host, port), None)
+        if conn is not None:
+            conn.timeout = timeout
+            return conn, True
+    cls = http.client.HTTPSConnection if scheme == "https" else http.client.HTTPConnection
+    return cls(host, port or (443 if scheme == "https" else 80), timeout=timeout), False
+
+
+def _keep(scheme: str, host: str, port: int, conn) -> None:
+    """用完还回池子。同一个 (协议, 主机, 端口) 只留一条 —— 学生端是单人使用，
+    多留没意义，还会在换服务器之后攒下一堆没用的连接。"""
+    with _pool_lock:
+        old = _pool.get((scheme, host, port))
+        _pool[(scheme, host, port)] = conn
+    if old is not None and old is not conn:
+        _close(old)
+
+
+def _close(conn) -> None:
+    try:
+        conn.close()
+    except Exception:                                       # noqa: BLE001
+        pass
+
+
+def drop_connections() -> None:
+    """把攒着的连接全关掉。换服务器、退出登录时叫一声，别留着连旧地址的连接。"""
+    with _pool_lock:
+        conns = list(_pool.values())
+        _pool.clear()
+    for c in conns:
+        _close(c)
 
 
 class NotModified(Exception):
@@ -83,47 +136,73 @@ def norm(server: str) -> str:
     return s
 
 
+def _fail(exc: Exception) -> ApiError:
+    """把底层异常翻成一句学生和网管看得懂的话。"""
+    text = str(getattr(exc, "reason", exc) or exc)
+    # 证书问题单独说：学校自己签的证书很常见，报「CERTIFICATE_VERIFY_FAILED」
+    # 网管也不知道该查哪儿。直接告诉他怎么绕
+    if "CERTIFICATE" in text.upper() or "SSL" in text.upper():
+        return ApiError("教师端的 https 证书通不过校验（多半是学校自己签的）。"
+                        "请改用 http 地址，或者换成受信任的证书")
+    if isinstance(exc, (socket.timeout, TimeoutError)):
+        return ApiError("教师端响应超时")
+    return ApiError(f"连不上教师端（{text}）")
+
+
 def _request(url: str, body: dict | None = None, timeout: int = TIMEOUT,
              token: str = "", method: str = "", etag: str = "") -> bytes:
     data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
-    req = urllib.request.Request(url, data=data,
-                                 method=method or ("POST" if data is not None else "GET"))
+    verb = method or ("POST" if data is not None else "GET")
+    bits = urllib.parse.urlsplit(url)
+    path = bits.path + (f"?{bits.query}" if bits.query else "")
+
+    headers = {"Accept": "application/json",
+               # **主动要压缩。** 不发这个头，服务器就把 JSON 原样发过来 ——
+               # nginx 明明配了 gzip 却用不上。实测 16 KB 的响应压完只剩 6 KB
+               "Accept-Encoding": "gzip",
+               "Connection": "keep-alive"}
     if data is not None:
-        req.add_header("Content-Type", "application/json; charset=utf-8")
+        headers["Content-Type"] = "application/json; charset=utf-8"
     if token:
-        req.add_header("Authorization", "Bearer " + token)
-    # **主动要压缩。** urllib 默认不发这个头，于是服务器把 JSON 原样发过来 ——
-    # nginx 明明配了 gzip 却用不上。实测一个 16 KB 的响应压完只剩 6 KB
-    req.add_header("Accept-Encoding", "gzip")
-    req.add_header("Connection", "keep-alive")
+        headers["Authorization"] = "Bearer " + token
     if etag:
-        req.add_header("If-None-Match", f'"{etag}"')
-    try:
-        with _opener.open(req, timeout=timeout) as resp:
-            global _last_etag
-            _last_etag = (resp.headers.get("ETag") or "").strip('"')
+        headers["If-None-Match"] = f'"{etag}"'
+
+    # GET 才复用连接（见上面那段）。重发也只给 GET，而且只在"这条连接是从池子里
+    # 拿的"时候 —— 那种失败十有八九是服务器早把它关了，请求根本没出去。
+    reuse = verb == "GET"
+    for attempt in (1, 2):
+        conn, pooled = _take(bits.scheme, bits.hostname, bits.port, timeout, reuse)
+        try:
+            conn.request(verb, path, body=data, headers=headers)
+            resp = conn.getresponse()
             raw = resp.read()
-            if resp.headers.get("Content-Encoding", "").lower() == "gzip":
-                raw = gzip.decompress(raw)
-            return raw
-    except urllib.error.HTTPError as exc:
-        if exc.code == 304:
-            raise NotModified from None
+        except Exception as exc:                            # noqa: BLE001
+            _close(conn)
+            if attempt == 1 and pooled:
+                continue                                    # 换条新连接再来一次
+            raise _fail(exc) from exc
+        if reuse and not resp.will_close:
+            _keep(bits.scheme, bits.hostname, bits.port, conn)
+        else:
+            _close(conn)
+        break
+
+    if resp.status == 304:
+        raise NotModified
+    if resp.status >= 400:
         # 后端把原因写在 detail 里，中文的，原样转给学生看比"HTTP 403"有用得多
         try:
-            detail = json.loads(exc.read().decode("utf-8", "replace")).get("detail")
+            detail = json.loads(raw.decode("utf-8", "replace")).get("detail")
         except Exception:                                   # noqa: BLE001
             detail = ""
-        raise ApiError(str(detail or f"服务器拒绝了（{exc.code}）")) from exc
-    except urllib.error.URLError as exc:
-        # 证书问题单独说：学校自己签的证书很常见，报「CERTIFICATE_VERIFY_FAILED」
-        # 网管也不知道该查哪儿。直接告诉他怎么绕
-        if "CERTIFICATE" in str(exc.reason).upper() or "SSL" in str(exc.reason).upper():
-            raise ApiError("教师端的 https 证书通不过校验（多半是学校自己签的）。"
-                           "请改用 http 地址，或者换成受信任的证书") from exc
-        raise ApiError(f"连不上教师端（{exc.reason}）") from exc
-    except (socket.timeout, TimeoutError) as exc:
-        raise ApiError("教师端响应超时") from exc
+        raise ApiError(str(detail or f"服务器拒绝了（{resp.status}）"))
+
+    global _last_etag
+    _last_etag = (resp.headers.get("ETag") or "").strip('"')
+    if (resp.headers.get("Content-Encoding") or "").lower() == "gzip":
+        raw = gzip.decompress(raw)
+    return raw
 
 
 def _json(url: str, body: dict | None = None, timeout: int = TIMEOUT,

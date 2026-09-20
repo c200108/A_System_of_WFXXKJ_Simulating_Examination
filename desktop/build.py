@@ -46,6 +46,7 @@ PyInstaller 打出来的 exe 带着**打包时那个 Python 的运行时**，所
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -57,6 +58,9 @@ HERE = Path(__file__).resolve().parent
 DIST = HERE / "发布"
 NAME = "考试客户端"
 ENTRY = HERE / "exam_client.py"
+# 校徽图标。没有就用 PyInstaller 的默认图标，不报错 —— 图标是锦上添花，
+# 不能因为它打不出包。怎么做见 图标/制作图标.py
+ICON = HERE / "图标" / "考试客户端.ico"
 
 # 只排除**第三方**重家伙：打包用的 Python 里装着后端那套依赖，PyInstaller 会
 # 顺着依赖把它们拖进来，体积能差好几倍。
@@ -69,24 +73,30 @@ EXCLUDE = ["numpy", "pandas", "matplotlib", "PIL", "pytest", "setuptools",
            "sqlalchemy", "fastapi", "pydantic", "uvicorn", "alembic"]
 
 
-def exe_name(server: str) -> str:
-    r"""打出来的 exe 叫什么。
+def exe_name(server: str, mark: str = "") -> str:
+    r"""打出来的 exe 叫什么：`考试客户端-32位@192.168.1.8_8080.exe`。
 
-    **地址写进文件名**，这样机房里拿到的那一个文件自己说明自己连哪儿，而且
-    教师端换了 IP 时网管改个名就完事，不用重新打包。冒号在 Windows 文件名里
-    非法，端口前改用下划线：`考试客户端@192.168.1.8_8080.exe`。
+    两件事写在文件名里：
 
-    读回来的是 `client.shell.server_from_name()`，**两边的写法必须对得上** ——
-    tests/test_single_exe.py 守着这条往返。带证书的域名（https://）和带路径的
-    地址写进文件名再读回来会走样，那就干脆不写：地址已经烤在 _build.py 里，
-    文件名只是个可选的覆盖手段。
+    · **位数**（mark）。机房里 32 位和 64 位两版并存，拿到文件的人得一眼看出
+      该发哪个 —— 32 位那份两种机器都能跑，64 位那份只能跑 64 位 Windows。
+    · **教师端地址**（@ 后面）。这样那一个文件自己说明自己连哪儿，而且教师端
+      换了 IP 时网管改个名就完事，不用重新打包。冒号在 Windows 文件名里非法，
+      端口前改用下划线。
+
+    地址读回来的是 `client.shell.server_from_name()`，它只认 `@` **之后**那一段
+    —— 所以位数标在 `@` 前面，两边才不会打架。**两边的写法必须对得上**，
+    tests/test_single_exe.py 守着这条往返。
+
+    带证书的域名（https://）和带路径的地址写进文件名再读回来会走样，那就干脆
+    不写地址：地址已经烤在 _build.py 里，文件名只是个可选的覆盖手段。
     """
     host = str(server or "").strip().rstrip("/")
     if host.lower().startswith("http://"):
         host = host[len("http://"):]          # norm() 会把它加回去，丢了不影响
     if not host or "://" in host or "/" in host:
-        return f"{NAME}.exe"
-    return f"{NAME}@{host.replace(':', '_')}.exe"
+        return f"{NAME}{mark}.exe"
+    return f"{NAME}{mark}@{host.replace(':', '_')}.exe"
 
 
 def floor_of(version) -> str:
@@ -106,11 +116,13 @@ def python_info(exe: str) -> tuple:
     return int(out[0]), int(out[1]), int(out[2])
 
 
-def clear_dist():
-    """清「发布」，但**别碰「答案包」**。
+def clear_dist(target: str = ""):
+    """清「发布」，但有两样不碰。
 
-    学生端默认把 .ans 写在 发布\\答案包 里。谁在收完卷之后顺手重打一次包，
-    整个班的卷子就没了 —— 重打 exe 是开发动作，不该有删数据的副作用。
+    · **答案包**。学生端默认把 .ans 写在 发布\\答案包 里。谁在收完卷之后顺手
+      重打一次包，整个班的卷子就没了 —— 重打 exe 是开发动作，不该删数据。
+    · **别人的 exe**。32 位和 64 位两版要并存（见 exe_name），打 32 位那次
+      不能把 64 位那份顺手删掉。只清这次要重写的那一个（target）。
     """
     if not DIST.exists():
         return
@@ -119,6 +131,8 @@ def clear_dist():
             continue
         if item.is_dir():
             shutil.rmtree(item, ignore_errors=True)
+            continue
+        if item.suffix.lower() == ".exe" and item.name != target:
             continue
         try:
             item.unlink()
@@ -157,7 +171,7 @@ def selftest_passes(exe: Path) -> bool:
     except subprocess.TimeoutExpired:
         # 崩在 import 阶段时，PyInstaller 会弹个报错窗停在那儿等人点，程序不退出
         code = -1
-    text = report.read_text(encoding="utf-8") if report.exists() else ""
+    text = report.read_text(encoding="gbk", errors="replace") if report.exists() else ""
     if code == 0 and "自检通过" in text:
         for line in text.splitlines():
             print("   " + line if line else "")
@@ -219,7 +233,10 @@ def main() -> int:
         f'SERVER = "{server}"\n', encoding="utf-8")
     if server:
         print(f"   教师端地址已烤进 exe：{server}（学生不用再输）")
-    clear_dist()
+    # 位数写进文件名：32 位那份两种机器都能跑，64 位那份只能跑 64 位 Windows，
+    # 机房里两版并存时得一眼分得出来
+    final = exe_name(server, f"-{bits}位") if not args.onedir else ""
+    clear_dist(final)
     cmd = [py, "-m", "PyInstaller", "--clean", "--noconfirm",
            "--onedir" if args.onedir else "--onefile",
            "--windowed",                     # 考试程序不要黑框
@@ -228,6 +245,14 @@ def main() -> int:
            "--workpath", str(HERE / "build"),
            "--specpath", str(HERE / "build"),
            "--paths", str(HERE)]
+    if ICON.is_file():
+        # --icon 管的是**文件和任务栏上的图标**；窗口左上角那个是 Tk 自己画的，
+        # 得把 ico 一起打进去，运行时 set_window_icon() 再设一次
+        cmd += ["--icon", str(ICON),
+                "--add-data", f"{ICON}{os.pathsep}图标"]
+        print(f"   图标：{ICON.name}")
+    else:
+        print(f"   没有图标（{ICON} 不存在），用 PyInstaller 的默认图标")
     for mod in EXCLUDE:
         cmd += ["--exclude-module", mod]
     cmd.append(str(ENTRY))
@@ -235,11 +260,9 @@ def main() -> int:
         return 1
 
     exe = DIST / (f"{NAME}.exe" if not args.onedir else f"{NAME}/{NAME}.exe")
-    if server and not args.onedir:
-        named = DIST / exe_name(server)
-        if named.name != exe.name:
-            exe.replace(named)
-            exe = named
+    if final and final != exe.name:
+        exe.replace(DIST / final)
+        exe = DIST / final
     (DIST / "考场使用说明.txt").write_text(READ_ME, encoding="gbk", errors="replace")
 
     print("③ 验收：让打出来的 exe 自己跑一遍自检")
@@ -257,6 +280,11 @@ def main() -> int:
               "机房就只需要分发这一个 exe")
     print(f"\n**只需要发 {exe.name} 这一个文件**：单独拷到学生机即可，"
           "运行数据写在 %LOCALAPPDATA%，exe 旁边不生成任何东西。")
+
+    others = sorted(p.name for p in DIST.glob("*.exe") if p.name != exe.name)
+    if others:
+        print("「发布」里另外还有：" + "、".join(others)
+              + "　（各打各的，重打一版不会删掉另一版）")
     return 0
 
 

@@ -75,7 +75,11 @@ def target_names(root: Path) -> set[str]:
 
 
 def _distinctive(name: str) -> bool:
-    if any("一" <= ch <= "鿿" for ch in name):
+    # 按码位比，不写那两个汉字：区间上界那个字 GBK 装不下，而"源码里不许出现
+    # GBK 装不下的字"是一条用测试守着的规则（见 tests/test_win7_glyphs.py）——
+    # 它不显示给人看，但留着就得给规则开口子。0x4E00~0x9FFF 就是中日韩统一表意
+    # 文字那一段。
+    if any(0x4E00 <= ord(ch) <= 0x9FFF for ch in name):
         return len(name) >= 2
     return len(name) >= 4
 

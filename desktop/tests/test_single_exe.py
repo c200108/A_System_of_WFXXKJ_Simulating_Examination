@@ -97,13 +97,42 @@ def test_从exe文件名里读地址(monkeypatch, tmp_path, name, want):
 @pytest.mark.parametrize("server", [
     "192.168.1.8:8080", "111.170.33.3:3315", "10.0.0.9", "http://192.168.1.8:8080",
 ])
-def test_打包写的文件名客户端读得回来(monkeypatch, tmp_path, server):
+@pytest.mark.parametrize("mark", ["", "-32位", "-64位"])
+def test_打包写的文件名客户端读得回来(monkeypatch, tmp_path, server, mark):
     """**这条是这个文件的核心。** 打包脚本写文件名、客户端解析文件名，分处两个
-    文件；改一头忘一头，症状是学生双击之后地址栏空着，而打包过程一切正常。"""
-    name = build.exe_name(server)
+    文件；改一头忘一头，症状是学生双击之后地址栏空着，而打包过程一切正常。
+
+    位数标在 `@` 前面就是为了这条：解析只认 `@` 之后那一段，加不加位数都不影响。
+    """
+    name = build.exe_name(server, mark)
+    assert mark in name
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "executable", str(tmp_path / name))
     assert shell.server_from_name() == server.replace("http://", "")
+
+
+def test_两种位数的exe互不覆盖(tmp_path, monkeypatch):
+    """机房里 32 位和 64 位两版并存：重打一版不能把另一版删掉。
+
+    32 位那份两种机器都能跑，64 位那份只能跑 64 位 Windows —— 老机房两样都要
+    留着，而 `build.py` 每次打包都会先清「发布」。
+    """
+    dist = tmp_path / "发布"
+    (dist / "答案包").mkdir(parents=True)
+    (dist / "答案包" / "张三.ans").write_text("卷子", encoding="utf-8")
+    a = dist / build.exe_name("1.2.3.4:80", "-32位")
+    b = dist / build.exe_name("1.2.3.4:80", "-64位")
+    for f in (a, b):
+        f.write_text("exe", encoding="utf-8")
+    (dist / "考场使用说明.txt").write_text("旧说明", encoding="utf-8")
+
+    monkeypatch.setattr(build, "DIST", dist)
+    build.clear_dist(b.name)                    # 重打 64 位那一版
+
+    assert not b.exists(), "这次要重写的那一个没清掉"
+    assert a.exists(), "32 位那份被顺手删了"
+    assert (dist / "答案包" / "张三.ans").exists(), "收上来的卷子被删了"
+    assert not (dist / "考场使用说明.txt").exists(), "说明该重写"
 
 
 @pytest.mark.parametrize("server", ["https://exam.school.edu.cn", "1.2.3.4:80/exam", ""])

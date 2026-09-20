@@ -64,6 +64,42 @@ def server_from_name() -> str:
     return tail
 
 
+def asset(name: str) -> Path | None:
+    """找一个随 exe 一起打包的附带文件（图标之类）。找不到返回 None。
+
+    onefile 的 exe 跑起来会把附带文件解到一个临时目录，路径在 `sys._MEIPASS`；
+    直接跑源码时就在 desktop/ 下面。两种都要认 —— 开发时看得见图标，机房里
+    也看得见。
+    """
+    roots = []
+    box = getattr(sys, "_MEIPASS", "")
+    if box:
+        roots.append(Path(box))
+    roots.append(Path(__file__).resolve().parent.parent)
+    for root in roots:
+        for rel in (name, f"图标/{name}"):
+            got = root / rel
+            if got.is_file():
+                return got
+    return None
+
+
+def set_window_icon(root) -> None:
+    """给窗口换上校徽图标。
+
+    exe 本身的图标是打包时 `--icon` 定的，那管的是文件和任务栏上的图；**窗口
+    左上角那个小图标是 Tk 自己的**（不设就是 Tk 那根羽毛），得在运行时设。
+    图标坏了、缺了都不该影响考试，所以整段吞掉异常。
+    """
+    ico = asset("考试客户端.ico")
+    if not ico:
+        return
+    try:
+        root.iconbitmap(default=str(ico))
+    except Exception:                                       # noqa: BLE001
+        pass
+
+
 def build_stamp() -> str:
     """这个 exe 是什么时候打的。
 

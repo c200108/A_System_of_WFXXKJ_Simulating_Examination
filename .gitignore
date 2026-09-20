@@ -36,3 +36,6 @@ desktop/build/
 .DS_Store
 Thumbs.db
 desktop/client/_build.py
+
+# 图标的中间产物（预览图），源图和 .ico 要进库
+desktop/图标/预览-*.png
