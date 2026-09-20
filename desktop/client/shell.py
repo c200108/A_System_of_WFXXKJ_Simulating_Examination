@@ -11,6 +11,7 @@ import os
 import queue
 import re
 import subprocess
+import sys
 import threading
 import tkinter as tk
 from datetime import datetime
@@ -21,6 +22,46 @@ from . import api
 
 APP_NAME = "信息技术考试系统"
 CLIENT_VER = "2.1"
+
+
+def baked_server() -> str:
+    """打包时烤进去的教师端地址（`build.py --server`）。
+
+    **只发一个 exe 的关键一环。** 不烤的话，机房每台机器都得人工输一次地址；
+    烤进去之后双击就能用，学生只填学号密码。
+
+    地址变了也不用重打包 —— 见 `server_from_name()` 和登录页那个输入框。
+    """
+    try:
+        from . import _build
+        return str(getattr(_build, "SERVER", "") or "")
+    except Exception:                                   # noqa: BLE001
+        return ""
+
+
+def server_from_name() -> str:
+    """从 exe 的**文件名**里读地址。
+
+    把 exe 改名成 `考试客户端@192.168.1.8_8080.exe`，程序就连那个地址。
+    这是给"教师端换了 IP，但不想重新打包"准备的：网管改一个文件名，
+    整个机房 ghost 过去就完事。
+
+    写法：`@` 之后是地址，冒号在文件名里非法，所以用下划线代替端口分隔符。
+    """
+    try:
+        name = Path(sys.executable if getattr(sys, "frozen", False) else __file__).stem
+    except Exception:                                   # noqa: BLE001
+        return ""
+    if "@" not in name:
+        return ""
+    tail = name.split("@", 1)[1].strip()
+    if not tail:
+        return ""
+    # 192.168.1.8_8080 → 192.168.1.8:8080；已经写成冒号的也认
+    if "_" in tail and ":" not in tail:
+        host, _, port = tail.rpartition("_")
+        tail = f"{host}:{port}" if port.isdigit() else tail.replace("_", ".")
+    return tail
 
 
 def build_stamp() -> str:

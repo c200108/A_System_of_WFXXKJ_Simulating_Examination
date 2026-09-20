@@ -66,6 +66,10 @@ def app(tmp_path, monkeypatch, tk_root):
     """
     monkeypatch.setattr(store, "here", lambda: tmp_path)
     monkeypatch.setenv("TEMP", str(tmp_path))
+    # 设置文件现在写在 %LOCALAPPDATA% 里（"只发一个 exe"）。不把这两个也挪走，
+    # 自检里的登录就会把测试用的地址写进**这台开发机自己**的客户端设置里。
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     got = ui.ExamApp(tmp_path / "EXAM", tmp_path / "答案包", root=tk_root)
     yield got
     # 先掐掉还在排队的定时器，别让上一个用例的轮询跑到下一个里去。

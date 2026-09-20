@@ -6,10 +6,14 @@ r"""学生端考试程序 —— 打包成 exe 的就是这个。
     考试客户端.exe --root D:\KSWJJ        换考试文件夹
     考试客户端.exe --out \\服务器\收卷    本机备份直接写到共享目录
 
-默认：考试文件夹 C:\EXAM，本机备份写到 exe 旁边的「答案包」文件夹。
+默认：考试文件夹 C:\EXAM，本机备份和设置写到
+`%LOCALAPPDATA%\信息技术考试客户端\`，**exe 旁边不生成任何文件**。
 
-教师端地址输一次就记在 exe 旁边的「客户端设置.json」里，所以机房装机时
-**把整个文件夹 ghost 出去，全机房都不用再输地址**。
+机房里只需要分发这一个 exe。教师端地址有三种带法，任选：
+
+  · 打包时烤进去      python build.py --server 192.168.1.8:8080
+  · 写在 exe 文件名里  考试客户端@192.168.1.8_8080.exe
+  · 学生在登录页输一次，之后这台机器记住
 """
 
 import argparse
@@ -19,7 +23,7 @@ from pathlib import Path
 if __package__ in (None, ""):                  # 直接跑脚本时也能找到 client 包
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from client.store import here                  # noqa: E402
+from client.store import data_dir              # noqa: E402
 
 
 def selftest(report: Path, server: str = "") -> int:
@@ -70,6 +74,19 @@ def selftest(report: Path, server: str = "") -> int:
             zipfile.ZipFile(Path(tmp) / "t.zip", "w").close()
             lines.append("✓ 能写压缩包")
 
+        # ⑤ 这台机器会连哪儿。**装机时最常被问的就是这一句。**
+        #    地址有三个来源（exe 文件名、本机记录、打包时烤进去的），机房里很容易
+        #    对不上 —— 比如网管改了文件名，但这台机器上还留着上学期的记录。
+        #    三个都写出来，谁盖住谁一目了然。
+        from client.shell import baked_server, server_from_name
+        from client.ui import default_server
+        picked = server or default_server()
+        lines.append("")
+        lines.append(f"教师端地址：{api.norm(picked) if picked else '没有（学生要自己输）'}")
+        lines.append(f"    文件名 {server_from_name() or '无'}"
+                     f"　｜　本机记录 {store.remembered_server() or '无'}"
+                     f"　｜　打包内置 {baked_server() or '无'}")
+
         lines.append("")
         lines.append("自检通过")
         code = 0
@@ -108,7 +125,8 @@ def selftest(report: Path, server: str = "") -> int:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="信息技术考试客户端")
     ap.add_argument("--root", default=r"C:\EXAM", help=r"考试文件夹，默认 C:\EXAM")
-    ap.add_argument("--out", default="", help="本机备份写到哪，默认 exe 旁边的「答案包」")
+    ap.add_argument("--out", default="",
+                    help=r"本机备份写到哪，默认 %LOCALAPPDATA%\信息技术考试客户端\答案包")
     ap.add_argument("--server", default="", help="教师端地址，如 192.168.1.8:8000")
     ap.add_argument("--selftest", default="", metavar="结果文件",
                     help="自检：不开窗口，验一遍能不能跑，结果写到这个文件；"
@@ -122,7 +140,10 @@ def main(argv=None) -> int:
     # 自检就崩了，弹个窗谁也看不懂。放这儿，--selftest 能把原因写成一句人话。
     from client.ui import ExamApp
 
-    out = Path(args.out) if args.out else here() / "答案包"
+    # **不往 exe 旁边写。** 写在那儿的话，"只发一个 exe"就不成立了 ——
+    # 程序一跑就在 exe 边上长出「答案包」文件夹；exe 要是放在只读位置
+    # （网络共享、被锁的桌面），还会直接写失败。
+    out = Path(args.out) if args.out else data_dir() / "答案包"
     out.mkdir(parents=True, exist_ok=True)
     ExamApp(Path(args.root), out, args.server).run()
     return 0
