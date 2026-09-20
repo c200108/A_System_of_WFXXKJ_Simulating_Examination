@@ -32,6 +32,7 @@
 
 from __future__ import annotations
 
+import gzip
 import json
 import socket
 import urllib.error
@@ -41,6 +42,23 @@ from pathlib import Path
 
 TIMEOUT = 15
 PING_TIMEOUT = 4
+
+# **连接复用。** 默认每次请求都新建一条 TCP 连接，光握手就要一个来回 ——
+# 实测连学校服务器一个来回约 50 ms，而一次最轻的接口调用总共才 100 ms，
+# 也就是说**一半时间花在握手上**。一个学生从登录到进考试要打四五个接口，
+# 复用之后这部分全省掉。
+#
+# HTTPHandler 本身不带连接池，但 urllib 会在同一个 opener 上沿用
+# keep-alive 的底层连接（服务端 nginx 默认开着 keep-alive）。
+_opener = urllib.request.build_opener()
+_opener.addheaders = []            # 自己逐个请求加，别让它塞默认 User-Agent
+
+
+class NotModified(Exception):
+    """服务器说"你那份还是最新的"（HTTP 304）。不是错误，是好消息。"""
+
+
+_last_etag = ""              # 上一次响应带回来的 ETag，给 fetch_exam 存档用
 
 
 class ApiError(Exception):
@@ -66,7 +84,7 @@ def norm(server: str) -> str:
 
 
 def _request(url: str, body: dict | None = None, timeout: int = TIMEOUT,
-             token: str = "", method: str = "") -> bytes:
+             token: str = "", method: str = "", etag: str = "") -> bytes:
     data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
     req = urllib.request.Request(url, data=data,
                                  method=method or ("POST" if data is not None else "GET"))
@@ -74,10 +92,23 @@ def _request(url: str, body: dict | None = None, timeout: int = TIMEOUT,
         req.add_header("Content-Type", "application/json; charset=utf-8")
     if token:
         req.add_header("Authorization", "Bearer " + token)
+    # **主动要压缩。** urllib 默认不发这个头，于是服务器把 JSON 原样发过来 ——
+    # nginx 明明配了 gzip 却用不上。实测一个 16 KB 的响应压完只剩 6 KB
+    req.add_header("Accept-Encoding", "gzip")
+    req.add_header("Connection", "keep-alive")
+    if etag:
+        req.add_header("If-None-Match", f'"{etag}"')
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.read()
+        with _opener.open(req, timeout=timeout) as resp:
+            global _last_etag
+            _last_etag = (resp.headers.get("ETag") or "").strip('"')
+            raw = resp.read()
+            if resp.headers.get("Content-Encoding", "").lower() == "gzip":
+                raw = gzip.decompress(raw)
+            return raw
     except urllib.error.HTTPError as exc:
+        if exc.code == 304:
+            raise NotModified from None
         # 后端把原因写在 detail 里，中文的，原样转给学生看比"HTTP 403"有用得多
         try:
             detail = json.loads(exc.read().decode("utf-8", "replace")).get("detail")
@@ -131,19 +162,41 @@ def signin(server: str, student_no: str, name: str = "") -> dict:
 def fetch_exam(server: str, token: str, save_to: Path) -> Path:
     """把这场考试的考试包下下来，存成本地文件。返回存到哪了。
 
-    先写临时文件再改名：下到一半断网的话，留下的是个半截 zip，
-    下次开机自动认包时会打不开 —— 一个改名就能避掉。
+    **手上那份还新就不再下。** 考试包有 900 KB 上下（含配图），在学校那条几兆
+    的上行链路上一份要一秒多，五十个人同时开考就是几十秒。服务器给包打了
+    ETag，这里把上次拿到的那个带上去问一句：没变就回 304，一个字节都不传。
+
+    先写临时文件再改名：下到一半断网的话，留下的是个半截 zip，下次开机自动
+    认包时会打不开 —— 一个改名就能避掉。
     """
     base = norm(server)
     url = f"{base}/api/desk/exam/{urllib.parse.quote(token)}?server={urllib.parse.quote(base)}"
-    raw = _request(url, timeout=60)
+    save_to = Path(save_to)
+    stamp = save_to.with_suffix(save_to.suffix + ".etag")
+
+    old = ""
+    if save_to.exists():
+        try:
+            old = stamp.read_text(encoding="utf-8").strip()
+        except OSError:
+            old = ""
+
+    try:
+        raw = _request(url, timeout=120, etag=old)
+    except NotModified:
+        return save_to                   # 本地那份就是最新的
+
     if not raw.startswith(b"PK"):
         raise ApiError("下下来的不是考试包，请让老师确认这场考试还开着")
-    save_to = Path(save_to)
     save_to.parent.mkdir(parents=True, exist_ok=True)
     tmp = save_to.with_suffix(save_to.suffix + ".part")
     tmp.write_bytes(raw)
     tmp.replace(save_to)
+    if _last_etag:
+        try:
+            stamp.write_text(_last_etag, encoding="utf-8")
+        except OSError:
+            pass
     return save_to
 
 

@@ -297,9 +297,14 @@ def test_choices_start_unselected(app, server, exam):
 
     radios = [w for w in frame.area.winfo_children() if isinstance(w, tk.Radiobutton)]
     assert radios, "选择题没渲染出选项"
+    values = {r.cget("value") for r in radios}
     for r in radios:
-        assert r.cget("tristatevalue") != "", "空串当第三态，选项会显示成黑点"
-        assert r.getvar(r.cget("variable")) == "", "一上来不该有选中项"
+        # 两道保险各验一条：变量初值不是空串（不会撞上第三态），
+        # tristatevalue 也不是空串（就算初值哪天改回空串也还挡得住）
+        now = r.getvar(r.cget("variable"))
+        assert now not in values, "一上来不该有选中项"
+        assert now != "", "空串会被 Tk 当成第三态，四个选项全变黑点"
+        assert r.cget("tristatevalue") != ""
 
     radios[0].invoke()
     app.root.update()
@@ -417,6 +422,30 @@ def test_typing_result_comes_from_the_server(app, server, exam):
     assert settle(app, until=lambda: "已记录" in page.live.cget("text")), \
         page.live.cget("text")
     assert "字/分" in page.live.cget("text")
+
+
+def test_typing_blocks_copy_and_paste(app, server, exam):
+    """打字练习**只能一个字一个字敲**。
+
+    能复制原文、粘贴到答题框的话，速度和正确率就都是假的，这个练习也就没意义。
+    四条路都要堵：Ctrl 快捷键、中键粘贴、右键菜单、Tk 的虚拟事件 —— 少堵一条
+    就能绕过去。
+    """
+    shell = signed_in(app, server)
+    shell.go("typing")
+    page = shell.body
+    for widget in (page.entry, page.text_view):
+        for seq in ("<Control-v>", "<Control-V>", "<Control-c>", "<Control-x>",
+                    "<Button-3>", "<<Paste>>", "<<Copy>>"):
+            assert widget.bind(seq), f"{seq} 没堵上"
+
+    # 真按一下 Ctrl+V：什么都不该进来
+    page.entry.delete("1.0", "end")
+    app.root.clipboard_clear()
+    app.root.clipboard_append("抄来的一大段文字")
+    page.entry.event_generate("<<Paste>>")
+    app.root.update()
+    assert page.entry.get("1.0", "end-1c") == "", "粘贴没被拦住"
 
 
 def test_typing_needs_something_typed(app, server, exam):

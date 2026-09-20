@@ -41,8 +41,12 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 
 from .sim import blank_para
+
+# 仿真环境里的路径统一带这个前缀，和老师在网页仿真器里点出来的写法一致
+ROOT = "C:/EXAM"
 
 # 题干里的引号五花八门：中文引号、英文引号、书名号式的方引号
 Q = r"[\"“”'‘’「」『』]"
@@ -566,3 +570,41 @@ def parse(stem: str, scope: str = "") -> dict | None:
         return None
     got["scope_guess"] = kind
     return got
+
+
+@lru_cache(maxsize=512)
+def auto_sim(stem_text: str, scope: str = "") -> dict | None:
+    """**没配仿真任务的操作题，按题干当场推一份出来。**
+
+    这是整条链路的兜底，也是它能扛住版本升级和数据导入的原因：
+
+        老师从 2.8.0 导出数据、导进 4.x 的新库 —— `sim_task_id` 全是空。
+        要是只认数据库里配好的那份，所有操作题一夜之间全变成"不能自动判分"，
+        而且表面上看不出毛病（题目照出，就是没有文件、没有检查点）。
+
+    题干是跟着题目走的，导库不会丢。所以**以题干为准**：开考铺什么文件、
+    交卷查什么，全从题干算。数据库里配了的仍然优先（老师手工调过的更准），
+    没配的走这里。
+
+    返回 `{"kind", "env", "checks"}`，路径都带上了 `C:/EXAM` 前缀 ——
+    环境和检查点是一起算的，两边用同一套路径，不会对不上。
+
+    结果按题干缓存：出包和判分都会走到这儿，同一道题一场考试里要算好几十遍。
+    """
+    got = parse(stem_text or "", scope or "")
+    if not got:
+        return None
+    if got["kind"] != "ai" and not got["checks"]:
+        return None                  # 认出题型却一条检查点都没造出来，不如不给
+
+    env, checks = got["env"], got["checks"]
+    fs = env.get("fs")
+    if isinstance(fs, dict):
+        env = {**env, "fs": {f"{ROOT}/{k}": v for k, v in fs.items()}}
+    out_checks = []
+    for c in checks:
+        a = dict(c.get("assert") or {})
+        if "path" in a:
+            a["path"] = f"{ROOT}/{a['path']}"
+        out_checks.append({**c, "assert": a})
+    return {"kind": got["kind"], "env": env, "checks": out_checks}

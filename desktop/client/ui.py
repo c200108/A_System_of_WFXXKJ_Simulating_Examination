@@ -34,7 +34,7 @@ from tkinter import filedialog, messagebox, ttk
 from . import api, cleanup, package, snapshot, states, store
 from .exam_ui import DoneFrame, ExamFrame
 from .shell import (AMBER, APP_NAME, BG, BLUE, CARD, CLIENT_VER, FONT, GRAY,
-                    GREEN, LINE, RED, in_thread)
+                    GREEN, LINE, RED, build_stamp, in_thread)
 
 SIDE = "#22303f"                 # 侧边栏底色，比正文暗一档
 SIDE_ON = "#2c6fd1"
@@ -106,8 +106,9 @@ class LoginFrame(ttk.Frame):
                   bg=CARD, fg=GRAY, cursor="hand2", command=self.offline
                   ).place(x=30, y=268, width=410, height=20)
 
-        tk.Label(wrap, text=f"客户端 {CLIENT_VER}　操作题在真实系统中完成", bg=BG,
-                 fg=GRAY, font=(FONT, 8)).pack(side="bottom", pady=6)
+        tk.Label(wrap, text=f"客户端 {CLIENT_VER}　构建 {build_stamp()}　"
+                            "操作题在真实系统中完成",
+                 bg=BG, fg=GRAY, font=(FONT, 8)).pack(side="bottom", pady=6)
 
         self.after(80, lambda: (self.no_entry if self.vars["server"].get()
                                 else self.server_entry).focus_set())
@@ -202,6 +203,31 @@ class LoginFrame(ttk.Frame):
                             "cls": (hit or {}).get("cls", "")}
         self.app.server = api.norm(self.vars["server"].get()) or pack.server
         self.app.start_exam(pack)
+
+
+def no_copy(widget) -> None:
+    """把复制粘贴全堵上。
+
+    打字练习**只能一个字一个字敲**：能复制原文、粘贴到答题框，速度和正确率
+    就都是假的，这个练习也就没意义了。
+
+    堵四条路，少一条都能绕过去：
+
+      · Ctrl+C / Ctrl+V / Ctrl+X / Ctrl+A（还有大写的，CapsLock 开着时是大写）
+      · 中键粘贴（X11 习惯，Tk 在 Windows 上也认）
+      · 右键菜单
+      · Tk 自带的 <<Cut>> <<Copy>> <<Paste>> 虚拟事件 —— 有些输入法和
+        快捷键走的是这一层，只拦 Ctrl+ 字母拦不住
+    """
+    def block(_event=None):
+        return "break"
+
+    for key in ("<Control-c>", "<Control-C>", "<Control-v>", "<Control-V>",
+                "<Control-x>", "<Control-X>", "<Control-a>", "<Control-A>",
+                "<Control-Insert>", "<Shift-Insert>", "<Button-2>", "<Button-3>"):
+        widget.bind(key, block)
+    for virtual in ("<<Cut>>", "<<Copy>>", "<<Paste>>", "<<PasteSelection>>"):
+        widget.bind(virtual, block)
 
 
 def student_of(raw: dict) -> dict:
@@ -509,6 +535,8 @@ class TypingPage(Page):
                              relief="solid", bd=1)
         self.entry.pack(fill="x")
         self.entry.bind("<Key>", self.on_key)
+        no_copy(self.entry)
+        no_copy(self.text_view)      # 原文也不让复制，否则直接粘过去就满分了
 
         row = tk.Frame(self.box, bg=BG)
         row.pack(fill="x", pady=10)

@@ -55,11 +55,37 @@ const tracks = computed(() =>
 // 2.8.0 及更早是两条线共同的历史
 const trunk = computed(() => versions.value.filter(v => Number(majorOf(v)) <= 2))
 
+/**
+ * 每个大版本一个折叠块。
+ *
+ * 日志越攒越长，一屏拉不到底。按大版本收起来之后，想看哪一代点哪一代 ——
+ * **最新的那个默认展开**，因为大多数人来这儿就是想知道"刚更新了什么"。
+ */
+const open = ref(new Set())
+const groupsOf = items => {
+  const by = new Map()
+  for (const v of items) {
+    const major = majorOf(v)
+    if (!by.has(major)) by.set(major, [])
+    by.get(major).push(v)
+  }
+  return [...by.entries()].map(([major, list]) => ({ major, list }))
+}
+const toggle = key => {
+  const next = new Set(open.value)
+  next.has(key) ? next.delete(key) : next.add(key)
+  open.value = next
+}
+const isOpen = key => open.value.has(key)
+
 async function load() {
   loading.value = true
   try {
     versions.value = await api.changelog()
     types.value = await api.changelogTypes()
+    // 最新的那一代默认展开，其余收起
+    const first = versions.value[0]
+    open.value = new Set(first ? [majorOf(first)] : [])
   } finally {
     loading.value = false
   }
@@ -110,12 +136,17 @@ async function removeItem(item) {
 
     <!-- 两条线：仿真环境 3.x、学生桌面端 4.x。各自成组，别混在一条时间线里 -->
     <div v-for="t in tracks" :key="t.key" class="track" :style="{ '--track': t.color }">
-      <div class="thead">
+      <button class="thead" type="button" @click="toggle(t.key)">
+        <span class="caret" :class="{ open: isOpen(t.key) }">▸</span>
         <span class="tdot" />
         <b>{{ t.title }}</b>
-        <span class="thint">{{ t.hint }}　·　{{ t.key }}.x</span>
-      </div>
-      <section v-for="(v, vi) in t.items" :key="v.version" class="ver">
+        <span class="thint">
+          {{ t.hint }}　·　{{ t.key }}.x　·　{{ t.items.length }} 个版本，
+          最新 {{ t.items[0].version }}
+        </span>
+      </button>
+      <section v-for="(v, vi) in t.items" v-show="isOpen(t.key)"
+               :key="v.version" class="ver">
         <div class="rail">
           <span class="dot" :class="{ latest: vi === 0 }" />
           <span v-if="vi < t.items.length - 1" class="line" />
@@ -260,8 +291,21 @@ h1 {
   align-items: baseline;
   gap: 8px;
   margin: 18px 0 8px;
-  padding-left: 2px;
+  padding: 6px 4px;
+  width: 100%;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  border-radius: 6px;
 }
+.thead:hover { background: var(--el-fill-color-lighter); }
+.caret {
+  align-self: center;
+  color: var(--el-text-color-secondary);
+  transition: transform 0.15s;
+}
+.caret.open { transform: rotate(90deg); }
 .thead b { font-size: 15px; color: var(--track); }
 .tdot {
   width: 10px;

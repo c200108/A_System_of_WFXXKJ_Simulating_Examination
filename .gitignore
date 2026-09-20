@@ -35,3 +35,4 @@ desktop/build/
 .vscode/
 .DS_Store
 Thumbs.db
+desktop/client/_build.py

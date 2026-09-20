@@ -59,6 +59,37 @@ def test_big_pictures_are_shrunk(uploaded):
         assert im.width <= images.MAX_WIDTH and im.height <= images.MAX_HEIGHT
 
 
+def test_the_png_is_not_bigger_than_the_jpeg_it_came_from():
+    """**PNG 是无损格式，照片直接转过去会比原图大一倍。**
+
+    实测四张真题配图：194 KB 的 JPEG 转成 399 KB 的 PNG，一份考试包因此涨到
+    900 KB —— 五十个学生同时开考就是 45 MB 挤一条几兆的上行链路，
+    学生那边表现为"点了开始考试转很久"。减到 256 色之后比原图还小。
+    """
+    PIL = pytest.importorskip("PIL.Image")
+    import tempfile
+    from pathlib import Path as P
+    from app.config import settings
+
+    root = P(tempfile.mkdtemp()) / "uploads"
+    (root / "images").mkdir(parents=True)
+    photo = PIL.new("RGB", (1400, 1000))
+    for x in range(1400):                       # 渐变，比纯色更接近真实照片
+        for y in range(0, 1000, 25):
+            photo.putpixel((x, y), (x % 256, y % 256, (x + y) % 256))
+    photo.save(root / "images" / "照片.jpg", format="JPEG", quality=85)
+    before = (root / "images" / "照片.jpg").stat().st_size
+
+    old = settings.upload_dir
+    settings.upload_dir = str(root)
+    try:
+        _name, data = images.as_png("/uploads/images/照片.jpg")
+    finally:
+        settings.upload_dir = old
+    assert len(data) <= before * 1.2, (
+        f"转完 {len(data)//1024} KB，原图才 {before//1024} KB —— 考试包会撑爆")
+
+
 def test_png_is_passed_through_untouched(tmp_path, monkeypatch):
     """已经是 PNG 的**一个像素都不动** —— 重新编码只会掉质量。"""
     from app.config import settings

@@ -51,7 +51,7 @@ import json
 import zipfile
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -62,7 +62,7 @@ from ..database import get_db
 from ..deps import get_current_user
 from ..models import Exam, ExamSubmission, Student, User
 from ..schemas import ExamBrief, SignInIn, SignInOut, StudentBrief
-from ..services import docx_io, images
+from ..services import docx_io, images, packcache
 from ..services.exam import group_items, load_items, strip_answers
 
 router = APIRouter(prefix="/api/desk", tags=["桌面客户端"])
@@ -234,13 +234,31 @@ def build_package(db: Session, exam: Exam, server: str = "") -> bytes:
     return buf.getvalue()
 
 
-def _as_download(raw: bytes, title: str) -> Response:
-    return Response(
-        content=raw,
-        media_type="application/octet-stream",
-        headers={"Content-Disposition":
-                 f"attachment; filename*=UTF-8''{quote(title + '.ekb')}"},
-    )
+def _as_download(raw: bytes, title: str, mark: str = "") -> Response:
+    headers = {"Content-Disposition":
+               f"attachment; filename*=UTF-8''{quote(title + '.ekb')}"}
+    if mark:
+        # 学生重开程序、退出考试再进来，包没变就不用再传 900 KB
+        headers["ETag"] = f'"{mark}"'
+        headers["Cache-Control"] = "private, max-age=0, must-revalidate"
+    return Response(content=raw, media_type="application/octet-stream",
+                    headers=headers)
+
+
+def cached_package(db: Session, exam: Exam, server: str) -> tuple[str, bytes]:
+    """这场考试的包。**同一版只建一次，全班共用那份字节。**
+
+    不缓存的话，五十个学生同时开考就是五十次重建（每次要查题、摘答案、铺文件、
+    把配图从 JPEG 转成 PNG、压 zip，实测约半秒）外加五十份 900 KB 挤同一条
+    上行链路 —— 学生那边就是"点了开始考试，转很久"。
+    """
+    mark = packcache.fingerprint(db, exam, server)
+    key = f"{exam.id}:{server}"
+    got = packcache.get(key, mark)
+    if got is None:
+        got = build_package(db, exam, server)
+        packcache.put(key, mark, got)
+    return mark, got
 
 
 @router.get("/export/{exam_id}", summary="老师手工导出桌面考试包（.ekb）")
@@ -257,7 +275,8 @@ def export_pkg(
     exam = db.get(Exam, exam_id)
     if not exam or not exam.paper:
         raise HTTPException(status_code=404, detail="这场考试不存在")
-    return _as_download(build_package(db, exam, server), exam.title)
+    mark, raw = cached_package(db, exam, server)
+    return _as_download(raw, exam.title, mark)
 
 
 @router.post("/signin", response_model=SignInOut, summary="学生端认人：我是谁、我考什么")
@@ -315,6 +334,7 @@ def signin(body: SignInIn, db: Session = Depends(get_db)):
 def fetch_pkg(
     token: str,
     server: str = Query("", description="交卷要连的地址，留空用配置里的"),
+    if_none_match: str = Header("", alias="If-None-Match"),
     db: Session = Depends(get_db),
 ):
     """免登录，凭口令取卷 —— 和网页端 `/api/take/{token}` 同一个准入规则。
@@ -327,7 +347,15 @@ def fetch_pkg(
         raise HTTPException(status_code=404, detail="口令无效，请向老师确认")
     if not exam.is_open:
         raise HTTPException(status_code=403, detail="这场考试已经关闭")
-    return _as_download(build_package(db, exam, server), exam.title)
+
+    base = (server or settings.public_base_url or "").strip().rstrip("/")
+    mark = packcache.fingerprint(db, exam, base)
+    if if_none_match.strip('"') == mark:
+        # 学生手上那份还是最新的，**一个字节都不用再传**
+        return Response(status_code=304, headers={"ETag": f'"{mark}"'})
+
+    _mark, raw = cached_package(db, exam, base)
+    return _as_download(raw, exam.title, mark)
 
 
 def _covers(exam: Exam, cls: str) -> bool:
