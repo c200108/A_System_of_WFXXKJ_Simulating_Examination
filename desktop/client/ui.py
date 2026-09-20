@@ -633,6 +633,11 @@ class ReviewPage(Page):
 
         tk.Label(c, text=q.get("stem", ""), bg=CARD, font=(FONT, 11), anchor="w",
                  justify="left", wraplength=700).pack(fill="x", padx=12, pady=(2, 4))
+        if q.get("image_url"):
+            # 配图只在考试包里有（转过 PNG 的那份），回看时手上没有。
+            # 不声明一句的话，"请仔细读图"的题在这儿看着像少了东西。
+            tk.Label(c, text="（本题有配图，考试时显示在题目下方）", bg=CARD, fg=GRAY,
+                     font=(FONT, 9), anchor="w").pack(fill="x", padx=12)
         for o in q.get("options") or []:
             tk.Label(c, text=f"{o.get('label', '')}．{o.get('content', '')}", bg=CARD,
                      fg="#4a5563", font=(FONT, 10), anchor="w", justify="left",
