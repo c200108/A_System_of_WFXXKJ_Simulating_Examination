@@ -11,6 +11,7 @@ from .routers import (
     classes,
     community,
     config,
+    desk,
     dicts,
     exams,
     imports,
@@ -49,6 +50,7 @@ app.include_router(sims.router)  # 仿真操作题：题面环境与判分规则
 app.include_router(imports.router)
 app.include_router(papers.router)
 app.include_router(exams.router)
+app.include_router(desk.router)  # 桌面客户端：导出考试包（交卷走 take 那条路）
 app.include_router(take.router)  # 凭链接答题，公开访问
 app.include_router(students.student_api)  # 学生平台，认学生令牌
 app.include_router(students.admin_api)  # 学生账号管理，认教师令牌

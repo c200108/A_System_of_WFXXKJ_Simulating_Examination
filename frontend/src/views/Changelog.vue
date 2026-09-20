@@ -35,6 +35,26 @@ const styleOf = t => TYPE_STYLE[t] || TYPE_STYLE.Changed
 
 const isTeacher = computed(() => !!currentUser.value)
 
+/**
+ * 2.8.0 之后分成两条线：**仿真环境走 3.x，学生桌面端走 4.x**。
+ *
+ * 两条线各改各的，版本号各自进位 —— 使用者关心的是"我用的那一头变了什么"，
+ * 把两边的改动混在一条时间线里，看的人得自己分辨哪条跟自己有关。
+ *
+ * 大版本号就是线的标记，所以这里按它分组，不用再往库里加字段。
+ */
+const TRACKS = [
+  { key: '4', title: '学生桌面端', hint: '机房里发的那个 exe', color: 'var(--el-color-primary)' },
+  { key: '3', title: '仿真环境', hint: '网页里的操作题仿真器与判分', color: 'var(--el-color-success)' }
+]
+const majorOf = v => String(v.version || '').split('.')[0]
+const tracks = computed(() =>
+  TRACKS.map(t => ({ ...t, items: versions.value.filter(v => majorOf(v) === t.key) }))
+    .filter(t => t.items.length)
+)
+// 2.8.0 及更早是两条线共同的历史
+const trunk = computed(() => versions.value.filter(v => Number(majorOf(v)) <= 2))
+
 async function load() {
   loading.value = true
   try {
@@ -88,16 +108,59 @@ async function removeItem(item) {
 
     <el-empty v-if="!versions.length && !loading" description="还没有更新记录" />
 
-    <section v-for="(v, vi) in versions" :key="v.version" class="ver">
+    <!-- 两条线：仿真环境 3.x、学生桌面端 4.x。各自成组，别混在一条时间线里 -->
+    <div v-for="t in tracks" :key="t.key" class="track" :style="{ '--track': t.color }">
+      <div class="thead">
+        <span class="tdot" />
+        <b>{{ t.title }}</b>
+        <span class="thint">{{ t.hint }}　·　{{ t.key }}.x</span>
+      </div>
+      <section v-for="(v, vi) in t.items" :key="v.version" class="ver">
+        <div class="rail">
+          <span class="dot" :class="{ latest: vi === 0 }" />
+          <span v-if="vi < t.items.length - 1" class="line" />
+        </div>
+        <div class="body">
+          <div class="vhead">
+            <h2>{{ v.version }}</h2>
+            <span v-if="vi === 0" class="latest-tag">最新</span>
+            <time>{{ v.released_on }}</time>
+          </div>
+          <div v-for="g in v.groups" :key="g.type" class="grp">
+            <div class="gtitle" :style="{ color: styleOf(g.type).color }">
+              <span class="gicon" :style="{ background: styleOf(g.type).bg }">
+                {{ styleOf(g.type).icon }}
+              </span>
+              {{ g.label }}
+              <span class="gen">{{ g.type }}</span>
+            </div>
+            <ul>
+              <li v-for="it in g.items" :key="it.id">
+                <span>{{ it.content }}</span>
+                <el-button v-if="isTeacher" link type="danger" class="del"
+                           @click="removeItem(it)">删除</el-button>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div v-if="tracks.length && trunk.length" class="fork">
+      从 2.8.0 起分成两条线：<b>仿真环境</b>走 3.x，<b>学生桌面端</b>走 4.x。
+      下面是分线之前的共同记录。
+    </div>
+
+    <section v-for="(v, vi) in trunk" :key="v.version" class="ver">
       <div class="rail">
-        <span class="dot" :class="{ latest: vi === 0 }" />
-        <span v-if="vi < versions.length - 1" class="line" />
+        <span class="dot" :class="{ latest: !tracks.length && vi === 0 }" />
+        <span v-if="vi < trunk.length - 1" class="line" />
       </div>
 
       <div class="body">
         <div class="vhead">
           <h2>{{ v.version }}</h2>
-          <span v-if="vi === 0" class="latest-tag">最新</span>
+          <span v-if="!tracks.length && vi === 0" class="latest-tag">最新</span>
           <time>{{ v.released_on }}</time>
         </div>
 
@@ -189,6 +252,33 @@ h1 {
 .sub a {
   color: var(--el-color-primary);
   text-decoration: none;
+}
+
+.track { margin-bottom: 10px; }
+.thead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 18px 0 8px;
+  padding-left: 2px;
+}
+.thead b { font-size: 15px; color: var(--track); }
+.tdot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--track);
+  align-self: center;
+}
+.thint { font-size: 12px; color: var(--el-text-color-secondary); }
+.fork {
+  margin: 26px 0 14px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--el-border-color);
+  background: var(--el-fill-color-lighter);
+  border-radius: 0 6px 6px 0;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
 }
 
 .ver {

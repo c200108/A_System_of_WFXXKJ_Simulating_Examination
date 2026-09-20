@@ -750,6 +750,37 @@ class SimTryIn(BaseModel):
     checks: list[dict] | None = None      # 不传就用库里存的
 
 
+# ==================================================== 桌面客户端（desktop/）
+class SignInIn(BaseModel):
+    """学生端开机第一件事：报考号和姓名。没有密码 —— 学号不是秘密，
+    这一步要挡的是"把卷子发给不该考的人"，不是身份认证。"""
+
+    student_no: str = Field(max_length=32)
+    name: str = Field(default="", max_length=64)
+
+
+class StudentBrief(BaseModel):
+    no: str
+    name: str
+    cls: str = ""
+
+
+class ExamBrief(BaseModel):
+    """给学生端列的那一行：够它显示和取卷，不含任何题目内容。"""
+
+    id: int
+    title: str
+    token: str
+    duration_min: int = 45
+    submitted: bool = False
+    can_take: bool = True
+
+
+class SignInOut(BaseModel):
+    student: StudentBrief
+    exams: list[ExamBrief] = Field(default_factory=list)
+
+
 # QuestionOut 里引用了下面才定义的 SimBrief，这里补一次解析。
 # 不补的话某些 FastAPI 版本在生成 OpenAPI 时会报 "class not fully defined"。
 QuestionOut.model_rebuild()

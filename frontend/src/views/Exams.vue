@@ -161,6 +161,13 @@ async function saveManual() {
   }
 }
 
+async function exportDeskPack(row) {
+  // 平时不用点：学生端 exe 联网登录后会自己把卷子取下来。
+  // 这个按钮是给"机房网断了"准备的 —— 导出来拷过去，照样能考，考完收 .ans。
+  await download(api.exportDeskPack(row.id), `${row.title}.ekb`)
+  ElMessage.success('考试包已下载，拷到学生机上和 exe 放一起即可离线开考')
+}
+
 async function exportScores() {
   await download(api.exportScores(current.value.id), `${current.value.title}_成绩.xlsx`)
   ElMessage.success('已下载成绩汇总')
@@ -272,9 +279,15 @@ const hardest = computed(() => {
           {{ row.avg_score ?? '—' }}<span v-if="row.full_score" class="of">/{{ row.full_score }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="110" fixed="right">
+      <el-table-column label="操作" width="176" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openScores(row)">成绩</el-button>
+          <el-button
+            link
+            type="primary"
+            title="机房断网时的后路：导出来拷到学生机上，和考试客户端 exe 放一个文件夹"
+            @click="exportDeskPack(row)"
+          >考试包</el-button>
           <el-button
             v-if="row.can_edit"
             link

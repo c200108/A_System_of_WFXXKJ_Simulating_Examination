@@ -8,6 +8,7 @@
 > - 每个文件是干什么的、改功能该动哪里 → [docs/项目结构.md](docs/项目结构.md)
 > - 加了新功能怎么发到服务器 → [docs/开发与发布流程.md](docs/开发与发布流程.md)
 > - 部署到公网服务器 → [docs/部署指南.md](docs/部署指南.md)
+> - 机房里用 exe 考试（操作题在真系统里做）→ [desktop/README.md](desktop/README.md)
 > 要部署到有公网 IP 的机器给全校用 → 看 [docs/部署指南.md](docs/部署指南.md)
 > 
 > 想改学校名、默认题量、及格线、导入规则 → 改根目录的 [config.yaml](config.yaml)，重启后端即生效
@@ -48,10 +49,20 @@ A_System_of_WFXXKJ_Simulating_Examination/
 │  ├─ tools/migrate_from_html.py   把老 HTML 里的题搬进数据库
 │  └─ tests/                 test_logic.py 核心逻辑 + test_api.py 接口端到端
 │
-└─ frontend/                 Vue 3 + Vite + Element Plus
-   └─ src/views/             Login / Paper（组卷）/ Questions（题库）/ Import（导入）
-                             Exams（考试）/ Users（账号）/ Take（学生答题，免登录）
+├─ frontend/                 Vue 3 + Vite + Element Plus
+│  └─ src/views/             Login / Paper（组卷）/ Questions（题库）/ Import（导入）
+│                            Exams（考试）/ Users（账号）/ Take（学生答题，免登录）
+│
+└─ desktop/                  机房用的学生端 exe（操作题在真实系统里做）
+   ├─ client/                api 联网 / snapshot 快照 / package 考试包 / ui 界面
+   ├─ exam_client.py         入口，打包成 exe 的就是它
+   ├─ build.py               打包（兼容 Win7/8/10/11，看它的开头说明）
+   └─ tests/                 起一个真后端走完整条链路
 ```
+
+> 桌面端**不是另一套系统**：学生、试卷、考试全部来自同一个库，交卷走的还是
+> `/api/take/{token}/submit`，所以判分、成绩页、阅卷界面都没动。
+> 后端那一半在 `backend/app/routers/desk.py`。
 
 ---
 
@@ -94,6 +105,14 @@ A_System_of_WFXXKJ_Simulating_Examination/
 ```bash
 cp .env.example .env
 ```
+
+打开项目的 `.env` 或者 `docker-compose.yml`，找到 `REGISTRY=`，设置：
+
+```
+REGISTRY=docker.1ms.run
+```
+
+这样构建的时候，拉取镜像地址会直接变成 `docker.1ms.run/library/mysql:8.0`，直接访问加速仓库，不再依赖全局 registry-mirrors。
 
 改 `.env` 里的三处：`MYSQL_PASSWORD`、`JWT_SECRET`、`ADMIN_PASSWORD`。然后：
 

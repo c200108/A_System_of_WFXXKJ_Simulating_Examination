@@ -218,6 +218,9 @@ export const api = {
     http.patch(`/exams/${id}/submissions/${sid}/manual`, { scores }),
   examStats: id => http.get(`/exams/${id}/stats`),
   exportScores: id => http.get(`/exams/${id}/export.xlsx`, { responseType: 'blob' }),
+  // 桌面考试包：正常流程用不着（学生端联网自己取卷），这是机房断网时的后路
+  exportDeskPack: id =>
+    http.get(`/desk/export/${id}`, { params: { server: location.origin }, responseType: 'blob' }),
 
   // 打字训练
   typingConfig: () => http.get('/typing/config'),
