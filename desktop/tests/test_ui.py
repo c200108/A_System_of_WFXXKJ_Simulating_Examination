@@ -402,6 +402,67 @@ def test_retry_after_a_restart(app, server, exam, monkeypatch):
     assert not store.pending_uploads(app.out_dir)
 
 
+# ================================================================ 交卷之后
+def submitted(app, server, exam, no):
+    """考一场、交一次卷，回到主界面的考试列表。"""
+    frame = start_exam(app, server, exam, no)
+    do_the_work(app.exam_root)
+    frame.do_submit()
+    assert settle(app, 20, on(app, exam_ui.DoneFrame))
+    app.back_to_shell()
+    shell = app.frame
+    assert settle(app, until=lambda: shell.body.exams), "考试列表没加载出来"
+    return shell
+
+
+def test_score_shows_up_in_the_exam_list(app, server, exam):
+    """**考完就能看见自己考了多少。**
+
+    分数来自服务器（老师批完就变），不是本机算的 —— 所以点一下刷新就能看到
+    新分。这也是"交卷后不再显示开始考试"那条的另一半：卷子交了，得有个交代。
+    """
+    shell = submitted(app, server, exam, "26090112")
+    words = " ".join(labels_in(shell.body))
+    mine = next(e for e in shell.body.exams if e["id"] == exam["exam"]["id"])
+    assert mine["submitted"], "服务器那边没记上交卷"
+    assert "已交卷" in words
+    if mine.get("score") is not None:
+        assert str(mine["score"]) in words, "分数没显示出来"
+
+
+def test_submitted_exam_offers_review_not_start(app, server, exam):
+    """交过卷就不该再有「开始考试」—— 点下去只会撞一个"你已经交过了"。"""
+    shell = submitted(app, server, exam, "26090117")
+    assert "查 看" in labels_in(shell.body)
+    # 列表上还有别的考试没交，「开始考试」的个数应当正好等于还能考的场次
+    can = [e for e in shell.body.exams
+           if not e.get("submitted") or e.get("allow_retake")]
+    assert labels_in(shell.body).count("开始考试") == len(can)
+
+
+def test_review_shows_my_answers_without_telling_me_right_or_wrong(app, server, exam):
+    """回看页默认只显示"我选了什么"。
+
+    考试分批考时，先考完的学生要是能看到对错，题目当场就传出去了。对错要等
+    老师在网页后台开了「考后可看答案」才出现，而且是**服务器决定发不发**。
+    """
+    shell = submitted(app, server, exam, "26090118")
+    mine = next(e for e in shell.body.exams if e["id"] == exam["exam"]["id"])
+    shell.go("review", mine)
+    page = shell.body
+    assert isinstance(page, ui.ReviewPage)
+    assert settle(app, until=lambda: "我的作答" in " ".join(labels_in(page))), \
+        page.msg.cget("text")
+
+    words = " ".join(labels_in(page))
+    assert "正确答案" not in words, "老师还没开放答案，不该显示正确答案"
+    assert "✓ 正确" not in words and "✗ 错误" not in words, "不该显示对错"
+    # 回看是考试页下面的一层：侧边栏仍然停在「考试」，顶上多一个返回
+    assert shell.page == "review"
+    shell.go("exam")
+    assert isinstance(shell.body, ui.ExamListPage)
+
+
 # ================================================================ 打字练习
 def test_typing_page_fetches_a_passage(app, server, exam):
     shell = signed_in(app, server)

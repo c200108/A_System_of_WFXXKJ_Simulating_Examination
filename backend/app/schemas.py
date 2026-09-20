@@ -212,6 +212,10 @@ class StudentHomeOut(BaseModel):
     student: StudentOut
     exam_total: int = 0
     exam_done: int = 0
+    # 已出分的那几场考试的平均分，**折成百分制**：卷面总分各场不一样
+    # （100 分的期末和 50 分的小测），直接平均出来的数没有意义。
+    # 一场都没考、或者老师都关了"交卷后看分数"时是 None。
+    exam_avg_score: int | None = None
     typing_count: int = 0
     typing_best_speed: int = 0
     typing_avg_accuracy: int = 0

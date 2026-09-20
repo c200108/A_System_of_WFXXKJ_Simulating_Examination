@@ -242,6 +242,40 @@ def test_preview_reports_shortfall(client, auth, stocked):
     assert any("Windows" in s for s in body["shortfall"]), body["shortfall"]
 
 
+@pytest.fixture(scope="module")
+def web_ops(client, auth, stocked):
+    """往「计算机网络基础」里塞两道**网页文件**操作题。
+
+    题干里带"将网页标题修改为……"，题干解析会把它认成网页题（html）——
+    和同一个知识范围里那 5 道拖拽题混在一起，光靠知识范围分不开。
+    """
+    return [_add(client, auth, "操作题", "计算机网络基础",
+                 f"将网页标题修改为“校园网{i}”，并把背景色改为“#980015”。")
+            for i in range(2)]
+
+
+def test_internet_section_takes_only_drag_questions(client, auth, web_ops):
+    """「互联网原理与创新」的操作题只出拖拽类，网页文件题不进这个大题。
+
+    这两类题在同一个知识范围里，但考的不是一回事：网页题要在真机上建文件夹、
+    改源码，放在这个大题里学生当场就卡住。所以按**操作题的类别**筛（sim_kinds），
+    不是按知识范围筛。
+    """
+    # 池子里只剩那 5 道拖拽题 —— 要 99 道时报的可选数就是证据
+    res = client.post("/api/papers/preview-plan",
+                      json={"section_counts": {"互联网原理与创新/1": 99}}, headers=auth)
+    assert res.status_code == 200, res.text
+    hit = [s for s in res.json()["shortfall"] if "互联网原理与创新" in s]
+    assert hit and "只有 5 道可选" in hit[0], hit
+
+    # 真抽一次：把 5 个名额全要走，两道网页题一道都不该冒出来
+    body = _generate(client, auth, by_sections=True,
+                     section_counts={"互联网原理与创新/1": 5})
+    got = {q["id"] for g in body["groups"] if g["name"] == "互联网原理与创新"
+           for q in g["items"]}
+    assert len(got & set(web_ops)) == 0, "网页文件题混进了互联网原理与创新"
+
+
 def test_saved_section_paper_reopens_with_scores(client, auth, stocked):
     made = _generate(client, auth, save=True)
     again = client.get(f"/api/papers/{made['paper_id']}", headers=auth).json()

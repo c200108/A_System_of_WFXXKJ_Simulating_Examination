@@ -23,11 +23,18 @@ from sqlalchemy.orm import Session
 
 from ..models import Question
 from ..siteconfig import PaperSectionConf, site
+from .exam import sim_kind_of
 from .sampler import pick
 
 # 主观题在同一个大题里的分数权重。乘 2 只是让它排在前面，
 # 真正保证"操作题分最高"的是后面的 _lift_manual() 修正。
 MANUAL_WEIGHT = 2.0
+
+# 操作题类别在提示语里怎么说（组卷页上的标签另有一份，见 Paper.vue）
+KIND_LABELS = {
+    "win": "Windows 操作", "wps": "WPS 文字", "html": "网页文件",
+    "ai": "AI 工具", "drag": "拖拽题",
+}
 
 
 def manual_types() -> set[str]:
@@ -44,7 +51,22 @@ def is_long_or_image(q: Question) -> bool:
 # ---------------------------------------------------------------- 抽题
 
 
-def _slot_pool(
+def slot_hint(slot) -> str:
+    """这一组在提示语里怎么称呼。
+
+    一个大题里常常有三组同题型的题（Windows → WPS → 人工智能），光说"操作题
+    不够"没法让老师知道该往哪个范围补题。所以**从 slot 本身拼一句**，不靠
+    手写的说明文字 —— 手写的那份现在界面上也不显示了，忘了改就会说反。
+    """
+    bits = list(slot.scopes) or [slot.type]
+    if slot.sim_kinds:
+        bits += [KIND_LABELS.get(k, k) for k in slot.sim_kinds]
+    if slot.prefer == "long_or_image":
+        bits.append("长题干或带图")
+    return " ".join(bits)
+
+
+def slot_pool(
     db: Session, slot, *, scopes_filter: list[str] | None, require_answer: bool
 ) -> list[Question]:
     stmt = select(Question).where(
@@ -60,6 +82,12 @@ def _slot_pool(
     # 主观题本来就靠人看，没写答案要点也能出。
     if require_answer or slot.type not in manual_types():
         pool = [q for q in pool if (q.answer or "").strip()]
+
+    # 限定操作题的类别（网页文件 / 拖拽 / Windows …）。知识范围分不开这件事：
+    # 「计算机网络基础」里既有要在真机上改源码的网页题，也有拖拽类的流程图题。
+    if slot.sim_kinds:
+        want = set(slot.sim_kinds)
+        pool = [q for q in pool if sim_kind_of(q) in want]
     return pool
 
 
@@ -119,16 +147,15 @@ def pick_sections(
 
     for si, li, sec, slot, want in jobs:
         wanted_slot = slot.model_copy(update={"count": want})
-        pool = _slot_pool(db, wanted_slot, scopes_filter=scopes, require_answer=require_answer)
+        pool = slot_pool(db, wanted_slot, scopes_filter=scopes, require_answer=require_answer)
         chosen = _fill_slot(pool, wanted_slot, used, scope_order, rnd, use_pinned)
         used.update(q.id for q in chosen)
         picked[f"{si}/{li}"] = chosen
 
         if len(chosen) < want:
-            where = f"「{sec.name}」" + (f"·{slot.label}" if slot.label else "")
-            scope_hint = f"（{'、'.join(slot.scopes)}）" if slot.scopes else ""
             warnings.append(
-                f"{where}要 {want} 道{slot.type}{scope_hint}，题库里只凑出 {len(chosen)} 道"
+                f"「{sec.name}」·{slot_hint(slot)}要 {want} 道{slot.type}，"
+                f"题库里只凑出 {len(chosen)} 道"
             )
 
     out = []

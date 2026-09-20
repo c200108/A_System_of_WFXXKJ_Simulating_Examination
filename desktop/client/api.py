@@ -257,6 +257,19 @@ def my_exams(server: str, token: str) -> list:
     return got if isinstance(got, list) else []
 
 
+def review(server: str, token: str, exam_id) -> dict:
+    """回看自己交的那份卷。
+
+    **对错和每题得分要看老师放没放**（服务器按 show_answer 决定给不给），
+    客户端只管显示收到的东西 —— 判"能不能看"的活儿放在服务端，exe 被反编译
+    也套不出答案来。
+
+    分数是**当场读的**，不是交卷那一刻的快照：老师批完操作题，学生点一下
+    刷新就能看到新分。
+    """
+    return _json(f"{norm(server)}/api/student/exams/{exam_id}/review", token=token)
+
+
 # ================================================================ 打字练习
 def typing_config(server: str) -> dict:
     return _json(f"{norm(server)}/api/typing/config")
