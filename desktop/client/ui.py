@@ -34,7 +34,23 @@ from tkinter import filedialog, messagebox, ttk
 from . import api, cleanup, package, snapshot, states, store
 from .exam_ui import DoneFrame, ExamFrame
 from .shell import (AMBER, APP_NAME, BG, BLUE, CARD, CLIENT_VER, FONT, GRAY,
-                    GREEN, LINE, RED, build_stamp, in_thread)
+                    GREEN, LINE, RED, baked_server, build_stamp, in_thread,
+                    server_from_name)
+
+
+def default_server() -> str:
+    """登录页里那个地址栏默认填什么。**顺序是有讲究的：**
+
+        ① exe 文件名里写的      网管刚改的名，是最新的决定
+        ② 本机上次保存的        这台机器用过、连通过
+        ③ 打包时烤进去的        出厂默认
+
+    命令行 `--server` 比这三个都高，在 `ExamApp` 那儿直接盖掉。
+
+    文件名排在保存值前面是故意的：教师端换了 IP，网管把 exe 改个名 ghost 出去，
+    不该被各机器上那个过期的保存值顶掉。
+    """
+    return server_from_name() or store.remembered_server() or baked_server()
 
 SIDE = "#22303f"                 # 侧边栏底色，比正文暗一档
 SIDE_ON = "#2c6fd1"
@@ -86,7 +102,7 @@ class LoginFrame(ttk.Frame):
             if key == "server":
                 self.server_entry = entry
 
-        self.vars["server"].set(self.app.server or store.remembered_server())
+        self.vars["server"].set(self.app.server or default_server())
 
         self.net_lbl = tk.Label(card, text="", bg=CARD, fg=GRAY, font=(FONT, 9), anchor="w")
         self.net_lbl.place(x=30, y=170, width=310)

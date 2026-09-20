@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""这台机器上存的那点东西：教师端地址、答题草稿、还没传上去的答卷。
+r"""这台机器上存的那点东西：教师端地址、答题草稿、还没传上去的答卷。
 
 考试数据一律来自服务器，本地只留三样：
 
   设置    教师端地址。**机房里一台一台输地址太折腾**，第一次输完记下来，
-          以后开机直接连。存在 exe 旁边，整个文件夹 ghost 到全机房就都有了。
+          以后开机直接连。
   草稿    每次作答都写一份。机房跳闸不是小概率事件，重开要能接着考。
   补传    哪些 .ans 已经传上去了。考完监考老师一眼看出谁还没传上。
   记录    这台机器上考过的每一场，一场一行。按中考的做法，**每台机器都要留下
@@ -13,6 +13,18 @@
 
 三样都是"丢了也不影响正确性"的东西，所以读写一律吞掉异常 ——
 写不了草稿不该让学生考不成试。
+
+## 这些东西写在哪
+
+默认写进 **`%LOCALAPPDATA%\信息技术考试客户端\`**，不写在 exe 旁边。三个原因：
+
+  · **只发一个 exe 就够了。** 写在 exe 旁边的话，程序一跑起来就在那儿长出
+    「客户端设置.json」和「答案包」文件夹 —— 想只拷一个 exe 到桌面是做不到的。
+  · exe 可能放在**只读的位置**（网络共享、被组策略锁住的桌面），往旁边写会失败。
+  · 一台机器多个学生轮流用，各自的草稿本来就该分开放。
+
+**但 exe 旁边如果已经有设置文件，仍然优先用它** —— 早先的部署方式是整个文件夹
+ghost 到全机房，那些机器升级 exe 之后不该突然忘掉地址。
 """
 
 from __future__ import annotations
@@ -29,11 +41,50 @@ UPLOAD_NAME = "上传状态.json"
 LOG_NAME = "考试记录.csv"
 
 
+APP_DIR_NAME = "信息技术考试客户端"
+
+
 def here() -> Path:
     """exe 所在目录（打包后）或脚本所在目录（开发时）。"""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
     return Path(__file__).resolve().parent.parent
+
+
+def data_dir() -> Path:
+    """运行时数据往哪写。
+
+    **不写在 exe 旁边**，这样"只发一个 exe"才真的成立 —— 否则程序一跑就在
+    exe 边上长出设置文件和答案包文件夹。
+
+    顺序：LOCALAPPDATA → APPDATA → 临时目录。三个都拿不到的极端情况下退回
+    exe 目录，总比崩了强。
+    """
+    for key in ("LOCALAPPDATA", "APPDATA"):
+        base = os.environ.get(key)
+        if base and Path(base).is_dir():
+            got = Path(base) / APP_DIR_NAME
+            try:
+                got.mkdir(parents=True, exist_ok=True)
+                return got
+            except OSError:
+                continue
+    got = Path(os.environ.get("TEMP", ".")) / APP_DIR_NAME
+    try:
+        got.mkdir(parents=True, exist_ok=True)
+        return got
+    except OSError:
+        return here()
+
+
+def config_path() -> Path:
+    """设置文件在哪。
+
+    **exe 旁边那份优先** —— 早先的部署方式是整个文件夹 ghost 到全机房，
+    那些机器换上新 exe 之后不该突然忘掉教师端地址。
+    """
+    beside = here() / CONFIG_NAME
+    return beside if beside.is_file() else data_dir() / CONFIG_NAME
 
 
 def _read(path: Path) -> dict:
@@ -53,13 +104,13 @@ def _write(path: Path, data: dict) -> None:
 
 # ================================================================ 设置
 def load_config() -> dict:
-    return _read(here() / CONFIG_NAME)
+    return _read(config_path())
 
 
 def save_config(**kw) -> None:
     got = load_config()
     got.update({k: v for k, v in kw.items() if v is not None})
-    _write(here() / CONFIG_NAME, got)
+    _write(config_path(), got)
 
 
 def remembered_server() -> str:
