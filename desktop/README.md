@@ -121,12 +121,44 @@ python build.py --python D:\Python38-32\python.exe   # 覆盖到 Win7
 
 要覆盖 Win7 就装 Python 3.8.10（最后一个带 Windows 安装包的 3.8），**挑 32 位
 那版**：32 位 exe 在 32 位和 64 位 Windows 上都能跑，机房里总有几台老机器。
+用 64 位的 3.8 打也能覆盖 Win7，但只覆盖 **64 位**的 Win7。
+
+### 为什么 3.9+ 不行（不是"没测过"，是真跑不了）
+
+Python 3.9 起，`pythonXY.dll` 引入了 `api-ms-win-core-path-l1-1-0.dll`，
+这个 API 组件 **Win7 上根本不存在**。自己查一眼就知道：
+
+```python
+import pefile                                   # pip install pefile
+pe = pefile.PE(r"...\python310.dll", fast_load=True)
+pe.parse_data_directories([pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_IMPORT"]])
+print(sorted({e.dll.decode().lower() for e in pe.DIRECTORY_ENTRY_IMPORT}))
+# 3.10 → 里面有 api-ms-win-core-path-l1-1-0.dll；3.8 → 没有
+```
+
+症状是**双击没反应、不报错**（或者一个看不懂的"找不到 DLL"弹窗）——
+和"杀软拦了"、"少了 UCRT 补丁"长得一模一样，所以先查这个。
+
+打出来的 exe 本身只依赖 `kernel32 / user32 / gdi32 / advapi32 / comctl32`
+这五个老 DLL，Win7 全都有。
 
 Win7 上另外两件事：机器得打了 SP1 和 KB2999226（通用 C 运行库），否则双击没反应
 也不报错；杀软容易拦没签名的单文件 exe，先加白名单，或者用 `--onedir` 打成文件夹。
 
 程序本身只用 Python 标准库（Tkinter + urllib + zipfile），没有第三方依赖，
-所以换 Python 版本重打不会有兼容问题。
+所以换 Python 版本重打不会有兼容问题。换版本之后值得跑一遍的三样：
+
+```bash
+# ① 源码在这个 Python 上跑得起来（导入、Tk、HTTP、快照、压缩包）
+<那个python> exam_client.py --selftest 自检.txt --server 111.170.33.3:3315
+# ② 不依赖后端的那几组用例
+<那个python> -m pytest desktop/tests/test_cleanup.py desktop/tests/test_single_exe.py -q
+# ③ 打包（build.py 打完会自动让 exe 再自检一遍，过不了就不出包）
+python build.py --python <那个python> --server 111.170.33.3:3315
+```
+
+Tk 的版本是跟着 Python 走的（3.8 带 Tk 8.6.9，3.10 带 8.6.12），所以"界面在老
+Tk 上建不建得出来"只能用那个 Python 真跑一遍才知道 —— 不是靠读文档。
 
 ---
 
