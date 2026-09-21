@@ -12,7 +12,19 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+# 装得下的大 JSON。**MySQL 的 TEXT 只有 65535 字节**（中文一个字 3 字节），
+# 装不下就是 1406「Data too long」——在接口上表现为 500。
+#
+# 谁会超：一道 win 操作题交上来的终态是**整个考试文件夹的快照**，而一场考试里
+# win 题有好几道，每道都带一份。实测 93 个对象的考场 + 11 道操作题，
+# answers_json 90 KB、detail_json 108 KB（detail 里还要回抄一遍学生的作答）。
+#
+# **SQLite 的 TEXT 没有长度上限**，所以开发机和测试永远看不见这件事 ——
+# 它只在正式服务器的 MySQL 上炸，而且炸在学生交卷那一刻。
+BIG_JSON = Text().with_variant(LONGTEXT, "mysql")
 
 
 class Base(DeclarativeBase):
@@ -256,8 +268,9 @@ class ExamSubmission(Base):
     student_name: Mapped[str] = mapped_column(String(64), default="")
     student_class: Mapped[str] = mapped_column(String(64), default="")
     student_no: Mapped[str] = mapped_column(String(64), default="", index=True)
-    answers_json: Mapped[str] = mapped_column(Text, default="{}")  # {题目id: 学生作答}
-    detail_json: Mapped[str] = mapped_column(Text, default="[]")  # 每题判分明细
+    # 这两列用 BIG_JSON：操作题交上来的是整个考试文件夹的快照，TEXT 装不下
+    answers_json: Mapped[str] = mapped_column(BIG_JSON, default="{}")  # {题目id: 学生作答}
+    detail_json: Mapped[str] = mapped_column(BIG_JSON, default="[]")  # 每题判分明细
     right_count: Mapped[int] = mapped_column(Integer, default=0)
     objective_count: Mapped[int] = mapped_column(Integer, default=0)
     # 总分 = 客观题得分 + 主观题得分。老卷子（没设分）时仍是百分制折算值。
