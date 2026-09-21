@@ -120,6 +120,27 @@ def test_migrated_schema_matches_models(blank_db):
         )
 
 
+def test_答卷的两列大JSON在MySQL上是LONGTEXT():
+    """MySQL 的 TEXT 只有 65535 **字节**（中文一个字 3 字节），装不下带整份
+    考场快照的答卷 —— 超了报 1406，学生交卷收到 500，卷子只留在本机。
+
+    SQLite 的 TEXT 没有上限，所以这件事在开发机和测试库上看不见；这条就照着
+    MySQL 方言把 DDL 编译出来看一眼，不需要真的连一个 MySQL。
+    """
+    from sqlalchemy.dialects import mysql
+
+    sys.path.insert(0, str(BACKEND_DIR))
+    from app.models import ExamSubmission
+
+    dialect = mysql.dialect()
+    for name in ("answers_json", "detail_json"):
+        got = ExamSubmission.__table__.c[name].type.compile(dialect)
+        assert got == "LONGTEXT", (
+            f"exam_submissions.{name} 在 MySQL 上是 {got}，"
+            "装不下带考场快照的答卷（实测 90~108 KB）"
+        )
+
+
 def test_downgrade_runs(blank_db):
     """降级路径也要能走通，否则升级出问题时没法回退。"""
     cfg = _alembic_config(blank_db)

@@ -172,6 +172,43 @@ def test_same_student_cannot_submit_twice(client, exam):
     assert "交过卷" in res.json()["detail"]
 
 
+def test_带整份考场快照的答卷交得上去(client, auth, exam):
+    """一道 win 操作题交上来的终态是**整个考试文件夹的快照**，一场考试里有几道
+    win 题就带几份，detail_json 里还要把学生的作答回抄一遍。实测 93 个对象的
+    考场 + 11 道操作题：answers_json 90 KB、detail_json 108 KB。
+
+    而 **MySQL 的 TEXT 只装得下 65535 字节**，超了报 1406「Data too long」，
+    接口上就是 500 —— 学生那头看到的是「答卷已存到本机，但没能上传」，
+    真在机房里发生过（2026-09-21）。
+
+    **SQLite 没有长度上限**，所以这条在开发机上永远绿 —— 它真正守的是两件事：
+    models.py 里那两列必须是 BIG_JSON，以及 TEST_DATABASE_URL 指向 MySQL
+    跑一遍时（见 conftest 开头）能立刻暴露出来。
+    """
+    import json
+
+    op = next(q for q in exam["paper"]["questions"] if q["type"] == "操作题")
+    shot = {f"C:/EXAM/win操作/资料{i}/记录{i}.txt":
+            {"type": "file", "size": 320, "md5": f"{i:032d}",
+             "content": "学生整理的资料，" * 8} for i in range(240)}
+    fat = json.dumps({"state": {"fs": shot, "recycle": {}}}, ensure_ascii=False)
+    assert len(fat.encode("utf-8")) > 65535, "这份答卷得比 MySQL 的 TEXT 还大才测得出东西"
+
+    res = client.post(
+        f"/api/take/{exam['exam']['token']}/submit",
+        json={"student_name": "金同学", "student_class": "八年级一班",
+              "student_no": "20260199", "answers": {str(op["id"]): fat}},
+    )
+    assert res.status_code == 200, res.text
+
+    eid = exam["exam"]["id"]
+    rows = client.get(f"/api/exams/{eid}/submissions", headers=auth).json()
+    sid = next(r["id"] for r in rows if r["student_no"] == "20260199")
+    got = client.get(f"/api/exams/{eid}/submissions/{sid}", headers=auth).json()
+    mine = next(d["mine"] for d in got["detail"] if d["id"] == op["id"])
+    assert mine == fat, "存进去的答卷被截断了，老师看到的操作题就是残的"
+
+
 def test_retake_when_allowed(client, auth, exam):
     eid = exam["exam"]["id"]
     client.patch(f"/api/exams/{eid}", json={"allow_retake": True}, headers=auth)
