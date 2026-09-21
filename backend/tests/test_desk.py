@@ -231,3 +231,130 @@ def test_missing_prefix_would_score_zero(client, desk_exam):
 
 def test_ping(client):
     assert client.get("/api/desk/ping").json()["ok"] is True
+
+
+# ================================================================ 全卷共用一个前缀
+# 一张卷子上有好几道 win 题时，它们的初始文件全铺在**同一个**考试文件夹里，
+# 学生交上来的也是这一个文件夹的快照。所以"铺文件时剥掉的那一段"和
+# "判分时拼回去的那一段"（logical_root）必须是同一个，而且全卷只能有一个。
+#
+# 两道题的工作目录算出来不一定一样：环境里带不带"自己那层文件夹"这个节点，
+# 算出来就差一层（_common_root 是按父目录取公共前缀的）。原来的写法是
+# 每道题各剥各的、前缀取第一道题的 —— 除第一道之外全判 0 分。
+def _env_with_own_dir_node():
+    """环境里带自己那层文件夹 → 工作目录算出来是 C:/EXAM"""
+    return {"fs": {f"{EXAM_ROOT}/win21": {"type": "dir"},
+                   f"{EXAM_ROOT}/win21/说明.txt": {"type": "file", "content": "甲"}},
+            "recycle": {}}
+
+
+def _env_without_own_dir_node():
+    """环境里只有文件夹**里面**的东西 → 工作目录算出来深一层，是 C:/EXAM/win22"""
+    return {"fs": {f"{EXAM_ROOT}/win22/素材.txt": {"type": "file", "content": "乙"},
+                   f"{EXAM_ROOT}/win22/成品": {"type": "dir"}},
+            "recycle": {}}
+
+
+def test_两道win题的工作目录算出来本来就可能不一样():
+    """先把前提钉住：不是我编的，真会差一层。"""
+    from app.routers.desk import _root_of
+
+    assert _root_of("win", _env_with_own_dir_node()) == EXAM_ROOT
+    assert _root_of("win", _env_without_own_dir_node()) == f"{EXAM_ROOT}/win22"
+
+
+def test_全卷共用一个前缀_加回去要能还原绝对路径():
+    """**这条是整件事的要害**：把 logical_root 拼回相对路径，要一字不差地
+    还原成环境里那条绝对路径 —— 检查点比的就是它。差一层就是"找不到文件"，
+    那道题判 0 分，而两边日志都正常。"""
+    from app.routers.desk import _common_dir, _files_of, _root_of
+
+    envs = [_env_with_own_dir_node(), _env_without_own_dir_node()]
+    root = _common_dir(_root_of("win", e) for e in envs)
+    assert root == EXAM_ROOT, "两道题的公共目录应该是考试文件夹本身"
+
+    for env in envs:
+        rels = _files_of("win", env, root=root)
+        assert rels, "这道题一个文件都没铺出来"
+        for rel in rels:
+            assert f"{root}/{rel}" in env["fs"], (
+                f"{rel} 加回前缀后是 {root}/{rel}，环境里没这条路径 —— 这道题会判 0 分"
+            )
+
+
+def test_一道题算不出目录不连累同卷别的题():
+    from app.routers.desk import _common_dir, _root_of
+
+    broken = {"fs": {"C:": {"type": "dir"}}}          # 只有光杆盘符，算不出目录
+    roots = [_root_of("win", e) for e in (_env_with_own_dir_node(), broken)]
+    assert _common_dir(r for r in roots if r) == EXAM_ROOT
+
+
+def test_工具脚本不传前缀时还是按这道题自己算():
+    """backend/tools 下的两个脚本一次只处理一道题，走的是这条老路，别改坏了。"""
+    from app.routers.desk import _files_of
+
+    rels = _files_of("win", _env_without_own_dir_node())
+    assert set(rels) == {"素材.txt", "成品"}
+
+
+def test_两道win题一起发包_前缀对得上(client, auth):
+    """真发一次包：两道工作目录不一样的 win 题在同一张卷子上。
+
+    组卷是随机抽的，凑不出"这两道题一定同卷"，所以这里直接拼一份存档试卷 ——
+    要测的是打包这一步，不是抽题。
+    """
+    import zipfile as _zip
+
+    from app.database import SessionLocal
+    from app.models import Exam, Paper, PaperItem, Question, SimTask
+    from app.routers.desk import build_package
+
+    db = SessionLocal()
+    try:
+        qids = []
+        for env, title in ((_env_with_own_dir_node(), "甲题"),
+                           (_env_without_own_dir_node(), "乙题")):
+            root = f"{EXAM_ROOT}/win21" if title == "甲题" else f"{EXAM_ROOT}/win22"
+            task = SimTask(kind="win", title=title,
+                           env_json=json.dumps(env, ensure_ascii=False),
+                           checks_json=json.dumps(
+                               [{"desc": "新建「作业」", "score": 5,
+                                 "assert": {"op": "exists", "path": f"{root}/作业",
+                                            "is": "dir"}}], ensure_ascii=False))
+            db.add(task)
+            db.flush()
+            q = Question(type="操作题", stem=f"{title}：新建「作业」文件夹。",
+                         stem_hash=f"desk-root-{title}", answer="", scope="物联网",
+                         sim_task_id=task.id)
+            db.add(q)
+            db.flush()
+            qids.append(q.id)
+
+        paper = Paper(title="两道win题", school="昌邑市实验中学", duration="40")
+        for i, qid in enumerate(qids):
+            paper.items.append(PaperItem(question_id=qid, order_no=i,
+                                         section="操作题", score=10))
+        db.add(paper)
+        db.flush()
+        exam = Exam(paper_id=paper.id, title=paper.title, token=f"desk-root-{paper.id}")
+        db.add(exam)
+        db.commit()
+
+        raw = build_package(db, exam)
+    finally:
+        db.close()
+
+    z = _zip.ZipFile(io.BytesIO(raw))
+    manifest = json.loads(z.read("manifest.json"))
+    names = [n[len("files/"):] for n in z.namelist() if n.startswith("files/")]
+
+    assert manifest["logical_root"] == EXAM_ROOT
+    # 两道题的东西各在各的文件夹里，谁也没被剥掉一层
+    assert "win21/说明.txt" in names
+    assert "win22/素材.txt" in names
+    for rel in names:
+        rel = rel.rstrip("/")
+        assert f"{EXAM_ROOT}/{rel}" in (_env_with_own_dir_node()["fs"]
+                                        | _env_without_own_dir_node()["fs"]), \
+            f"{rel} 加回前缀后对不上任何一道题的环境"
