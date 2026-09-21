@@ -40,7 +40,10 @@ from __future__ import annotations
 import io
 import zipfile
 
+from . import sim
+
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 
 # 字号名 → 磅。和 sim.py 里那张表对齐，改要一起改
 SIZE_PT = {
@@ -175,16 +178,25 @@ def _para_xml(p: dict) -> str:
     return f"<w:p>{_ppr(p)}{run}</w:p>"
 
 
-def _sect_xml(page: dict, columns: int) -> str:
+def _sect_xml(page: dict, columns: int, head: str = "", foot: str = "") -> str:
     page = page or {}
     orient = str(page.get("orient") or "portrait")
-    # A4：21 × 29.7 厘米
-    wide, tall = (11906, 16838) if orient == "portrait" else (16838, 11906)
+    # 纸张：默认 A4（21 × 29.7 厘米）。老师在环境里指定了别的（B5、A3……）
+    # 就按那个铺 —— 「把纸张改成 B5」这类题，得先有个不是 B5 的起点
+    wide, tall = sim.PAPER_SIZES.get(str(page.get("size") or "A4"),
+                                     sim.PAPER_SIZES["A4"])
+    if orient != "portrait":
+        wide, tall = tall, wide
     def tw(key, default_cm):
         return int(round(float(page.get(key, default_cm) or default_cm) * CM))
     cols = f'<w:cols w:num="{max(1, int(columns or 1))}"/>' if int(columns or 1) > 1 else \
            '<w:cols w:space="425"/>'
-    return (f'<w:sectPr><w:pgSz w:w="{wide}" w:h="{tall}"'
+    refs = ""
+    if head:
+        refs += f'<w:headerReference w:type="default" r:id="rIdH"/>'
+    if foot:
+        refs += f'<w:footerReference w:type="default" r:id="rIdF"/>'
+    return (f'<w:sectPr>{refs}<w:pgSz w:w="{wide}" w:h="{tall}"'
             + (' w:orient="landscape"' if orient != "portrait" else "") + "/>"
             + f'<w:pgMar w:top="{tw("top", 2.54)}" w:right="{tw("right", 3.17)}" '
               f'w:bottom="{tw("bottom", 2.54)}" w:left="{tw("left", 3.17)}" '
@@ -241,6 +253,17 @@ NUMBERING = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 </w:numbering>""" % W
 
 
+HDR_FTR = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+           '<w:%(tag)s xmlns:w="%(ns)s"><w:p><w:pPr><w:jc w:val="%(align)s"/></w:pPr>'
+           '<w:r><w:t xml:space="preserve">%(text)s</w:t></w:r></w:p></w:%(tag)s>')
+
+
+def _hdr_ftr(tag: str, text: str, align: str = "right") -> str:
+    """一份页眉或页脚。**老师在环境里写了就得铺出来** —— 不铺的话
+    「把页眉改成 X」这类题，学生打开文档看不到原来的页眉。"""
+    return HDR_FTR % {"tag": tag, "ns": W, "align": align, "text": esc(text)}
+
+
 def build_docx(state: dict) -> bytes:
     """把 WPS 仿真环境写成一个真的 .docx。
 
@@ -250,19 +273,36 @@ def build_docx(state: dict) -> bytes:
     if not paras:
         paras = [{"text": ""}]
     body = "".join(_para_xml(p) for p in paras)
+    head = str(state.get("header") or "")
+    foot = str(state.get("footer") or "")
     document = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        f'<w:document xmlns:w="{W}"><w:body>{body}'
-        f'{_sect_xml(state.get("page") or {}, state.get("columns") or 1)}'
+        f'<w:document xmlns:w="{W}" xmlns:r="{R}"><w:body>{body}'
+        f'{_sect_xml(state.get("page") or {}, state.get("columns") or 1, head, foot)}'
         "</w:body></w:document>"
     )
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("[Content_Types].xml", CONTENT_TYPES)
+        types, rels = CONTENT_TYPES, DOC_RELS
+        for tag, text, rid in (("hdr", head, "rIdH"), ("ftr", foot, "rIdF")):
+            if not text:
+                continue
+            part = "header1.xml" if tag == "hdr" else "footer1.xml"
+            kind = "header" if tag == "hdr" else "footer"
+            types = types.replace("</Types>",
+                f'<Override PartName="/word/{part}" ContentType='
+                f'"application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}+xml"/>'
+                "</Types>")
+            rels = rels.replace("</Relationships>",
+                f'<Relationship Id="{rid}" Type="http://schemas.openxmlformats.org/'
+                f'officeDocument/2006/relationships/{kind}" Target="{part}"/>'
+                "</Relationships>")
+            z.writestr(f"word/{part}", _hdr_ftr(tag, text))
+        z.writestr("[Content_Types].xml", types)
         z.writestr("_rels/.rels", ROOT_RELS)
         z.writestr("word/document.xml", document)
-        z.writestr("word/_rels/document.xml.rels", DOC_RELS)
+        z.writestr("word/_rels/document.xml.rels", rels)
         z.writestr("word/styles.xml", STYLES)
         z.writestr("word/numbering.xml", NUMBERING)
     return buf.getvalue()

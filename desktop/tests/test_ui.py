@@ -315,6 +315,111 @@ def test_choices_start_unselected(app, server, exam):
     assert frame.answers["8888"] == "A"
 
 
+def two_choice_questions(frame):
+    """给答题页塞两道选择题 —— 自检库里的卷子全是操作题。"""
+    frame.paper = [
+        {"id": "7001", "no": 1, "type": "选择题", "score": 3,
+         "stem": "切换当前活动窗口的快捷键是（ ）",
+         "options": [{"label": "A", "content": "Alt+Tab"},
+                     {"label": "B", "content": "Ctrl+C"}]},
+        {"id": "7002", "no": 2, "type": "选择题", "score": 3,
+         "stem": "保存文件的快捷键是（ ）",
+         "options": [{"label": "A", "content": "Ctrl+S"},
+                     {"label": "B", "content": "Ctrl+P"}]},
+    ]
+    frame.num_btns = frame.num_btns[:2]
+    frame.show(0)
+    frame.app.root.update()
+
+
+def test_picking_an_option_jumps_to_the_next_question(app, server, exam):
+    """选完自动跳下一题 —— 中考的机考客户端就是这么走的，学生不用再点一次。
+
+    跳之前停 220 毫秒：立刻跳的话学生看不见自己刚点上的那个点，会以为没点上。
+    """
+    frame = start_exam(app, server, exam, "26090113")
+    two_choice_questions(frame)
+
+    radios = [w for w in frame.area.winfo_children() if isinstance(w, tk.Radiobutton)]
+    radios[0].invoke()
+    assert frame.answers["7001"] == "A"
+    assert frame.index == 0, "不该立刻跳 —— 学生得看见自己点上了"
+    assert settle(app, 3, lambda: frame.index == 1), "220 毫秒后该跳到第 2 题"
+
+
+def test_the_last_question_does_not_jump(app, server, exam):
+    """最后一题没有下一题，点了不能跳到别处去。"""
+    frame = start_exam(app, server, exam, "26090113")
+    two_choice_questions(frame)
+    frame.show(1)
+    app.root.update()
+    [w for w in frame.area.winfo_children() if isinstance(w, tk.Radiobutton)][0].invoke()
+    settle(app, 1.5, lambda: False)
+    assert frame.index == 1
+
+
+def test_long_question_scrolls_and_keeps_the_buttons(app, server, exam):
+    """**题干再长，底下那两个按钮也得在。**
+
+    原来页脚是在 body 之后 pack 的：题干一长，Tk 先把空间分给上面的内容，
+    「上一题/下一题」被挤扁甚至挤没，学生只剩答题卡能跳题，还以为程序坏了。
+    现在页脚钉在底部先 pack，内容区改成可滚动的画布。
+    """
+    frame = start_exam(app, server, exam, "26090113")
+    frame.paper = [{"id": "7003", "no": 1, "type": "选择题", "score": 3,
+                    "stem": "很长的题干。" * 300,
+                    "options": [{"label": x, "content": "选项" + x * 40}
+                                for x in "ABCD"]}]
+    frame.num_btns = frame.num_btns[:1]
+    frame.show(0)
+    settle(app, 2, lambda: False)
+
+    # 自检里窗口是隐藏的，winfo_ismapped() 一律是 0 —— 用「被谁管着」和算出来的
+    # 尺寸判，这两样隐藏也照样算
+    foot = frame.tip.master
+    assert foot.winfo_manager() == "pack" and foot.winfo_height() == 48, \
+        f"页脚被挤成了 {foot.winfo_height()} 像素高"
+    buttons = [w for w in foot.winfo_children() if isinstance(w, tk.Button)]
+    assert len(buttons) == 2 and all(b.winfo_manager() == "pack" for b in buttons)
+    assert all(b.winfo_width() > 40 for b in buttons), "按钮被挤窄了"
+
+    # 内容区能滚：滚动范围比一屏高得多
+    top, bottom = frame.canvas.bbox("all")[1], frame.canvas.bbox("all")[3]
+    assert bottom - top > 600, f"这么长的题干只排出 {bottom - top} 像素？"
+    frame.canvas.yview_moveto(1.0)
+    app.root.update()
+    assert frame.canvas.yview()[0] > 0, "滚不动"
+
+
+def test_the_scrollbar_comes_and_goes_with_the_content(app, server, exam, monkeypatch):
+    """内容一屏放得下就把滚动条收起来，放不下再拿出来。
+
+    自检里窗口是隐藏的，`winfo_height()` 恒为 1，量不出"够不够高"——
+    所以直接把画布高度喂给它，两个方向各验一次。
+    """
+    frame = start_exam(app, server, exam, "26090113")
+    two_choice_questions(frame)
+    settle(app, 2, lambda: False)
+
+    monkeypatch.setattr(frame.canvas, "winfo_height", lambda: 9999)
+    frame._page_resized()
+    assert frame.bar.winfo_manager() != "pack", "两道选择题就占一屏？不该有滚动条"
+
+    monkeypatch.setattr(frame.canvas, "winfo_height", lambda: 10)
+    frame._page_resized()
+    assert frame.bar.winfo_manager() == "pack", "内容放不下时得有滚动条"
+
+
+def test_switching_question_scrolls_back_to_the_top(app, server, exam):
+    """上一题拉到了底，换一题得回到顶上 —— 不回的话这一题的题干藏在上面看不见。"""
+    frame = start_exam(app, server, exam, "26090113")
+    two_choice_questions(frame)
+    frame.canvas.yview_moveto(1.0)
+    frame.show(1)
+    app.root.update()
+    assert frame.canvas.yview()[0] == 0
+
+
 def test_a_drag_question_reserves_its_answer_area(app, server, exam):
     """拖拽题（热区、流程图）交互还没做。
 

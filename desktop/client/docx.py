@@ -213,6 +213,30 @@ def _read_para(node) -> dict:
     return para
 
 
+# 纸张尺寸（twip）。**和 sim.py 的 PAPER_SIZES 保持一致，改要一起改** ——
+# 客户端只用标准库，不能 import 后端那边的表。
+PAPER_SIZES = {
+    "A3": (16838, 23811), "A4": (11906, 16838), "A5": (8391, 11906),
+    "B4": (14570, 20636), "B5": (9978, 14173),
+    "Letter": (12240, 15840), "16开": (10433, 14740),
+}
+
+
+def _paper_name(width, height) -> str:
+    """这一对宽高是什么纸。认不出来返回空串 —— 判分那边就当"没这一项"。
+
+    留几毫米的余量：不同版本的 WPS / Word 对同一种纸的尺寸差零点几毫米。
+    """
+    w, h = _num(width), _num(height)
+    if not w or not h:
+        return ""
+    w, h = min(w, h), max(w, h)              # 横排竖排当同一种纸
+    for name, (pw, ph) in PAPER_SIZES.items():
+        if abs(w - pw) <= 220 and abs(h - ph) <= 220:
+            return name
+    return ""
+
+
 def _read_sect(sect) -> tuple[dict, int]:
     page, columns = {}, 1
     if sect is None:
@@ -226,6 +250,9 @@ def _read_sect(sect) -> tuple[dict, int]:
     size = sect.find(W + "pgSz")
     if size is not None:
         page["orient"] = "landscape" if size.get(W + "orient") == "landscape" else "portrait"
+        got = _paper_name(size.get(W + "w"), size.get(W + "h"))
+        if got:
+            page["size"] = got
     cols = sect.find(W + "cols")
     if cols is not None:
         columns = int(_num(cols.get(W + "num"), 1) or 1)
