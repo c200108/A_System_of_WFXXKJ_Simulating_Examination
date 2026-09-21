@@ -205,3 +205,152 @@ def test_replace_needs_the_word_to_be_there():
     whole = "".join(p["text"] for p in got["env"]["paras"])
     assert "10后" in whole
     assert {"op": "text", "absent": "10后", "present": "00后"} in asserts_of(got)
+
+
+# ================================================================ 老师验收时指出的那几条
+WIN操作 = """Win操作题
+请打开本题工作目录（C：\EXAM\Win操作）按照要求进行作答。
+（1）打开网页文件“安全教育网.htm”，在网页中找到“火灾逃生方法”视频资料，以“火灾逃生.rar”为名保存到“ks\消防安全”下。
+（2）在“ks”文件夹中，新建一个名为“校园安全”的文件夹。
+（3）将“ks”文件夹中的“安全乘车.docx”文件移动到“交通安全”文件夹中。
+（4）将“ks”文件夹中“实验安全”文件夹中不合适的文件删除。
+作答完成后，请关闭所有的文件和文件夹。"""
+
+WIN09 = """请打开本题工作目录下的win09文件夹，按要求请完成以下操作：
+（1）在“3D打印材料”文件夹中新建一个word文档，文件名为“打印材料”，输入以下内容：3D打印机内装有金属、陶瓷、塑料、砂等不同的“打印材料”。
+（2）将文件“3D打印头盖骨”移动到对应的文件夹中。
+（4）删除“医学”文件夹中不属于3D在医学领域应用的文件。
+（5）将文件“房屋”重命名为“3D打印别墅”。"""
+
+KONGZI_FULL = """Word操作题
+李雯正在编辑“孔子对中华文明的贡献”文稿，请帮助她进行如下编辑修饰：
+①将文章的标题设置为“标题”样式，并为正文第一自然段中的文字“孔子整理的《诗经》和孔子的诗论，是两千多年来中国文学的源头活水。”添加“双下划线”；
+②设置纸张大小为A4，并在页面底端插入页码“普通数字2”；
+③在文章末尾插入艺术字“家国情怀”（样式不限），并设置环绕方式为“四周型环绕”；
+④将该文件以“孔子对中华文明的五大贡献.pdf”为名输出到工作目录。
+完成以上操作后，保存并关闭Word。"""
+
+
+def test_working_folder_can_be_written_as_a_full_path():
+    r"""「请打开本题工作目录（C：\EXAM\Win操作）」—— 路径写在括号里。
+
+    不认的话整道题的文件全落在考试根目录下，而题干说的是 C:\EXAM\Win操作 ——
+    学生打开工作目录，里面空空如也。
+    """
+    fs = sim_of(WIN操作, "Windows系统操作")["env"]["fs"]
+    assert any(p.startswith("C:/EXAM/Win操作/") for p in fs), sorted(fs)
+
+
+def test_everything_the_stem_names_is_on_disk():
+    """**题干点过名的东西，考场里都得有。**
+
+    认不出某一问不要紧（那一问不判分），但不能让学生打开文件夹发现题目说的
+    文件根本不存在 —— 他会以为自己找错了地方，在那一问上耗掉整场考试。
+    """
+    fs = sim_of(WIN操作, "Windows系统操作")["env"]["fs"]
+    for path in ("C:/EXAM/Win操作/安全教育网.htm",
+                 "C:/EXAM/Win操作/ks/消防安全",
+                 "C:/EXAM/Win操作/ks/交通安全",
+                 "C:/EXAM/Win操作/ks/安全乘车.docx",
+                 "C:/EXAM/Win操作/ks/实验安全"):
+        assert path in fs, f"{path} 没铺出来\n现有：{sorted(fs)}"
+
+
+def test_the_answer_is_never_pre_created():
+    """要学生做出来的东西一个都不能预先铺出来 —— 铺了就是把题做了。"""
+    fs = sim_of(WIN操作, "Windows系统操作")["env"]["fs"]
+    assert not [p for p in fs if p.endswith("火灾逃生.rar")], "答案文件被预先铺出来了"
+    assert not [p for p in fs if p.endswith("校园安全")], "要新建的文件夹被预先铺出来了"
+
+
+def test_the_web_page_really_has_the_material():
+    """「打开网页文件……在网页中找到 X 资料」——网页里就得真有 X，而且真能下下来。
+
+    铺一个占位文本的 .htm 等于告诉学生"自己编一个吧"，他只能新建个空文件蒙过去。
+    """
+    fs = sim_of(WIN操作, "Windows系统操作")["env"]["fs"]
+    page = fs["C:/EXAM/Win操作/安全教育网.htm"]["content"]
+    assert "火灾逃生方法" in page and "<a href=" in page, page[:120]
+    assert any(p.endswith("火灾逃生方法.rar") for p in fs), "网页里链的那份资料不存在"
+
+
+def test_a_vague_destination_is_not_a_folder_name():
+    """「移动到**对应的**文件夹中」—— 目标是泛指，要学生自己判断放哪儿。
+
+    机器判不了这种题。硬判会判错，更糟的是会在考场里建一个真叫「对应的」的
+    文件夹，学生看了一脸问号。
+    """
+    got = sim_of(WIN09, "WPS文字操作")
+    assert not [p for p in got["env"]["fs"] if p.endswith("对应的")], "建了个叫「对应的」的文件夹"
+    assert not [a for a in asserts_of(got) if "对应的" in str(a.get("path"))]
+
+
+def test_deleting_inside_a_folder_is_not_deleting_the_folder():
+    """「删除"医学"文件夹中不属于……的文件」—— 删的是里面那个文件，
+    不是把「医学」整个删掉。判错了学生按题做反而丢分。"""
+    got = sim_of(WIN09, "WPS文字操作")
+    ops = asserts_of(got)
+    assert {"op": "missing", "path": "C:/EXAM/win09/医学"} not in ops
+    assert "C:/EXAM/win09/医学" in got["env"]["fs"]
+    assert any(a["op"] == "missing" and a["path"].startswith("C:/EXAM/win09/医学/")
+               for a in ops), ops
+
+
+def test_a_file_stays_a_file_when_the_stem_says_file():
+    """「将**文件**"房屋"重命名为……」—— 没有扩展名，但题干说了是文件。
+    铺成文件夹的话，学生看到的类型都不对。"""
+    fs = sim_of(WIN09, "WPS文字操作")["env"]["fs"]
+    assert fs["C:/EXAM/win09/房屋"]["type"] == "file"
+
+
+def test_new_word_document_without_an_extension():
+    """「新建一个 word 文档，文件名为"打印材料"」—— 题干不写扩展名，补 .docx。"""
+    ops = asserts_of(sim_of(WIN09, "WPS文字操作"))
+    assert {"op": "exists", "path": "C:/EXAM/win09/3D打印材料/打印材料.docx",
+            "is": "file"} in ops, ops
+
+
+# ================================================================ WPS 正文
+def test_the_style_name_is_not_mistaken_for_the_title():
+    """「将文章的标题设置为"标题"样式」—— 引号里是**样式名**。
+
+    不单独认的话，正则会从"标题"的后引号一路捞到下一个前引号，造出一个
+    「样式，并为正文第一自然段中的文字」这样的假标题，整篇文档跟着跑偏。
+    """
+    got = sim_of(KONGZI_FULL)
+    assert got["env"]["paras"][0]["text"] == "孔子对中华文明的贡献"
+    assert {"op": "para", "at": 0, "style": "标题1"} in asserts_of(got)
+
+
+def test_the_document_really_contains_the_quoted_sentence():
+    """题干抄出来的原文必须**原样出现在文档里**，否则学生翻遍文档也找不到
+    要改的那一段 —— 这一问就成了死题，而判分还"通过"了。"""
+    got = sim_of(KONGZI_FULL)
+    whole = "\n".join(p["text"] for p in got["env"]["paras"])
+    assert "孔子整理的《诗经》和孔子的诗论，是两千多年来中国文学的源头活水。" in whole, whole
+    # 检查点指的就是这一段
+    hit = [a for a in asserts_of(got) if a.get("underline")]
+    assert hit and hit[0]["at"]["has"] in whole, hit
+
+
+def test_the_article_is_about_the_topic():
+    """正文要围着这道题的题目写。「XX正在深刻改变我们的学习与生活」这种
+    谁都套得上的模板，学生一看就知道文章和题目没关系。"""
+    got = sim_of(KONGZI_FULL)
+    body = "\n".join(p["text"] for p in got["env"]["paras"][1:])
+    assert body.count("孔子对中华文明的贡献") >= 2, body
+
+
+def test_word_art_text_does_not_leak_into_the_article():
+    """「在文章末尾插入艺术字"家国情怀"」——那是要学生插进去的，
+    不是文档里本来就有的话。"""
+    got = sim_of(KONGZI_FULL)
+    whole = "\n".join(p["text"] for p in got["env"]["paras"])
+    assert "家国情怀" not in whole, whole
+
+
+def test_a_filename_is_never_read_as_a_font():
+    """「孔子对中华文明的五大贡献.pdf」里有"华文明的五"。字体名用通配写法时
+    它会被当成字体，造出一条**谁也做不到**的检查点。"""
+    for a in asserts_of(sim_of(KONGZI_FULL)):
+        assert "华文明" not in str(a.get("font", "")), a

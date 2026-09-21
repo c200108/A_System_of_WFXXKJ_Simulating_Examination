@@ -131,15 +131,44 @@ def _in_folder(flat: str) -> str:
     return m.group(1) if m else ""
 
 
-def _base_dir(stem: str) -> str:
-    """「请打开本题工作目录下的**系统基本操作**文件夹」里那个文件夹名。
+def _context_folder(flat: str) -> str:
+    """这一句说的是**哪个文件夹里**的事。
 
-    没写就用空串 —— 操作路径直接挂在考试根下。
+    「在"ks"文件夹中新建……」和「将"ks"文件夹中的……」说的都是 ks 里的事，
+    但后者没有"在"字。两种都要认 —— 认不出的后果是文件铺到工作目录根上，
+    而题干说它在 ks 里。
+    """
+    m = re.search(Q + r"([^\"“”'‘’「」『』]{1,30}?)" + Q + r"文件夹[中下里]", flat)
+    return m.group(1) if m else ""
+
+
+def _base_dir(stem: str) -> str:
+    r"""这道题的工作目录叫什么。真题里三种写法都有：
+
+        请打开本题工作目录下的 win06 文件夹        → win06
+        请打开本题工作目录（C：\EXAM\Win操作）     → Win操作
+        本题工作目录:D:\EXAM\windows操作           → windows操作
+
+    **第二种一定要认**。不认的话整道题的文件全落在考试根目录下，而题干说的是
+    `C:\EXAM\Win操作` —— 学生打开工作目录，里面空空如也，题目提到的文件夹
+    一个都没有。踩过这个坑。
+
+    没写就用空串，操作路径直接挂在考试根下。
     """
     flat = _clean(stem)
-    m = re.search(r"打开本题工作目录[下中]的" + Q + r"?([^\"“”'‘’「」『』，,。:：]{1,20}?)"
+    m = re.search(r"打开本题工作目录[下中]的" + Q + r"?([^\"“”'‘’「」『』，,。:：（）()]{1,20}?)"
                   + Q + r"?文件夹", flat)
-    return m.group(1) if m else ""
+    if m:
+        return m.group(1)
+    # 括号里（或冒号后面）给了完整路径：取最后一段当工作目录名
+    m = re.search(r"(?:本题)?工作目录[^A-Za-z]{0,3}([A-Za-z]:[\\/][^）)，,。；;]{1,60})", flat)
+    if m:
+        tail = [x for x in re.split(r"[\\/]+", m.group(1)) if x and ":" not in x]
+        # 去掉最外面那层 EXAM —— 考试根本来就是它，再套一层就成了 C:/EXAM/EXAM
+        while tail and tail[0].upper() in ("EXAM", "KS"):
+            tail.pop(0)
+        return "/".join(tail)
+    return ""
 
 
 TEXT_EXT = {".txt", ".log", ".csv", ".md", ".html", ".htm", ".css", ".js", ".ini"}
@@ -160,15 +189,40 @@ def file_node(name: str) -> dict:
     return {"type": "file", "content": f"[{stem_name}]{ext} 考试素材文件"}
 
 
+def _web_page(resource: str, href: str) -> dict:
+    """一张真能打开的素材网页：标题 + 一条指向资料的链接。
+
+    题干说「打开网页文件……在网页中找到 X 资料」，学生双击打开的就是这张页面，
+    点那条链接（或者右键另存）就能拿到资料。用 GBK 落盘 —— 考场是中文 Windows，
+    浏览器按系统默认编码认，UTF-8 会显示成乱码。
+    """
+    html = (f"<html><head><meta charset=\"gb2312\"><title>安全教育资料</title></head>"
+            f"<body><h2>安全教育资料</h2>"
+            f"<p>下面是本站提供的资料，右键另存即可下载。</p>"
+            f"<ul><li><a href=\"{href}\">{resource}</a></li></ul>"
+            f"</body></html>")
+    return {"type": "file", "content": html}
+
+
 def _join(*parts: str) -> str:
     bits = [str(p).replace("\\", "/").strip("/") for p in parts if p]
     return "/".join(b for b in bits if b)
+
+
+VAGUE = re.compile(r"^(?:对应|相应|合适|最合适|恰当|正确|该|所属)的?$")
 
 
 def _win_item(text: str, base: str, fs: dict, checks: list, todo: list) -> None:
     """一条 Windows 操作。认得出就写进 fs/checks，认不出丢进 todo。"""
     flat = _clean(text)
     names = _quoted(flat)
+
+    # 「移动到**对应的**文件夹中」「移到**最合适的**文件夹」—— 目标是泛指，
+    # 要学生自己判断该放哪儿。机器判不了这种题，硬判只会判错；更糟的是
+    # 会在考场里建一个真叫「对应的」的文件夹，学生看了一脸问号。
+    if re.search(r"(?:移动|复制|放)到(?:对应|相应|合适|最合适|恰当|正确)的?文件夹", flat):
+        todo.append(text.strip())
+        return
 
     # ① 在 A 文件夹中新建一个名为"N"的文件夹
     m = re.search(Q + r"?([^\"“”'‘’「」『』]{0,30}?)" + Q + r"?文件夹[中下里]新建一个名为"
@@ -192,6 +246,21 @@ def _win_item(text: str, base: str, fs: dict, checks: list, todo: list) -> None:
                                   "is": "file"}})
         return
 
+    # ① 在"A"文件夹中新建一个 word 文档，文件名为"N"（**没写扩展名**）
+    m = re.search(r"在" + Q + r"?([^\"“”'‘’「」『』]{0,40}?)" + Q + r"?文件夹[中下里]"
+                  r"(?:新建|创建)[^。]{0,10}?(word|Word|WORD|文本|演示文稿|表格)"
+                  r"[^。]{0,8}?文件名为" + Q + r"([^\"“”'‘’「」『』]+?)" + Q, flat)
+    if m:
+        where, kind, name = m.group(1), m.group(2).lower(), m.group(3)
+        ext = {"word": ".docx", "文本": ".txt", "演示文稿": ".pptx", "表格": ".xlsx"}[kind]
+        if "." not in name:
+            name += ext
+        fs[_join(base, where)] = {"type": "dir"}
+        checks.append({"desc": f"在「{where}」中新建「{name}」", "score": 5,
+                       "assert": {"op": "exists", "path": _join(base, where, name),
+                                  "is": "file"}})
+        return
+
     # ② 将 A 文件夹中的文件"F1"和"F2"都移动到 B 文件夹中
     m = re.search(r"将" + Q + r"?([^\"“”'‘’「」『』]{0,40}?)" + Q + r"?文件夹[中下里]的文件"
                   r"(.+?)(?:都)?(移动|复制)到" + Q + r"?([^\"“”'‘’「」『』]{0,40}?)"
@@ -208,6 +277,67 @@ def _win_item(text: str, base: str, fs: dict, checks: list, todo: list) -> None:
             fs[_join(base, src, name)] = file_node(name)
         fs[_join(base, src)] = {"type": "dir"}
         fs[_join(base, dst)] = {"type": "dir"}
+        return
+
+    # ② 将"学习"文件夹中的"比赛.txt"移动至"winkt"文件夹  —— 「移动至」不是「移动到」
+    m = re.search(Q + r"?([^\"“”'‘’「」『』]{0,40}?)" + Q
+                  + r"?文件夹[中下里]的" + Q
+                  + r"([^\"“”'‘’「」『』]+?)" + Q
+                  + r"(?:文件)?(移动|复制)(?:到|至)" + Q
+                  + r"?([^\"“”'‘’「」『』]{0,40}?)" + Q + r"?文件夹", flat)
+    if m:
+        src, name, verb, dst = m.group(1), m.group(2), m.group(3), m.group(4)
+        # **目的地跟着源走**：「把 ks 里的 X 移到『交通安全』里」——交通安全就在
+        # ks 下面，不在工作目录根上。题干里那句「保存到"ks\消防安全"下」就是
+        # 证据。目的地自己写了路径（winktiles）就按它写的来。
+        under = _join(base, src) if src and "/" not in dst and "\\" not in dst else base
+        fs[_join(base, src, name)] = file_node(name)
+        fs[_join(under, dst)] = {"type": "dir"}
+        checks.append({"desc": f"把「{name}」{verb}到「{dst}」", "score": 5,
+                       "assert": {"op": "exists", "path": _join(under, dst, name)}})
+        if verb == "移动":
+            checks.append({"desc": f"「{src}」里不再有「{name}」", "score": 3,
+                           "assert": {"op": "missing", "path": _join(base, src, name)}})
+        return
+
+    # ② 以"X.rar"为名保存到"ks\消防安全"下  —— 从网页里另存资料那一问。
+    #    真题里这一问考的是"会不会另存到指定位置"，判的就是那个文件在不在。
+    m = re.search(r"以" + Q + r"([^\"“”'‘’「」『』]+?)" + Q + r"为名(?:保存|另存)到"
+                  + Q + r"?([^\"“”'‘’「」『』]{1,40}?)" + Q + r"?[下里中]", flat)
+    if m:
+        name, where = m.group(1), m.group(2).replace("\\", "/")
+        fs[_join(base, where)] = {"type": "dir"}
+        checks.append({"desc": f"把「{name}」保存到「{where}」下", "score": 5,
+                       "assert": {"op": "exists", "path": _join(base, where, name)}})
+        # **这一问得真能做出来**：题干说"打开网页文件 X.htm，在网页中找到 Y 资料"，
+        # 那网页里就得真有 Y 这份资料，而且真能下下来。铺一个占位文本的 .htm
+        # 等于告诉学生"自己编一个吧"——他只能手工新建一个空文件蒙过去。
+        page = re.search(r"网页文件" + Q + r"([^\"“”'‘’「」『』]+?\.html?)" + Q, flat)
+        want = re.search(r"(?:找到|下载)" + Q + r"([^\"“”'‘’「」『』]{1,30}?)" + Q, flat)
+        if page and want:
+            ext = name.rsplit(".", 1)[-1] if "." in name else "rar"
+            res = f"资料/{want.group(1)}.{ext}"
+            fs[_join(base, "资料")] = {"type": "dir"}
+            fs[_join(base, res)] = file_node(res.rsplit("/", 1)[-1])
+            fs[_join(base, page.group(1))] = _web_page(want.group(1), res)
+        return
+
+    # ② 将"A"文件夹中"B"文件夹中不合适的/多余的文件删除
+    #    题干没点名删哪一个 —— 那就铺一个**明显不搭**的进去，学生一眼认得出，
+    #    判分看的也是同一个文件
+    m = re.search(Q + r"?([^\"“”'‘’「」『』]{1,30}?)" + Q + r"?文件夹[中下里]"
+                  + Q + r"([^\"“”'‘’「」『』]{1,30}?)" + Q + r"文件夹[中下里]"
+                  r"(?:不合适|不恰当|多余|不属于[^。]{0,20}?)的文件(?:都)?删除", flat)
+    if m:
+        outer, inner = m.group(1), m.group(2)
+        odd = "无关文件.txt"
+        fs[_join(base, outer, inner)] = {"type": "dir"}
+        fs[_join(base, outer, inner, odd)] = {
+            "type": "file",
+            "content": f"这个文件和「{inner}」没有关系，是本题要删掉的那一个。\n"}
+        checks.append({"desc": f"删掉「{inner}」里不合适的那个文件（{odd}）", "score": 5,
+                       "assert": {"op": "missing",
+                                  "path": _join(base, outer, inner, odd)}})
         return
 
     # ② 将"F.jpg"文件复制/移动到"D"文件夹中  （源就在工作目录下）
@@ -251,23 +381,6 @@ def _win_item(text: str, base: str, fs: dict, checks: list, todo: list) -> None:
         if verb == "移动":
             checks.append({"desc": f"原位置不再有「{name}」", "score": 3,
                            "assert": {"op": "missing", "path": src}})
-        return
-
-    # ② 将"学习"文件夹中的"比赛.txt"移动至"winkt"文件夹  —— 「移动至」不是「移动到」
-    m = re.search(Q + r"?([^\"“”'‘’「」『』]{0,40}?)" + Q
-                  + r"?文件夹[中下里]的" + Q
-                  + r"([^\"“”'‘’「」『』]+?)" + Q
-                  + r"(?:文件)?(移动|复制)(?:到|至)" + Q
-                  + r"?([^\"“”'‘’「」『』]{0,40}?)" + Q + r"?文件夹", flat)
-    if m:
-        src, name, verb, dst = m.group(1), m.group(2), m.group(3), m.group(4)
-        fs[_join(base, src, name)] = file_node(name)
-        fs[_join(base, dst)] = {"type": "dir"}
-        checks.append({"desc": f"把「{name}」{verb}到「{dst}」", "score": 5,
-                       "assert": {"op": "exists", "path": _join(base, dst, name)}})
-        if verb == "移动":
-            checks.append({"desc": f"「{src}」里不再有「{name}」", "score": 3,
-                           "assert": {"op": "missing", "path": _join(base, src, name)}})
         return
 
     # 「在winkt文件夹中新建文件夹"机器人"」/「新建一个名为"X"的文件夹」
@@ -324,7 +437,11 @@ def _win_item(text: str, base: str, fs: dict, checks: list, todo: list) -> None:
         old, new = m.group(1), m.group(2)
         where = _in_folder(flat)
         src, dst = _join(base, where, old), _join(base, where, new)
-        fs[src] = {"type": "dir"} if "." not in old else file_node(old)
+        # 是文件还是文件夹：先看题干怎么说（"将**文件**'房屋'重命名为…"），
+        # 没说才看有没有扩展名。说了"文件"却铺成文件夹，学生打开一看类型都不对
+        said_file = re.search(r"文件" + Q + r"?" + re.escape(old), flat) or "." in old
+        said_dir = re.search(r"文件夹" + Q + r"?" + re.escape(old), flat)
+        fs[src] = file_node(old) if (said_file and not said_dir) else {"type": "dir"}
         if where:
             fs[_join(base, where)] = {"type": "dir"}
         checks.append({"desc": f"把「{old}」改名为「{new}」", "score": 5,
@@ -363,8 +480,23 @@ def _win_item(text: str, base: str, fs: dict, checks: list, todo: list) -> None:
                        "assert": {"op": "missing", "path": _join(base, where, name)}})
         return
 
+    # ③ 删除"A"文件夹中（某个说不清是哪一个）的文件 —— 题干常写成
+    #    「不属于3D在医学领域应用的文件」「不合适的文件」。铺一个明显不搭的进去
+    m = re.search(r"删除" + Q + r"?([^\"“”'‘’「」『』]{1,30}?)" + Q
+                  + r"?文件夹[中下里](?:不|多余|无关)[^。]{0,30}?的文件", flat)
+    if m:
+        where = m.group(1)
+        odd = "无关文件.txt"
+        fs[_join(base, where)] = {"type": "dir"}
+        fs[_join(base, where, odd)] = {
+            "type": "file",
+            "content": f"这个文件和「{where}」没有关系，是本题要删掉的那一个。"}
+        checks.append({"desc": f"删掉「{where}」里不该在的那个文件（{odd}）", "score": 5,
+                       "assert": {"op": "missing", "path": _join(base, where, odd)}})
+        return
+
     # ③ 删除"X"文件夹（整个文件夹，不是里面的文件）
-    m = re.search(r"删除" + Q + r"([^\"“”'‘’「」『』]+?)" + Q + r"文件夹", flat)
+    m = re.search(r"删除" + Q + r"([^\"“”'‘’「」『』]+?)" + Q + r"文件夹(?![中下里])", flat)
     if m:
         name = m.group(1)
         fs[_join(base, name)] = {"type": "dir"}
@@ -378,6 +510,69 @@ def _win_item(text: str, base: str, fs: dict, checks: list, todo: list) -> None:
         todo.append(text.strip())
 
 
+def _seed_mentioned(stem: str, base: str, fs: dict, checks: list) -> None:
+    """题干点过名的文件和文件夹，**没被任何规则铺出来的，补铺**。
+
+    这是这套生成里最要紧的一条兜底。解析器认不出某一问不要紧（那一问不判分），
+    但**不能让学生打开工作目录发现题目说的文件根本不存在** —— 他会以为自己
+    找错了地方，或者以为程序坏了，然后在那一问上耗掉整场考试的时间。
+
+    踩过：「打开网页文件"安全教育网.htm"……保存到"ks\\消防安全"下」那一问解析
+    不出来，于是 安全教育网.htm 和 ks\\消防安全 都没铺，考场里只有另外两问的
+    文件。
+
+    **要做的（学生的答案）一律不铺**：检查点里 exists 指向的路径就是答案，
+    预先铺出来等于把题做了。
+    """
+    made = {str((c.get("assert") or {}).get("path") or "")
+            for c in checks if (c.get("assert") or {}).get("op") == "exists"}
+    # 按**名字**排除，不只按路径：「火灾逃生.rar」要学生存到 ks\消防安全 下，
+    # 那就哪儿都不能预先铺一个同名的出来，否则这一问白送分
+    taken = {p.rsplit("/", 1)[-1] for p in made}
+    have = {p.rsplit("/", 1)[-1] for p in fs}
+
+    for item in split_items(stem):
+        flat = _clean(item)
+        here = _context_folder(flat)             # 这一句在说哪个文件夹里的事
+        for token in _quoted(flat):
+            token = token.strip().strip("。，,、")
+            if not token or len(token) > 40 or token == here:
+                continue
+            parts = [p for p in re.split(r"[\\/]+", token) if p]
+            name = parts[-1]
+            ext = name.rsplit(".", 1)[-1] if "." in name else ""
+            is_file = bool(ext) and len(ext) <= 5 and not ext.isdigit()
+            # **只铺说得清是什么的东西**：带扩展名的文件，或者题干明说是"文件夹"
+            # 的、写成路径的。「火灾逃生方法」是网页里的一段资料名，不是文件，
+            # 铺出来只会让学生更糊涂
+            # **引号要紧贴着 token**：不加这个限制，「打印材料」会因为题干里那句
+            # 「"3D打印材料"文件夹」而被当成文件夹（它是那个名字的后半截）
+            looks_like_dir = (len(parts) > 1
+                              or re.search(Q + re.escape(token) + Q + r"文件夹", flat))
+            # 题干明说了是文件的也铺：「将**文件**"3D打印头盖骨"移动到……」——
+            # 这类名字没有扩展名，不认的话学生打开文件夹里根本没有这个文件
+            said_file = re.search(r"文件" + Q + re.escape(token) + Q, flat) or \
+                re.search(Q + re.escape(token) + Q + r"文件(?!夹)", flat)
+            if not is_file and not looks_like_dir and not said_file:
+                continue
+            is_file = is_file or bool(said_file and not looks_like_dir)
+            if name in taken or name in have:    # 是答案，或者别处已经铺过了
+                continue
+            # 「改名为"长江三角洲.doc"」「新建……"校园安全"」——这些是**要做出来的**，
+            # 预先铺出来等于把题做了一半，学生打开一看还以为自己已经做过
+            if re.search(r"(?:改名|重命名|命名|保存|另存)为" + Q + re.escape(token) + Q, flat)                     or re.search(r"(?:新建|建立|创建)[^。]{0,12}?" + Q + re.escape(token) + Q, flat):
+                continue
+            under = "" if len(parts) > 1 else here   # 带路径的自己说清了位置
+            path = _join(base, under, *parts)
+            if path in made or path in fs:
+                continue
+            bits = path.split("/")
+            for i in range(1, len(bits)):        # 父目录得先有
+                fs.setdefault("/".join(bits[:i]), {"type": "dir"})
+            fs[path] = file_node(name) if is_file else {"type": "dir"}
+            have.add(name)
+
+
 def parse_win(stem: str) -> dict:
     base = _base_dir(stem)
     fs: dict = {}
@@ -385,6 +580,7 @@ def parse_win(stem: str) -> dict:
     todo: list = []
     for item in split_items(stem):
         _win_item(item, base, fs, checks, todo)
+    _seed_mentioned(stem, base, fs, checks)
     if base:
         fs.setdefault(base, {"type": "dir"})
     # 补齐父目录：判分器按路径找，父目录不在就找不到
@@ -398,15 +594,49 @@ def parse_win(stem: str) -> dict:
 
 # ================================================================ WPS 文字
 SIZE_WORDS = "初号|小初|一号|小一|二号|小二|三号|小三|四号|小四|五号|小五|六号|小六|七号|八号"
-FONT_WORDS = r"黑体|宋体|楷体|仿宋|微软雅黑|华文[\u4e00-\u9fa5]{1,3}|等线|隶书|幼圆"
+# 字体名要**写全**，别用「华文 + 任意两三个汉字」这种通配 —— 它会把
+# 「孔子对中华文明的五大贡献.pdf」里的"华文明的五"当成字体，造出一条
+# 谁也做不到的检查点（学生的字体下拉里根本没有这个字体）。踩过。
+FONT_WORDS = (r"黑体|宋体|新宋体|楷体|仿宋|微软雅黑|等线|隶书|幼圆|方正姚体"
+              r"|华文(?:宋体|楷体|仿宋|中宋|细黑|行楷|彩云|琥珀|隶书|新魏)")
 ALIGN_WORDS = {"居中": "center", "右对齐": "right", "左对齐": "left",
                "两端对齐": "justify", "分散对齐": "distribute"}
 
 
 _NOT_EXCERPT = re.compile(
-    r"^(?:" + FONT_WORDS + r"|" + SIZE_WORDS + r"|标题|正文|普通数字\d?"
-    r"|[上下左右]+型环绕|紧密型环绕|四周型环绕|居中|左对齐|右对齐"
-    r"|[0-9.]+|[A-Za-z]+\d*|.{0,5}色)$")
+    r"^(?:" + FONT_WORDS + r"|" + SIZE_WORDS + r"|标题[0-9]?|正文|副标题|普通数字[0-9]?"
+    r"|[上下左右]+型环绕|紧密型环绕|四周型环绕|嵌入型|浮于文字上方|衬于文字下方"
+    r"|居中|左对齐|右对齐|两端对齐|分散对齐|加粗|倾斜|斜体"
+    r"|[^一-龥]{0,4}下划线|.{0,4}波浪线|着重号|删除线|艺术字"
+    r"|[0-9.]+|[A-Za-z]+[0-9]*|.{0,5}色"
+    # 带扩展名的是文件名，不可能是段落原文
+    r"|.{1,30}\.(?:docx?|wps|pdf|txt|jpe?g|png|gif|rar|zip|pptx?|xlsx?))$")
+
+
+def _quote_text(word: str) -> str:
+    """把题干抄出来的那一段还原成一句能读的话。
+
+    真题里抄原文都带省略号：「"李绅（772﹣846）……被誉为'悯农诗人'。"」。
+    直接把省略号前那半截放进文档，学生看到的是半句话；整句连起来才像文章。
+    """
+    text = str(word or "").strip()
+    bits = re.split(r"…+|\.{3,}|。{3,}", text, maxsplit=1)
+    if len(bits) < 2 or not bits[1].strip():
+        return bits[0].strip() if bits else text
+    head, tail = bits[0].strip(), bits[1].strip()
+    head = head.rstrip("，,、；;")          # 省略号前常带个逗号，别接出"，，"
+    # 前半截已经收句了（。」”），就直接接上；没收句的补个逗号
+    joiner = "" if head.endswith(("。", "！", "？", "”", "」", "’")) else "，"
+    text = f"{head}{joiner}{tail}"
+    # 题干里的引号套引号（"……被誉为'悯农诗人'。"）会让摘出来的话断在半截上。
+    # 最后那一小截既短又没收句，多半就是断掉的，去掉比留着通顺
+    parts = re.split(r"[，,]", text)
+    if len(parts) > 1 and len(parts[-1]) < 6 and not parts[-1].rstrip("。").endswith(
+            ("。", "！", "？", "”", "」")):
+        text = "，".join(parts[:-1])
+    if not text.endswith(("。", "！", "？", "”", "」")):
+        text += "。"
+    return text
 
 
 def _excerpt(flat: str, least: int = 4) -> str:
@@ -424,12 +654,24 @@ def _excerpt(flat: str, least: int = 4) -> str:
     for word in _quoted(flat):
         head = re.split(r"…+|\.{3,}|。{2,}", word)[0].strip("　 、，,。;；")
         if len(head) >= least and not _NOT_EXCERPT.match(word.strip()):
-            return head[:24]
+            # **返回引号里的原样**（省略号也留着）：放进文档时用 _quote_text()
+            # 接成一句完整的话，定位段落时用 _quote_key() 取前十个字。
+            return word.strip()
     return ""
 
 
+def _quote_key(word: str) -> str:
+    """拿这段原文的前十个字当"钥匙"，用来在文档里找到它所在的那一段。
+
+    只取前十个字：学生可能在那一段里改了后半截（题目就常要求改），
+    拿整段去比会找不到。
+    """
+    head = re.split(r"…+|\.{3,}|。{2,}", str(word or ""))[0].strip("　 、，,。;；“”\"")
+    return head[:10]
+
+
 def _wps_item(text: str, checks: list, todo: list, needs: list,
-              title: list | None = None) -> None:
+              title: list | None = None, quotes: list | None = None) -> None:
     """一条 WPS 操作。
 
     needs 收集「要被替换掉的词」—— **这些词必须出现在生成的原文里**，
@@ -445,7 +687,29 @@ def _wps_item(text: str, checks: list, todo: list, needs: list,
     if "标题" in flat and "正文" in flat and flat.count("设置") >= 2:
         for half in re.split(r"[，,；;]", flat):
             if "设置" in half:
-                _wps_item(half, checks, todo, needs, title)
+                _wps_item(half, checks, todo, needs, title, quotes)
+        return
+
+    # 「将文章的标题设置为"标题"样式，**并**为正文第一自然段中的文字"……"添加
+    # "双下划线"」—— 一句话管两件事，目标还不是同一段。不拆的话两套要求会挤在
+    # 一个目标上，而那个目标多半还是正则从两个引号中间捞出来的一串废话。
+    if re.search(r"[，,]并|；|;", flat) and len(_quoted(flat)) >= 2:
+        halves = [h for h in re.split(r"[，,]并|；|;", flat) if len(_clean(h)) > 6]
+        if len(halves) > 1:
+            for half in halves:
+                _wps_item(half, checks, todo, needs, title, quotes)
+            return
+
+    # 「将文章的标题设置为"标题"样式」—— 引号里是**样式名**，不是标题内容。
+    # 不单独认的话，正则会从"标题"的后引号一路捞到下一个前引号，造出一个
+    # 「样式，并为正文第一自然段中的文字」这样的假标题，整段文档跟着跑偏。
+    m = re.search(r"(?:标题|题目)[^。]{0,6}?(?:设置|设|应用)为?" + Q
+                  + r"(标题[0-9]?|正文|副标题)" + Q + r"样式", flat)
+    if m:
+        style = m.group(1)
+        checks.append({"desc": f"标题应用「{style}」样式", "score": 4,
+                       "assert": {"op": "para", "at": 0,
+                                  "style": "标题1" if style.startswith("标题") else style}})
         return
 
     # ① 将文档中所有的"A"替换为/替换成"B"，或者「把文中所有的"A"改为"B"」
@@ -497,10 +761,11 @@ def _wps_item(text: str, checks: list, todo: list, needs: list,
     # ③ 把某一段移到最后：「将自然段（"春雨过后……"）移动到最后」
     #    判的是"最后一段是不是它"，正好对上 order.last
     if re.search(r"移(?:动)?到(?:文档|文章)?(?:的)?(?:最后|末尾)", flat):
-        key = _excerpt(flat, least=3)
-        if key:
-            needs.append(key)
-            checks.append({"desc": f"把「{key[:10]}」那一段移到最后", "score": 4,
+        raw = _excerpt(flat, least=3)
+        if raw:
+            key = _quote_key(raw)
+            (quotes if quotes is not None else needs).append(_quote_text(raw))
+            checks.append({"desc": f"把「{key}」那一段移到最后", "score": 4,
                            "assert": {"op": "order", "last": key[:8]}})
             return
 
@@ -515,6 +780,7 @@ def _wps_item(text: str, checks: list, todo: list, needs: list,
 
     # 格式类：先找"对谁"，再找"设成什么"
     target = None
+    excerpt = ""
     # 「将标题文字"让青春在不懈奋斗中绽放绚丽之花"设置为……」——**引号是必需的**。
     # 不要引号的话，「将文档标题字体格式设置为黑体」会把"字体"两个字当成标题
     # 内容，生成一条永远找不到那一段的检查点。踩过。
@@ -528,9 +794,11 @@ def _wps_item(text: str, checks: list, todo: list, needs: list,
         # 「将文中介绍作者李绅的一段文字（"李绅（772﹣846）……"）字体格式化为……」
         # —— 真题里几乎都会把那一段的原文抄在括号里。**按内容找段落**，
         # 而且把这句原文塞进生成的正文里，学生才找得到要改的那一段。
-        key = _excerpt(flat)
-        needs.append(key)
-        target = {"has": key[:10]}
+        #
+        # 但**先别急着塞**：这一句也可能压根没有格式要求（"插入艺术字'家国情怀'"），
+        # 那 needs 就白加了一句不相干的话进正文。等确认出了检查点再塞（见下面）。
+        excerpt = _excerpt(flat)
+        target = {"has": _quote_key(excerpt)}
     elif "标题" in flat or "题目" in flat:
         target = 0                        # 没给标题内容就按第一段算
     elif re.search(r"第一(?:自然)?段", flat):
@@ -595,6 +863,9 @@ def _wps_item(text: str, checks: list, todo: list, needs: list,
             want["line"] = {"type": "multiple", "value": float(m.group(1))}
 
     if want and target is not None:
+        if excerpt and quotes is not None:
+            # 到这一步才确认：这一句真的在要求格式，那句原文得进正文（独占一段）
+            quotes.append(_quote_text(excerpt))
         # 一句话里常同时要求好几项（黑体、二号、居中），拆成几条检查点 ——
         # 学生只做对一半时能拿一半分，老师也看得出差在哪一项
         labels = {"font": "字体", "size": "字号", "align": "对齐", "indent": "首行缩进",
@@ -611,56 +882,87 @@ def _wps_item(text: str, checks: list, todo: list, needs: list,
         todo.append(text.strip())
 
 
-ARTICLE = [
-    "{topic}正在深刻改变我们的学习与生活。从课堂到校园，从家庭到城市，"
-    "它带来的变化随处可见，也对每个人提出了新的要求。",
-    "认识{topic}，先要了解它的基本原理与典型应用。只有把概念弄清楚，"
-    "才能在真实场景中判断什么时候该用它、怎么用才合适。",
-    "在实践中，我们既要看到{topic}带来的便利，也要留意其中的风险。"
-    "保护个人信息、遵守使用规范，是每一位使用者应尽的责任。",
-    "面向未来，希望同学们主动学习相关知识，动手尝试，在解决实际问题的过程中"
-    "不断提升自己的信息素养。",
+# 补白用的句子。**围着这道题的题目写**，不要"XX正在深刻改变我们的学习与生活"
+# 那种谁都套得上的模板 —— 学生打开文档一看，文章和题目毫无关系，会以为整套题
+# 配错了。这几句套在"孔子对中华文明的贡献""我见到了春天""外卖小哥夺冠"上都读得通。
+FILLER = [
+    "《{topic}》是这次要整理的文稿。通读一遍会发现，文章本身是完整的，"
+    "只是排版还没有理顺，字体、段落和页面都需要按要求重新设置。",
+    "文章围绕{topic}展开：先摆出事实，再讲道理，最后落到我们今天该怎么看、"
+    "怎么做。行文平实，读起来并不费力。",
+    "读到这里不妨停一停，想一想{topic}对今天的我们究竟意味着什么。"
+    "很多当时看着寻常的细节，放在更长的时间里才显出分量。",
+    "把{topic}这件事讲清楚并不容易，需要耐心，也需要一点取舍。"
+    "这篇文稿做的就是这件事。",
 ]
 
 
-def _article(topic: str, needs: list) -> list[dict]:
-    """给 WPS 题生成一篇像样的原文。
+def _article(topic: str, needs: list, quotes: list | None = None) -> list[dict]:
+    """生成一篇**和这道题有关**的正文。
 
-    **要被替换的词必须真的出现在正文里** —— 题目说「把 A 替换成 B」，文档里
-    没有 A 的话这一问谁也做不出来。所以先把正文写好，再把这些词嵌进去。
+    两条硬要求：
 
-    正文内容随便写没关系（考的是排版和查找替换，不是阅读理解），但**篇幅要够**：
-    只有两行的文档，「正文所有段落设为首行缩进」这类题看不出效果，学生会以为
-    自己做错了。
+    1. **题干抄出来的每一句原文都要原样出现，而且各自独占一段。**
+       检查点是按内容找段落的：两句挤在同一段里，两套格式会互相覆盖；
+       少了哪一句，学生翻遍文档也找不到要改的地方 —— 那一问就成了死题。
+       踩过：一整篇都是模板套话，题干里"孔子整理的《诗经》……"那句压根不在
+       文档里，检查点却指着它，判出来的分是假的。
+
+    2. **要被替换的词必须真的出现**：题目说「把 A 换成 B」，文档里没有 A 的话
+       这一问谁也做不出来。
+
+    文章质量到不了课文的水平（题库里只有题干，没有原卷素材），但主题对得上、
+    句子通顺、篇幅够做排版 —— 这三条能保证。
     """
-    body = [text.format(topic=topic) for text in ARTICLE]
-    for i, word in enumerate(needs):
-        # 挨段塞，别全堆在第一段 —— 查找替换要能替换到多处才像真题
-        at = i % len(body)
-        body[at] = f"{body[at]}这里特别提到{word}，{word}是其中的关键一环。"
+    body: list[str] = []
+    for quote in (quotes or []):
+        text = quote.strip()
+        # 题干里引的可能就是标题本身（「在文章顶部添加文章标题"风中的一棵树"」），
+        # 而标题已经单独是一段了，再抄一遍就成了重复
+        if text.rstrip("。").strip() == str(topic).strip():
+            continue
+        if not text.endswith(("。", "！", "？", "”", "」")):
+            text += "。"
+        # 原文独占一段，后面补一句引子，读着像正常文章而不是一句孤零零的摘抄
+        body.append(f"{text}这一点，正是读{topic}时最值得留意的地方。")
+
+    for line in FILLER:                       # 补到四段：太短了排版看不出效果
+        if len(body) >= 4:
+            break
+        body.append(line.format(topic=topic))
+
+    for i, word in enumerate(needs):          # 要被替换的词，挨段塞
+        at = min(i, len(body) - 1)
+        body[at] = f"{body[at]}文中多处提到{word}，{word}这个说法贯穿全篇。"
     return [{**blank_para(), "text": t} for t in body]
 
 
 def parse_wps(stem: str) -> dict:
     """WPS 文字题。
 
-    文档是**这里现生成的**：题库里只有题干，没有原卷素材。内容按题目名起一篇
-    短文，够学生做排版和查找替换就行 —— 考点在格式和操作，不在文章本身。
+    文档是**这里现生成的**：题库里只有题干，没有原卷素材。内容围着题目写，
+    题干抄出来的原文原样放进去 —— 学生打开文档得能找到题目说的那几段，
+    否则整道题没法做。
     """
     checks: list = []
     todo: list = []
     needs: list = []
+    quotes: list = []
     title: list = []
     for item in split_items(stem):
-        _wps_item(item, checks, todo, needs, title)
+        _wps_item(item, checks, todo, needs, title, quotes)
 
-    name = "文档"
-    m = re.search(Q + r"([^\"“”'‘’「」『』]+?)\.(?:docx?|wps)" + Q, str(stem))
-    if m:
-        name = m.group(1)
+    # 文稿叫什么：先找带扩展名的文件名，再找「"X"文稿 / 文档 / 文章」。
+    # 两种都找不到才退回"文档"——退到那一步，正文就只能写成套话了
+    flat = str(stem)
+    m = (re.search(Q + r"([^\"“”'‘’「」『』]+?)\.(?:docx?|wps)" + Q, flat)
+         or re.search(Q + r"([^\"“”'‘’「」『』]{2,30})" + Q + r"(?:文稿|文档|文章)", flat)
+         or re.search(r"(?:编辑|修改|整理)" + Q + r"([^\"“”'‘’「」『』]{2,30})" + Q, flat))
+    name = m.group(1) if m else "文档"
     topic = re.sub(r"[0-9]+$", "", name).strip() or "信息技术"
 
-    paras = [{**blank_para(), "text": title[0] if title else topic}] +         _article(topic, needs)
+    head = title[0] if title else topic
+    paras = [{**blank_para(), "text": head}] + _article(topic, needs, quotes)
     env = {"name": f"{name}.docx", "paras": paras}
     return {"kind": "wps", "env": env, "checks": checks, "todo": todo}
 

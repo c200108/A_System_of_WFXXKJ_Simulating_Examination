@@ -35,8 +35,14 @@ WPS 里做**，交卷时程序拍一份考试文件夹的快照传回教师端�
 
 | | 能跑在 | 什么时候发它 |
 |---|---|---|
-| `考试客户端-32位@…exe` | 32 位**和** 64 位 Windows | **不确定机房是什么机器就发这份** |
-| `考试客户端-64位@…exe` | 只有 64 位 Windows | 确定全是 64 位机器 |
+| `考试客户端-32位-内置运行库@…exe` | 32 位**和** 64 位 Windows，**Win7 免打补丁** | **不确定机房是什么机器就发这份** |
+| `考试客户端-64位-内置运行库@…exe` | 只有 64 位 Windows，Win7 免打补丁 | 确定全是 64 位机器 |
+| 不带「内置运行库」的那两个 | 同上，但 **Win7 要先打 KB2999226** | 留作对比，机房别发 |
+
+「内置运行库」是把兼容 Win7 的通用 C 运行库（UCRT）打进了 exe。不带它的包会
+把**打包机（Win11）的**运行库发出去，在 Win7 上弹「丢失
+api-ms-win-core-sysinfo-l1-2-0.dll」，而且**跟在 exe 旁边的这份优先级高于系统
+自己那份**，打了补丁也救不回来。打包加 `--ucrt` 就有了。
 
 64 位的 exe 在 32 位 Windows 上**根本起不来**，而 Win7 时代的机房里 32 位机器
 不少。两份都是用 Python 3.8.10 打的，Win7 SP1 到 Win11 都能跑。
@@ -302,3 +308,4 @@ backend\.venv\Scripts\python.exe -m pytest desktop/tests -q
 | **界面上用了 emoji**（🏠 📝 ⌨ ✓ ⚠） | Win7 没有 Segoe UI Emoji，这些字符在考场上是一个个空方框，而**开发机上永远看不见**。规则：源码里不许出现 GBK 装不下的字符（能编进 GBK 的，中文 Windows 的字体一定有），`test_win7_glyphs.py` 守着 |
 | **以为加个 `Connection: keep-alive` 头就复用连接了** | urllib 每次 `urlopen` 都新建一个 `HTTPConnection`，头写得再好也照样重新握手 —— 每次调用白白多花一个来回（实测 75 ms vs 33 ms）。要复用就得自己攥着 `http.client.HTTPConnection` |
 | 64 位 exe 发到 32 位机器 | 根本起不来。两版一起出，位数写进文件名 |
+| **把打包机的通用 C 运行库发到 Win7** | Win11 的 `ucrtbase.dll` 要用 Win7 没有的组件，exe 双击就弹「丢失 api-ms-win-core-sysinfo-l1-2-0.dll」；而它跟在 exe 旁边，优先级高于系统那份，**打了 KB2999226 也救不回来**。用 `build.py --ucrt` 换成 SDK 里那份兼容 Win7 的（`tools/查Win7依赖.py` 静态查一遍，缺就不出包） |
