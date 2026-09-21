@@ -101,7 +101,23 @@ def _common_root(paths) -> str:
     return "/".join(parts or [])
 
 
-def _files_of(kind: str, env: dict, folder: str = "") -> dict:
+def _common_dir(dirs) -> str:
+    """几个目录的公共父目录（可以就是它们自己）。没有公共部分返回空串。
+
+    和 _common_root 的区别：那个收的是**文件路径**，会先去掉最后一段（文件名）；
+    这个收的是**目录**，一段都不去。用来把一张卷子里各道 win 题的工作目录
+    并成一个，见 build_package。
+    """
+    parts = None
+    for d in dirs:
+        bits = [b for b in str(d).replace("\\", "/").split("/") if b]
+        parts = bits if parts is None else [a for a, b in zip(parts, bits) if a == b]
+        if not parts:
+            return ""
+    return "/".join(parts or [])
+
+
+def _files_of(kind: str, env: dict, folder: str = "", root: str = "") -> dict:
     """把仿真环境变成"要铺到考场机器上的文件"。
 
     返回 {相对路径: bytes 或 None}，None 表示这是个空文件夹 ——
@@ -109,11 +125,18 @@ def _files_of(kind: str, env: dict, folder: str = "") -> dict:
     会徽本身就是空的，漏了它学生打开就找不到地方。
 
     folder 只给网页题用：它的文件统一放进「网页」文件夹（见 WEB_DIR）。
+
+    root 是要从绝对路径上剥掉的那一段（win 题专用）。**必须和考试包里的
+    logical_root 是同一个** —— 学生交上来的快照要按那个前缀拼回绝对路径，
+    两边对不上这道题就判 0 分。不给就按这一道题自己的环境算（工具脚本
+    一次只处理一道题，走的是这条路）。
     """
     out: dict[str, bytes | None] = {}
     if kind == "win":
         fs = env.get("fs") or {}
-        root = _common_root(fs.keys()) or _common_root(list(fs.keys()) + ["x"])
+        root = str(root or "").replace("\\", "/").rstrip("/")
+        if not root:
+            root = _common_root(fs.keys()) or _common_root(list(fs.keys()) + ["x"])
         for path, node in fs.items():
             rel = str(path).replace("\\", "/")
             if root and rel.startswith(root + "/"):
@@ -167,9 +190,28 @@ def build_package(db: Session, exam: Exam, server: str = "") -> bytes:
 
     # 学生能看的那一份，和网页端取卷走同一个函数 —— 答案和检查点在这一步摘掉
     groups = strip_answers(group_items(items))
-    paper, files, logical_root = [], {}, ""
+    paper, files = [], {}
     pics: dict[str, bytes] = {}
     no = 0
+    # 快照前缀：**一张卷子只有一个**，而且要在铺文件之前就定下来。
+    #
+    # 学生交上来的是一份「考试文件夹的快照」，路径是相对考试文件夹的；服务端
+    # 把 logical_root 拼回去，再和检查点里的绝对路径比对。所以铺文件时剥掉的
+    # 那一段，必须**正好**是这个前缀。
+    #
+    # 原来是「每道题各剥各的、前缀取第一道题的」：只要两道 win 题的工作目录
+    # 不一样（一道的环境带自己那层文件夹节点、另一道不带就会这样），除第一道
+    # 之外的题全判 0 分，报错还是"找不到文件"——最难查的那一种。
+    # 现在取全卷的公共目录，每道题都按它剥，怎么配都对得上。
+    win_roots = []
+    for g in groups:
+        for q in g["items"]:
+            sim = q.get("sim") or {}
+            if sim.get("kind") == "win":
+                win_roots.append(_root_of("win", sim.get("env") or {}))
+    # 算不出目录的（环境是空的、路径乱到没有公共前缀）跳过不算：那种题本来就跑
+    # 不了，不能让它把整张卷子的前缀拖成空的，连累同卷别的题。
+    logical_root = _common_dir(r for r in win_roots if r)
     # 一张卷子上不止一道网页题时，各给一个子文件夹 —— 否则两道题的
     # index.html 会盖在一起，交上去的源码是同一份，必有一道判错
     webs = sum(1 for g in groups for q in g["items"]
@@ -203,9 +245,8 @@ def build_package(db: Session, exam: Exam, server: str = "") -> bytes:
                     if kind == "html":
                         web_no += 1
                         web = WEB_DIR if webs <= 1 else f"{WEB_DIR}/第{web_no}题"
-                    got = _files_of(kind, sim.get("env") or {}, web)
+                    got = _files_of(kind, sim.get("env") or {}, web, logical_root)
                     files.update(got)
-                    logical_root = logical_root or _root_of(kind, sim.get("env") or {})
                     first = sorted(got)[0] if got else ""
                     row["sim"] = {
                         "kind": kind,
