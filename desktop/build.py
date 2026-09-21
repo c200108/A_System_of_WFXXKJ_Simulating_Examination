@@ -99,6 +99,91 @@ def exe_name(server: str, mark: str = "") -> str:
     return f"{NAME}{mark}@{host.replace(':', '_')}.exe"
 
 
+def ucrt_dir(bits: int) -> Path | None:
+    r"""找一份**兼容 Win7 的通用 C 运行库**（UCRT）。
+
+    ## 为什么非要换掉
+
+    PyInstaller 会把打包机上的 `ucrtbase.dll` 和一堆 `api-ms-win-*.dll` 收进包里
+    —— 打包机是 Win11，收进去的就是 **Win11 版的 ucrtbase**（10.0.26100）。
+    那个版本要用 `api-ms-win-core-sysinfo-l1-2-0.dll` 这类**Win7 上根本不存在**
+    的 api-set，而 PyInstaller 又没把它们收进来。于是学生机上：
+
+        64 位 → 无法启动此程序，因为计算机中丢失 api-ms-win-core-sysinfo-l1-2-0.dll
+        32 位 → Error loading Python DLL python38.dll，LoadLibrary: 找不到指定的程序
+
+    更糟的是，这堆 DLL 跟在 exe 旁边，**优先级高于系统自己那份** —— 就算机器
+    已经打过 KB2999226（装过 Python 3.7 的机器就有），也会被包里这份顶掉。
+
+    ## 换成哪一份
+
+    Windows SDK 里的 UCRT 重分发包（`Redist\ucrt\DLLs\x86|x64`，版本 10.0.10240），
+    那正是 KB2999226 装进 Win7 的那一份：只依赖 Win7 有的 api-set，而它缺的那几个
+    （file-l1-2-0、synch-l1-2-0 等）重分发包里自带存根。一共 1.9 MB。
+
+    **换完在 Win7 到 Win11 上都能跑** —— 重分发包本来就是为"一份程序发到所有
+    Windows"准备的。
+    """
+    arch = "x64" if bits == 64 else "x86"
+    roots = [Path(r"C:\Program Files (x86)\Windows Kits\10\Redist"),
+             Path(r"C:\Program Files\Windows Kits\10\Redist")]
+    found = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        found.append(root / "ucrt" / "DLLs" / arch)          # 老版 SDK 的摆法
+        found += sorted(root.glob(f"*/ucrt/DLLs/{arch}"))    # 新版按 SDK 版本分目录
+    for path in found:
+        if (path / "ucrtbase.dll").is_file():
+            return path
+    return None
+
+
+def write_spec(spec: Path, *, server_icon: Path | None, ucrt: Path | None,
+               onefile: bool) -> Path:
+    """写一份 .spec。**只有换运行库这件事非用 spec 不可** —— 命令行没法
+    把 PyInstaller 已经收进去的 DLL 换掉，得在 Analysis 之后动 `a.binaries`。"""
+    icon_line = f"icon=r'{server_icon}'," if server_icon else ""
+    data_line = (f"datas=[(r'{server_icon}', '图标')]," if server_icon else "datas=[],")
+    swap = f"""
+# —— 把打包机（Win11）的 UCRT 换成 SDK 里那份兼容 Win7 的 ——
+import os
+UCRT = r'{ucrt}'
+drop = {{n.lower() for n in os.listdir(UCRT)}}
+keep = [b for b in a.binaries if os.path.basename(b[0]).lower() not in drop]
+a.binaries = keep + [(n, os.path.join(UCRT, n), 'BINARY') for n in os.listdir(UCRT)]
+""" if ucrt else ""
+    body = f"""# -*- mode: python ; coding: utf-8 -*-
+# 这个文件是 build.py 生成的，不要手改。
+
+a = Analysis(
+    [r'{ENTRY}'],
+    pathex=[r'{HERE}'],
+    binaries=[],
+    {data_line}
+    hiddenimports=[],
+    excludes={EXCLUDE!r},
+    noarchive=False,
+)
+{swap}
+pyz = PYZ(a.pure, a.zipped_data)
+
+exe = EXE(
+    pyz, a.scripts, a.binaries, a.zipfiles, a.datas, [],
+    name='{NAME}',
+    debug=False, bootloader_ignore_signals=False, strip=False, upx=True,
+    upx_exclude=[], runtime_tmpdir=None,
+    console=False, disable_windowed_traceback=False,
+    argv_emulation=False, target_arch=None, codesign_identity=None,
+    entitlements_file=None,
+    {icon_line}
+)
+"""
+    spec.parent.mkdir(parents=True, exist_ok=True)
+    spec.write_text(body, encoding="utf-8")
+    return spec
+
+
 def floor_of(version) -> str:
     major, minor = version[0], version[1]
     if (major, minor) <= (3, 8):
@@ -202,6 +287,9 @@ def main() -> int:
                     help="用哪个 Python 打包（决定 exe 能跑在哪些系统）")
     ap.add_argument("--onedir", action="store_true",
                     help="打成文件夹而不是单文件：启动快、杀软少误报，但要整个文件夹一起拷")
+    ap.add_argument("--ucrt", action="store_true",
+                    help="把兼容 Win7 的通用 C 运行库（UCRT）打进 exe。"
+                         "学生机没打 KB2999226 补丁也能跑，文件名会多一个「内置运行库」")
     ap.add_argument("--server", default="",
                     help="把教师端地址烤进 exe，如 192.168.1.8:8080。"
                          "烤了之后机房只需要分发这一个 exe，学生双击就能用")
@@ -235,27 +323,31 @@ def main() -> int:
         print(f"   教师端地址已烤进 exe：{server}（学生不用再输）")
     # 位数写进文件名：32 位那份两种机器都能跑，64 位那份只能跑 64 位 Windows，
     # 机房里两版并存时得一眼分得出来
-    final = exe_name(server, f"-{bits}位") if not args.onedir else ""
+    ucrt = ucrt_dir(bits) if args.ucrt else None
+    if args.ucrt and not ucrt:
+        print("\n找不到 Windows SDK 里的 UCRT 重分发包，没法换运行库。")
+        print("装一个 Windows 10 SDK（只勾「Windows SDK for Desktop C++」即可），"
+              "或者去掉 --ucrt 用原来的打法。")
+        return 1
+    mark = f"-{bits}位" + ("-内置运行库" if ucrt else "")
+    final = exe_name(server, mark) if not args.onedir else ""
     clear_dist(final)
-    cmd = [py, "-m", "PyInstaller", "--clean", "--noconfirm",
-           "--onedir" if args.onedir else "--onefile",
-           "--windowed",                     # 考试程序不要黑框
-           "--name", NAME,
-           "--distpath", str(DIST),
-           "--workpath", str(HERE / "build"),
-           "--specpath", str(HERE / "build"),
-           "--paths", str(HERE)]
+
     if ICON.is_file():
-        # --icon 管的是**文件和任务栏上的图标**；窗口左上角那个是 Tk 自己画的，
-        # 得把 ico 一起打进去，运行时 set_window_icon() 再设一次
-        cmd += ["--icon", str(ICON),
-                "--add-data", f"{ICON}{os.pathsep}图标"]
         print(f"   图标：{ICON.name}")
     else:
         print(f"   没有图标（{ICON} 不存在），用 PyInstaller 的默认图标")
-    for mod in EXCLUDE:
-        cmd += ["--exclude-module", mod]
-    cmd.append(str(ENTRY))
+    if ucrt:
+        n = len(list(ucrt.glob("*.dll")))
+        print(f"   运行库：换成 SDK 重分发包里那份（{n} 个文件，兼容 Win7）")
+
+    spec = write_spec(HERE / "build" / f"{NAME}.spec",
+                      server_icon=ICON if ICON.is_file() else None,
+                      ucrt=ucrt, onefile=not args.onedir)
+    cmd = [py, "-m", "PyInstaller", "--clean", "--noconfirm",
+           "--distpath", str(DIST),
+           "--workpath", str(HERE / "build"),
+           str(spec)]
     if subprocess.run(cmd).returncode != 0:
         return 1
 
@@ -268,6 +360,20 @@ def main() -> int:
     print("③ 验收：让打出来的 exe 自己跑一遍自检")
     if not selftest_passes(exe):
         return 1
+
+    # ④ Win7 依赖检查。**自检过不了不算，自检在打包机上跑，机器什么都有** ——
+    #    缺的那几个 api-set 只在 Win7 上才暴露出来，所以静态查一遍包里带没带全。
+    audit = subprocess.run([py, str(HERE / "tools" / "查Win7依赖.py"), str(exe)],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace")
+    print("④ Win7 依赖检查")
+    for line in (audit.stdout or "").splitlines():
+        print("   " + line if line else "")
+    if audit.returncode != 0:
+        if ucrt:
+            print("换过运行库还缺东西，这一版不能发。")
+            return 1
+        print("   ——（没加 --ucrt。要发到 Win7 机房就加上它重打一次）")
 
     size = exe.stat().st_size / 1024 / 1024
     print(f"\n完成：{exe}（{size:.1f} MB）")
