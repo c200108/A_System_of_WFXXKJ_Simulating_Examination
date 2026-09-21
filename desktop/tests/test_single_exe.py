@@ -135,6 +135,75 @@ def test_两种位数的exe互不覆盖(tmp_path, monkeypatch):
     assert not (dist / "考场使用说明.txt").exists(), "说明该重写"
 
 
+def test_两种位数的图标不一样(monkeypatch, tmp_path):
+    """32 位用蓝红那枚，64 位用金红那枚 —— 拿到手不用看文件名就知道是哪一份。
+
+    文件名会被改（教师端换了 IP，网管改个名就完事），图标不会。而发错的后果
+    不对称：64 位那份在 32 位机器上双击根本不出来。
+    """
+    box = tmp_path / "图标"
+    box.mkdir()
+    for name in ("考试客户端.ico", "考试客户端-蓝红.ico"):
+        (box / name).write_bytes(b"ico")
+    monkeypatch.setattr(build, "ICONS", box)
+
+    assert build.icon_for(32).name == "考试客户端-蓝红.ico"
+    assert build.icon_for(64).name == "考试客户端.ico"
+
+
+def test_少一枚图标就用另一枚顶上(monkeypatch, tmp_path):
+    """图标是锦上添花，**不能因为它打不出包**。少一枚用另一枚，一枚都没有
+    就用 PyInstaller 的默认图标。"""
+    box = tmp_path / "图标"
+    box.mkdir()
+    monkeypatch.setattr(build, "ICONS", box)
+    assert build.icon_for(32) is None and build.icon_for(64) is None
+
+    (box / "考试客户端.ico").write_bytes(b"ico")
+    assert build.icon_for(32).name == "考试客户端.ico"     # 蓝红那枚还没做
+
+
+def test_打进包里的图标一律叫考试客户端ico(monkeypatch, tmp_path):
+    """窗口左上角那个图标是运行时**按固定名字**从附带文件里读的
+    （`shell.asset("考试客户端.ico")`）。蓝红那枚在仓库里另有其名，原样打进去
+    运行时就找不着，窗口会退回 Tk 那根羽毛 —— 所以打包前改名复制一份。
+    """
+    monkeypatch.setattr(build, "HERE", tmp_path)
+    src = tmp_path / "考试客户端-蓝红.ico"
+    src.write_bytes("蓝红那枚".encode("utf-8"))
+
+    staged = build.stage_icon(src)
+    assert staged.name == "考试客户端.ico"
+    assert staged.read_bytes() == src.read_bytes()
+
+    spec = build.write_spec(tmp_path / "t.spec", icon=staged, ucrt=None, onefile=True)
+    body = spec.read_text(encoding="utf-8")
+    assert f"icon=r'{staged}'" in body, "exe 自己的图标没钉上"
+    assert f"datas=[(r'{staged}', '图标')]" in body, "窗口图标没打进包"
+
+
+def test_仓库里两枚图标都在而且各有七个尺寸():
+    """两枚都得进仓库，而且**每枚都带全 7 个尺寸**。
+
+    只塞一张 256 的进去，Windows 会自己缩 —— 缩出来的 16×16 是一团糊，任务栏上
+    认不出是什么。所以 48 及以下另画了简笔版，ico 允许每个尺寸放不一样的图。
+    少了哪个尺寸就是这一步没做（见 图标/制作图标.py 的 SIZES）。
+    """
+    got = {}
+    for name in ("考试客户端.ico", "考试客户端-蓝红.ico"):
+        ico = build.ICONS / name
+        assert ico.is_file(), f"{name} 不在仓库里，打包会退回 PyInstaller 的默认图标"
+        blob = ico.read_bytes()
+        count = int.from_bytes(blob[4:6], "little")
+        # 目录项每条 16 字节，第 0 字节是宽；0 按 ico 的规矩表示 256
+        sizes = {blob[6 + i * 16] or 256 for i in range(count)}
+        assert sizes == {16, 24, 32, 48, 64, 128, 256}, f"{name} 少了尺寸：{sizes}"
+        got[name] = blob
+
+    assert got["考试客户端.ico"] != got["考试客户端-蓝红.ico"], \
+        "两枚长一样，那按位数分图标就没有意义了"
+
+
 @pytest.mark.parametrize("server", ["https://exam.school.edu.cn", "1.2.3.4:80/exam", ""])
 def test_写不进文件名的地址就不写(server):
     """https 的域名和带路径的地址写进文件名会走样（冒号斜杠都非法）。宁可不写

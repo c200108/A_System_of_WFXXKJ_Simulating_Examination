@@ -47,6 +47,10 @@ api-ms-win-core-sysinfo-l1-2-0.dll」，而且**跟在 exe 旁边的这份优先
 64 位的 exe 在 32 位 Windows 上**根本起不来**，而 Win7 时代的机房里 32 位机器
 不少。两份都是用 Python 3.8.10 打的，Win7 SP1 到 Win11 都能跑。
 
+**图标也分两种**：32 位那两个是蓝红的（校徽套一圈深蓝电路环），64 位那两个是
+金红的（学校自己那枚校徽）。位数虽然写在文件名里，可文件名是会被改的 ——
+教师端换了 IP 改个名就完事，图标不会跟着变。
+
 教师端地址三种带法，任选一种：
 
 | 带法 | 怎么做 | 适合 |
@@ -90,7 +94,7 @@ client/
   cleanup.py    考完清场：强制关掉还开着的考试文件，抹干净文件夹
 exam_client.py  入口，打包成 exe 的就是它
 build.py        打包脚本（打哪个系统由它选用的 Python 决定）
-图标/           校徽 + 电路环的 exe 图标，和生成它的脚本
+图标/           两枚校徽 exe 图标（32 位用蓝红、64 位用金红）和生成它们的脚本
 tests/          端到端自检：起一个真后端，走完整条链路
 ```
 
@@ -307,5 +311,5 @@ backend\.venv\Scripts\python.exe -m pytest desktop/tests -q
 | 打包写文件名、客户端解析文件名 | 分处两个文件，改一头忘一头，症状是学生双击后地址栏空着，而打包过程一切正常。`test_single_exe.py` 守着这条往返 |
 | **界面上用了 emoji**（🏠 📝 ⌨ ✓ ⚠） | Win7 没有 Segoe UI Emoji，这些字符在考场上是一个个空方框，而**开发机上永远看不见**。规则：源码里不许出现 GBK 装不下的字符（能编进 GBK 的，中文 Windows 的字体一定有），`test_win7_glyphs.py` 守着 |
 | **以为加个 `Connection: keep-alive` 头就复用连接了** | urllib 每次 `urlopen` 都新建一个 `HTTPConnection`，头写得再好也照样重新握手 —— 每次调用白白多花一个来回（实测 75 ms vs 33 ms）。要复用就得自己攥着 `http.client.HTTPConnection` |
-| 64 位 exe 发到 32 位机器 | 根本起不来。两版一起出，位数写进文件名 |
+| 64 位 exe 发到 32 位机器 | 根本起不来。两版一起出，位数写进文件名，**图标也分两种**（32 位蓝红、64 位金红）—— 文件名会被改，图标不会 |
 | **把打包机的通用 C 运行库发到 Win7** | Win11 的 `ucrtbase.dll` 要用 Win7 没有的组件，exe 双击就弹「丢失 api-ms-win-core-sysinfo-l1-2-0.dll」；而它跟在 exe 旁边，优先级高于系统那份，**打了 KB2999226 也救不回来**。用 `build.py --ucrt` 换成 SDK 里那份兼容 Win7 的（`tools/查Win7依赖.py` 静态查一遍，缺就不出包） |
