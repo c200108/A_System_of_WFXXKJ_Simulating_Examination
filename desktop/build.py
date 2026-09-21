@@ -58,9 +58,12 @@ HERE = Path(__file__).resolve().parent
 DIST = HERE / "发布"
 NAME = "考试客户端"
 ENTRY = HERE / "exam_client.py"
-# 校徽图标。没有就用 PyInstaller 的默认图标，不报错 —— 图标是锦上添花，
-# 不能因为它打不出包。怎么做见 图标/制作图标.py
-ICON = HERE / "图标" / "考试客户端.ico"
+# 校徽图标，两枚（见 icon_for）。一枚都没有就用 PyInstaller 的默认图标，
+# 不报错 —— 图标是锦上添花，不能因为它打不出包。怎么做见 图标/制作图标.py
+ICONS = HERE / "图标"
+# 运行时窗口图标读的是这个固定名字（client/shell.py 的 asset），打包前会把选中
+# 的那枚改名复制成它，见 stage_icon
+ICON_NAME = "考试客户端.ico"
 
 # 只排除**第三方**重家伙：打包用的 Python 里装着后端那套依赖，PyInstaller 会
 # 顺着依赖把它们拖进来，体积能差好几倍。
@@ -97,6 +100,42 @@ def exe_name(server: str, mark: str = "") -> str:
     if not host or "://" in host or "/" in host:
         return f"{NAME}{mark}.exe"
     return f"{NAME}{mark}@{host.replace(':', '_')}.exe"
+
+
+def icon_for(bits: int) -> Path | None:
+    """这一版 exe 用哪枚图标：**32 位用蓝红那枚，64 位用金红那枚。**
+
+    两枚都是校徽：金红是学校自己做的那枚（金底红字，电路、芯片、二进制都在里面），
+    蓝红是线描校徽外面套一圈深蓝电路环。长什么样、怎么做，见 图标/制作图标.py。
+
+    **为什么按位数分**：机房里两版 exe 并存，位数虽然写在文件名里，可文件名是会
+    被改的（教师端换了 IP，网管改个名就完事）—— 图标不会。拿到手一眼就知道是
+    哪一份。发错的后果不对称：64 位那份在 32 位机器上双击根本不出来。
+
+    少了哪一枚就用另一枚顶上，两枚都没有返回 None（用 PyInstaller 的默认图标）。
+    """
+    first = ICONS / ("考试客户端-蓝红.ico" if bits == 32 else ICON_NAME)
+    second = ICONS / (ICON_NAME if bits == 32 else "考试客户端-蓝红.ico")
+    for ico in (first, second):
+        if ico.is_file():
+            return ico
+    return None
+
+
+def stage_icon(icon: Path) -> Path:
+    """把选中的那枚图标改名复制一份，再打进包里。
+
+    exe 自己的图标（文件上、任务栏上那个）PyInstaller 认路径，叫什么都行；
+    **窗口左上角那个**是运行时从附带文件里按固定名字读的（`asset("考试客户端.ico")`）。
+    蓝红那枚在仓库里另有其名，原样打进去运行时就找不着，窗口会退回 Tk 那根羽毛。
+
+    放在 build/图标 下：PyInstaller 的 `--clean` 只清 build/考试客户端，清不到这儿。
+    """
+    box = HERE / "build" / "图标"
+    box.mkdir(parents=True, exist_ok=True)
+    out = box / ICON_NAME
+    shutil.copyfile(icon, out)
+    return out
 
 
 def ucrt_dir(bits: int) -> Path | None:
@@ -139,12 +178,12 @@ def ucrt_dir(bits: int) -> Path | None:
     return None
 
 
-def write_spec(spec: Path, *, server_icon: Path | None, ucrt: Path | None,
+def write_spec(spec: Path, *, icon: Path | None, ucrt: Path | None,
                onefile: bool) -> Path:
     """写一份 .spec。**只有换运行库这件事非用 spec 不可** —— 命令行没法
     把 PyInstaller 已经收进去的 DLL 换掉，得在 Analysis 之后动 `a.binaries`。"""
-    icon_line = f"icon=r'{server_icon}'," if server_icon else ""
-    data_line = (f"datas=[(r'{server_icon}', '图标')]," if server_icon else "datas=[],")
+    icon_line = f"icon=r'{icon}'," if icon else ""
+    data_line = (f"datas=[(r'{icon}', '图标')]," if icon else "datas=[],")
     swap = f"""
 # —— 把打包机（Win11）的 UCRT 换成 SDK 里那份兼容 Win7 的 ——
 import os
@@ -333,16 +372,17 @@ def main() -> int:
     final = exe_name(server, mark) if not args.onedir else ""
     clear_dist(final)
 
-    if ICON.is_file():
-        print(f"   图标：{ICON.name}")
+    icon = icon_for(bits)
+    if icon:
+        print(f"   图标：{icon.name}（{bits} 位这版用这枚）")
     else:
-        print(f"   没有图标（{ICON} 不存在），用 PyInstaller 的默认图标")
+        print(f"   没有图标（{ICONS} 里一枚都没有），用 PyInstaller 的默认图标")
     if ucrt:
         n = len(list(ucrt.glob("*.dll")))
         print(f"   运行库：换成 SDK 重分发包里那份（{n} 个文件，兼容 Win7）")
 
     spec = write_spec(HERE / "build" / f"{NAME}.spec",
-                      server_icon=ICON if ICON.is_file() else None,
+                      icon=stage_icon(icon) if icon else None,
                       ucrt=ucrt, onefile=not args.onedir)
     cmd = [py, "-m", "PyInstaller", "--clean", "--noconfirm",
            "--distpath", str(DIST),
