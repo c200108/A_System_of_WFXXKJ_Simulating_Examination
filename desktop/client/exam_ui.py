@@ -58,6 +58,20 @@ class ExamFrame(ttk.Frame):
         self.clock = tk.Label(top, text="", bg=BLUE, fg="white", font=(FONT, 13, "bold"))
         self.clock.pack(side="right", padx=10)
 
+        # **页脚先 pack，而且钉在底部。** 放在 body 后面 pack 的话，题干一长，
+        # Tk 先把空间分给上面的内容，「上一题/下一题」就被挤扁甚至挤没了 ——
+        # 学生只剩答题卡能跳题，还以为程序坏了。钉死在底部，高度 48 谁也抢不走。
+        foot = tk.Frame(self, bg=CARD, height=48, highlightbackground=LINE,
+                        highlightthickness=1)
+        foot.pack(side="bottom", fill="x")
+        foot.pack_propagate(False)
+        tk.Button(foot, text="上一题", font=(FONT, 10), relief="groove", width=10,
+                  command=lambda: self.show(self.index - 1)).pack(side="left", padx=16, pady=8)
+        tk.Button(foot, text="下一题", font=(FONT, 10), relief="groove", width=10,
+                  command=lambda: self.show(self.index + 1)).pack(side="left")
+        self.tip = tk.Label(foot, text="", bg=CARD, fg=GRAY, font=(FONT, 9))
+        self.tip.pack(side="right", padx=16)
+
         body = tk.Frame(self, bg=BG)
         body.pack(fill="both", expand=True)
 
@@ -81,28 +95,64 @@ class ExamFrame(ttk.Frame):
 
         main = tk.Frame(body, bg=BG)
         main.pack(side="left", fill="both", expand=True)
-        self.head = tk.Label(main, text="", bg=BG, fg=GRAY, font=(FONT, 9), anchor="w")
+
+        # **题干可能很长**（真题里有三四百字的），加上配图和一排选项，一屏放不下。
+        # 所以整块内容放进一个画布里，右边给一条滚动条 —— 不给的话下面的选项
+        # 直接看不见，学生以为这题没选项。
+        self.canvas = tk.Canvas(main, bg=BG, highlightthickness=0)
+        self.bar = tk.Scrollbar(main, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.bar.set)
+        self.bar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.page = tk.Frame(self.canvas, bg=BG)
+        self._page_id = self.canvas.create_window((0, 0), window=self.page, anchor="nw")
+        self.page.bind("<Configure>", self._page_resized)
+        self.canvas.bind("<Configure>", self._canvas_resized)
+        self.canvas.bind_all("<MouseWheel>", self._wheel)
+        self.bind("<Destroy>", lambda _e: self._drop_wheel())
+
+        self.head = tk.Label(self.page, text="", bg=BG, fg=GRAY, font=(FONT, 9), anchor="w")
         self.head.pack(fill="x", padx=18, pady=(10, 0))
-        self.stem = tk.Message(main, text="", bg=BG, font=(FONT, 12), anchor="w",
+        self.stem = tk.Message(self.page, text="", bg=BG, font=(FONT, 12), anchor="w",
                                justify="left", width=700)
         self.stem.pack(fill="x", padx=16, pady=(4, 6))
         # 题目配图。**引用要留着**：Tkinter 的 PhotoImage 一旦没人引用就会被
         # 回收，图片当场变成一块空白 —— 这是 Tkinter 最经典的坑
-        self.pic_label = tk.Label(main, bg=BG)
+        self.pic_label = tk.Label(self.page, bg=BG)
         self.pic = None
-        self.area = tk.Frame(main, bg=BG)
+        self.area = tk.Frame(self.page, bg=BG)
         self.area.pack(fill="both", expand=True, padx=18)
 
-        foot = tk.Frame(self, bg=CARD, height=48, highlightbackground=LINE,
-                        highlightthickness=1)
-        foot.pack(fill="x")
-        foot.pack_propagate(False)
-        tk.Button(foot, text="上一题", font=(FONT, 10), relief="groove", width=10,
-                  command=lambda: self.show(self.index - 1)).pack(side="left", padx=16, pady=8)
-        tk.Button(foot, text="下一题", font=(FONT, 10), relief="groove", width=10,
-                  command=lambda: self.show(self.index + 1)).pack(side="left")
-        self.tip = tk.Label(foot, text="", bg=CARD, fg=GRAY, font=(FONT, 9))
-        self.tip.pack(side="right", padx=16)
+    # ---------------- 滚动 ----------------
+    def _page_resized(self, _event=None):
+        """内容高度变了，重算可滚动范围；内容短到不用滚时把滚动条收起来。"""
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        need = self.page.winfo_reqheight() > self.canvas.winfo_height()
+        # 用 winfo_manager() 判"现在摆出来没有"，**不用 winfo_ismapped()**：
+        # 后者在窗口还没显示出来时恒为 0，于是"该收起来"那一支永远进不去
+        showing = self.bar.winfo_manager() == "pack"
+        if need and not showing:
+            self.bar.pack(side="right", fill="y")
+        elif not need and showing:
+            self.bar.pack_forget()
+
+    def _canvas_resized(self, event):
+        """画布宽了窄了，里面那页跟着宽窄 —— 不跟的话题干按 700 像素硬换行，
+        窗口再宽也挤在左边一条。"""
+        self.canvas.itemconfigure(self._page_id, width=event.width)
+        self.stem.configure(width=max(360, event.width - 60))
+
+    def _wheel(self, event):
+        try:
+            self.canvas.yview_scroll(int(-event.delta / 120), "units")
+        except tk.TclError:                       # 画布已经销毁（交完卷换屏了）
+            self._drop_wheel()
+
+    def _drop_wheel(self):
+        try:
+            self.canvas.unbind_all("<MouseWheel>")
+        except tk.TclError:
+            pass
 
     # ---------------- 渲染 ----------------
     def show(self, i: int):
@@ -121,10 +171,16 @@ class ExamFrame(ttk.Frame):
         qtype = q.get("type")
         if qtype in ("选择题", "判断题"):
             self._render_choice(q, qid)
+            self.tip.config(text="选完自动跳下一题")
         elif qtype == "填空题":
             self._render_blank(q, qid)
+            self.tip.config(text="")
         else:
             self._render_operation(q, qid)
+            self.tip.config(text="")
+        # 换一题从头看起：上一题要是拉到了底，这一题的题干会被藏在上面看不见
+        self.canvas.yview_moveto(0)
+        self.after_idle(self._page_resized)
         self.refresh_marks()
 
     def _show_picture(self, q):
@@ -175,8 +231,26 @@ class ExamFrame(ttk.Frame):
                 self.area, text=f"{o['label']}．{o['content']}", value=o["label"],
                 variable=var, bg=BG, font=(FONT, 11), anchor="w", justify="left",
                 wraplength=680, tristatevalue="\x01",
-                command=lambda v=var, k=qid: self.answer(k, v.get()),
+                command=lambda v=var, k=qid: self._picked(k, v.get()),
             ).pack(fill="x", pady=3)
+
+    def _picked(self, qid: str, value: str) -> None:
+        """选完一个选项，**自动跳下一题** —— 中考的机考客户端就是这么走的。
+
+        停 220 毫秒再跳：立刻跳的话学生看不见自己刚点上的那个点，会以为没点上，
+        回头再点一次。最后一题不跳（没有下一题了）。
+
+        回头改答案照样会跳 —— 改完想接着改，从左边答题卡点回来就是。
+        """
+        self.answer(qid, value)
+        if self.index < len(self.paper) - 1:
+            self.after(220, self._jump_after_pick)
+
+    def _jump_after_pick(self) -> None:
+        # 这 220 毫秒里可能已经交卷了（时间到自动交），交完这一屏就没了
+        if self.submitted or not self.winfo_exists():
+            return
+        self.show(self.index + 1)
 
     def _render_blank(self, q, qid):
         tk.Label(self.area, text="在下面填写答案：", bg=BG, fg=GRAY,
@@ -355,12 +429,15 @@ class ExamFrame(ttk.Frame):
 
     def refresh_marks(self):
         done = 0
-        for i, q in enumerate(self.paper):
+        # zip 而不是按下标取：答题卡的按钮数和题数万一对不上（自检里会这么摆），
+        # 按下标取会直接 IndexError 把整页打断，而这只是个进度显示
+        for i, (q, b) in enumerate(zip(self.paper, self.num_btns)):
             filled = bool(self.answers.get(str(q["id"])))
             done += 1 if filled else 0
-            b = self.num_btns[i]
             b.config(bg=BLUE if filled else CARD, fg="white" if filled else "black",
                      relief="solid" if i == self.index else "groove")
+        done += sum(1 for q in self.paper[len(self.num_btns):]
+                    if self.answers.get(str(q["id"])))
         self.progress.config(text=f"已答 {done} / {len(self.paper)}")
 
     def save_draft(self):

@@ -98,18 +98,39 @@ def guess_kind(stem: str, scope: str = "") -> str:
     if re.search(r"HTML|网页标题|网页中的图片|网页背景|一级标题|<[a-z]+>|HTML标签",
                  flat, re.I):
         return "html"
-    # 打开/编辑某个 .docx，或者出现了排版术语 → WPS 文字题
-    if (re.search(r"(?:打开|编辑)[^。]{0,40}\.docx?", flat)
-            or "WPS文字" in flat
-            or re.search(r"替换(?:为|成)|首行缩进|段前|段后|行距|对齐|自然段", flat)):
+    # **文件管理的动词一出现就是文件操作题**，哪怕文件名是 .doc。
+    # 踩过：「请打开本题工作目录下的 win06 文件夹……把"重阳节.doc"重命名为
+    # "老人节.doc"」——"打开"后面 40 个字内出现了 .doc，被当成 WPS 文字题，
+    # 于是整道题配了个文档环境，五问一问也判不出来。
+    # 「移动到」光有动词不算数：WPS 题里"把第四段移动到文章末尾"也是移动。
+    # 必须连着文件夹/文件才算文件管理 —— 否则排版题会被当成文件操作题，
+    # 整道题一个检查点也出不来。
+    filework = re.search(r"重命名|改名为"
+                         r"|(?:移动|复制)(?:到|至)[^。]{0,20}文件夹"
+                         r"|文件夹[^。]{0,12}(?:移动|复制)"
+                         r"|删除[^。]{0,10}文件夹?"
+                         r"|(?:新建|建立|创建)[^。]{0,10}文件夹", flat)
+    # 排版术语 → WPS 文字题
+    typo = re.search(r"替换(?:为|成)|首行缩进|段前|段后|行距|对齐|自然段|页眉|页脚"
+                     r"|纸张|边距|字号|字形|分栏|艺术字|文本框|下划线|样式", flat)
+    if "WPS文字" in flat or (typo and not filework):
         return "wps"
-    if re.search(r"文件夹|新建|创建|移动|复制|删除|重命名", flat):
+    # 打开/编辑某个 .docx（而且不是在做文件管理）→ WPS 文字题
+    if re.search(r"(?:打开|编辑)[^。；;：:，,]{0,40}\.docx?", flat) and not filework:
+        return "wps"
+    if filework or re.search(r"文件夹|新建|创建|移动|复制|删除|重命名", flat):
         return "win"
     return {"WPS文字操作": "wps", "人工智能": "ai",
             "Windows系统操作": "win"}.get(scope, "")
 
 
 # ================================================================ Windows
+def _in_folder(flat: str) -> str:
+    """这一句里的「在"X"文件夹中」是哪个文件夹。没写就是工作目录本身。"""
+    m = re.search(r"在" + Q + r"([^\"“”'‘’「」『』]{1,30}?)" + Q + r"文件夹[中下里]", flat)
+    return m.group(1) if m else ""
+
+
 def _base_dir(stem: str) -> str:
     """「请打开本题工作目录下的**系统基本操作**文件夹」里那个文件夹名。
 
@@ -190,7 +211,7 @@ def _win_item(text: str, base: str, fs: dict, checks: list, todo: list) -> None:
         return
 
     # ② 将"F.jpg"文件复制/移动到"D"文件夹中  （源就在工作目录下）
-    m = re.search(Q + r"([^\"“”'‘’「」『』]+?\.[A-Za-z0-9]{1,5})" + Q + r"文件?(复制|移动)到"
+    m = re.search(Q + r"([^\"“”'‘’「」『』]+?\.[A-Za-z0-9]{1,5})" + Q + r"(?:文件)?(复制|移动)到"
                   + Q + r"?([^\"“”'‘’「」『』]{0,40}?)" + Q + r"?文件夹", flat)
     if m:
         name, verb, dst = m.group(1), m.group(2), m.group(3)
@@ -206,7 +227,7 @@ def _win_item(text: str, base: str, fs: dict, checks: list, todo: list) -> None:
 
     # ② 把"A\B"文件夹中的"F.jpg"文件删除
     m = re.search(Q + r"?([^\"“”'‘’「」『』]{0,40}?)" + Q + r"?文件夹[中下里]的" + Q
-                  + r"([^\"“”'‘’「」『』]+?)" + Q + r"文件?删除", flat)
+                  + r"([^\"“”'‘’「」『』]+?)" + Q + r"(?:文件)?删除", flat)
     if m:
         where, name = m.group(1), m.group(2)
         fs[_join(base, where)] = {"type": "dir"}
@@ -261,11 +282,94 @@ def _win_item(text: str, base: str, fs: dict, checks: list, todo: list) -> None:
                                   "is": "dir"}})
         return
 
-    m = re.search(r"新建(?:一个)?(?:名为)?" + Q + r"(.+?)" + Q + r"(?:的)?文件夹", flat)
+    # 「在"A"文件夹中，新建名为"B"的文件夹」/「建立一个新的文件夹"B"」——
+    # 真题里"新建"和"建立"、"名为X的文件夹"和"文件夹X"四种搭配都有，
+    # 少认一种就漏判一问
+    m = re.search(r"在" + Q + r"?([^\"“”'‘’「」『』]{0,30}?)" + Q
+                  + r"?文件夹[中下里]?[，,]?\s*(?:新建|建立|创建)[^。]{0,8}?"
+                  + Q + r"([^\"“”'‘’「」『』]+?)" + Q + r"(?:的)?文件夹", flat)
+    if m:
+        where, name = m.group(1), m.group(2)
+        fs[_join(base, where)] = {"type": "dir"}
+        checks.append({"desc": f"在「{where or '工作目录'}」中新建文件夹「{name}」", "score": 5,
+                       "assert": {"op": "exists", "path": _join(base, where, name),
+                                  "is": "dir"}})
+        return
+
+    # 「在"外国节日"文件夹中建立一个新的文件夹"圣诞节"」—— 名字跟在"文件夹"**后面**
+    m = re.search(r"在" + Q + r"?([^\"“”'‘’「」『』]{0,30}?)" + Q
+                  + r"?文件夹[中下里][^。]{0,10}?(?:新建|建立|创建)[^。]{0,6}?文件夹"
+                  + Q + r"([^\"“”'‘’「」『』]+?)" + Q, flat)
+    if m:
+        where, name = m.group(1), m.group(2)
+        fs[_join(base, where)] = {"type": "dir"}
+        checks.append({"desc": f"在「{where or '工作目录'}」中新建文件夹「{name}」", "score": 5,
+                       "assert": {"op": "exists", "path": _join(base, where, name),
+                                  "is": "dir"}})
+        return
+
+    m = re.search(r"(?:新建|建立|创建)(?:一个)?(?:新的)?(?:名为)?" + Q + r"(.+?)" + Q
+                  + r"(?:的)?文件夹", flat)
     if m:
         name = m.group(1)
         checks.append({"desc": f"新建文件夹「{name}」", "score": 5,
                        "assert": {"op": "exists", "path": _join(base, name), "is": "dir"}})
+        return
+
+    # ③ 把"A.doc"（文件）重命名 / 改名为"B.doc"
+    #    **原名必须铺出来**，否则学生打开文件夹里根本没有要改的那个文件
+    m = re.search(Q + r"([^\"“”'‘’「」『』]+?)" + Q + r"(?:文件|文件夹)?(?:重命名|改名)为"
+                  + Q + r"([^\"“”'‘’「」『』]+?)" + Q, flat)
+    if m:
+        old, new = m.group(1), m.group(2)
+        where = _in_folder(flat)
+        src, dst = _join(base, where, old), _join(base, where, new)
+        fs[src] = {"type": "dir"} if "." not in old else file_node(old)
+        if where:
+            fs[_join(base, where)] = {"type": "dir"}
+        checks.append({"desc": f"把「{old}」改名为「{new}」", "score": 5,
+                       "assert": {"op": "exists", "path": dst}})
+        checks.append({"desc": f"改完不该还有「{old}」", "score": 3,
+                       "assert": {"op": "missing", "path": src}})
+        return
+
+    # ③ 将名为"X"的文件夹/文件 复制|移动到"Y"文件夹中
+    m = re.search(r"名为" + Q + r"([^\"“”'‘’「」『』]+?)" + Q + r"的(文件夹|文件)"
+                  r"(复制|移动)到" + Q + r"?([^\"“”'‘’「」『』]{0,40}?)" + Q + r"?文件夹", flat)
+    if m:
+        name, what, verb, dst = m.group(1), m.group(2), m.group(3), m.group(4)
+        src = _join(base, name)
+        fs[src] = {"type": "dir"} if what == "文件夹" else file_node(name)
+        fs[_join(base, dst)] = {"type": "dir"}
+        checks.append({"desc": f"把{what}「{name}」{verb}到「{dst}」", "score": 5,
+                       "assert": {"op": "exists", "path": _join(base, dst, name)}})
+        if verb == "移动":
+            checks.append({"desc": f"原位置不再有「{name}」", "score": 3,
+                           "assert": {"op": "missing", "path": src}})
+        return
+
+    # ③ 删除"A"文件夹中的图片文件 —— 题干没点名是哪一个，那就**铺一个出来**，
+    #    学生看到的和判分看的是同一个文件，题目才做得成
+    m = re.search(r"删除" + Q + r"?([^\"“”'‘’「」『』]{0,30}?)" + Q
+                  + r"?文件夹[中下里]的(图片|图像|音频|视频|文本)文件", flat)
+    if m:
+        where, what = m.group(1), m.group(2)
+        ext = {"图片": ".jpg", "图像": ".jpg", "音频": ".mp3",
+               "视频": ".mp4", "文本": ".txt"}[what]
+        name = f"示例{what}{ext}"
+        fs[_join(base, where)] = {"type": "dir"}
+        fs[_join(base, where, name)] = file_node(name)
+        checks.append({"desc": f"删除「{where}」里的{what}文件「{name}」", "score": 5,
+                       "assert": {"op": "missing", "path": _join(base, where, name)}})
+        return
+
+    # ③ 删除"X"文件夹（整个文件夹，不是里面的文件）
+    m = re.search(r"删除" + Q + r"([^\"“”'‘’「」『』]+?)" + Q + r"文件夹", flat)
+    if m:
+        name = m.group(1)
+        fs[_join(base, name)] = {"type": "dir"}
+        checks.append({"desc": f"删除文件夹「{name}」", "score": 5,
+                       "assert": {"op": "missing", "path": _join(base, name)}})
         return
 
     # 认不出来的一律留痕。**悄悄扔掉比判错更糟** —— 老师会以为这道题判全了，
@@ -299,6 +403,31 @@ ALIGN_WORDS = {"居中": "center", "右对齐": "right", "左对齐": "left",
                "两端对齐": "justify", "分散对齐": "distribute"}
 
 
+_NOT_EXCERPT = re.compile(
+    r"^(?:" + FONT_WORDS + r"|" + SIZE_WORDS + r"|标题|正文|普通数字\d?"
+    r"|[上下左右]+型环绕|紧密型环绕|四周型环绕|居中|左对齐|右对齐"
+    r"|[0-9.]+|[A-Za-z]+\d*|.{0,5}色)$")
+
+
+def _excerpt(flat: str, least: int = 4) -> str:
+    """题干里抄的那段**原文**：「将第2自然段（"远处的群山……花瓣儿。"）设为……」
+
+    用它按内容定位段落，比按序号稳 —— 学生要是在前面插了一段，序号就全错位了。
+    省略号前那一截就够认段落，也正好当作要塞进生成正文里的那句话。
+
+    **能按内容找就别按序号找。** 同一道题里常常又有"把第 3 段移到最后"，
+    段落一挪，按序号定位的检查点就全指错了 —— 学生做对了反而判错。
+
+    引号里的东西不一定是原文：字体名、字号、样式名、环绕方式也都带引号。
+    所以短的、像术语的一律不算（见 _NOT_EXCERPT）。
+    """
+    for word in _quoted(flat):
+        head = re.split(r"…+|\.{3,}|。{2,}", word)[0].strip("　 、，,。;；")
+        if len(head) >= least and not _NOT_EXCERPT.match(word.strip()):
+            return head[:24]
+    return ""
+
+
 def _wps_item(text: str, checks: list, todo: list, needs: list,
               title: list | None = None) -> None:
     """一条 WPS 操作。
@@ -319,15 +448,61 @@ def _wps_item(text: str, checks: list, todo: list, needs: list,
                 _wps_item(half, checks, todo, needs, title)
         return
 
-    # ① 将文档中所有的"A"替换为/替换成"B"
-    m = re.search(Q + r"([^\"“”'‘’「」『』]+?)" + Q + r"(?:全部)?替换(?:为|成)" + Q
+    # ① 将文档中所有的"A"替换为/替换成"B"，或者「把文中所有的"A"改为"B"」
+    m = re.search(Q + r"([^\"“”'‘’「」『』]+?)" + Q + r"(?:全部)?(?:替换|改)(?:为|成)" + Q
                   + r"([^\"“”'‘’「」『』]+?)" + Q, flat)
-    if m:
+    if m and re.search(r"文中|文档中|全部|所有", flat):
         old, new = m.group(1), m.group(2)
         needs.append(old)
         checks.append({"desc": f"把「{old}」全部替换为「{new}」", "score": 4,
                        "assert": {"op": "text", "absent": old, "present": new}})
         return
+
+    # ② 页眉 / 页脚：「为文档添加页眉为"春天"」「添加页脚，内容为"1"」
+    m = re.search(r"(页眉|页脚)[^。]{0,8}?(?:为|内容为|是)\s*" + Q
+                  + r"([^\"“”'‘’「」『』]{1,20})" + Q, flat)
+    if m:
+        which, word = m.group(1), m.group(2)
+        checks.append({"desc": f"添加{which}「{word}」", "score": 4,
+                       "assert": {"op": "header" if which == "页眉" else "footer",
+                                  "has": word}})
+        return
+
+    # ② 纸张大小：「设置纸张大小为A4」「设置文档页面为B5纸大小」
+    m = re.search(r"(?:纸张|页面)[^。]{0,6}?(A3|A4|A5|B4|B5|16开)", flat, re.I)
+    if m:
+        want = m.group(1).upper() if m.group(1).lower() != "16开" else "16开"
+        checks.append({"desc": f"纸张设为 {want}", "score": 4,
+                       "assert": {"op": "page", "size": want}})
+        # 不 return：同一句里常常还跟着页边距、页码
+
+    # ② 页边距：「左、右边距均为2厘米」「左右页边距为2.5厘米，上下页边距为2厘米」
+    seen = set()
+    for m in re.finditer(r"(左右|上下|左、右|上、下|左|右|上|下)(?:页)?边距"
+                         r"[^0-9。]{0,8}(\d+(?:\.\d+)?)\s*厘米", flat):
+        where, value = m.group(1), float(m.group(2))
+        keys = {"左右": ("left", "right"), "左、右": ("left", "right"),
+                "上下": ("top", "bottom"), "上、下": ("top", "bottom"),
+                "左": ("left",), "右": ("right",),
+                "上": ("top",), "下": ("bottom",)}[where]
+        keys = tuple(k for k in keys if k not in seen)
+        if not keys:
+            continue
+        seen.update(keys)
+        checks.append({"desc": f"{where}边距 {value} 厘米", "score": 3,
+                       "assert": {"op": "page", **{k: value for k in keys}}})
+    if seen:
+        return
+
+    # ③ 把某一段移到最后：「将自然段（"春雨过后……"）移动到最后」
+    #    判的是"最后一段是不是它"，正好对上 order.last
+    if re.search(r"移(?:动)?到(?:文档|文章)?(?:的)?(?:最后|末尾)", flat):
+        key = _excerpt(flat, least=3)
+        if key:
+            needs.append(key)
+            checks.append({"desc": f"把「{key[:10]}」那一段移到最后", "score": 4,
+                           "assert": {"op": "order", "last": key[:8]}})
+            return
 
     # ③ 在文章最后输入一段新的文字:"……"
     m = re.search(r"(?:在文章|文章)?最后输入一段新的文字:?" + Q + r"(.+?)" + Q, flat)
@@ -343,16 +518,31 @@ def _wps_item(text: str, checks: list, todo: list, needs: list,
     # 「将标题文字"让青春在不懈奋斗中绽放绚丽之花"设置为……」——**引号是必需的**。
     # 不要引号的话，「将文档标题字体格式设置为黑体」会把"字体"两个字当成标题
     # 内容，生成一条永远找不到那一段的检查点。踩过。
-    m = re.search(r"标题(?:文字)?" + Q + r"([^\"“”'‘’「」『』]{3,30})" + Q, flat)
-    if m and "设置" in flat:
+    m = re.search(r"(?:标题|题目)(?:文字)?[，,]?" + Q + r"([^\"“”'‘’「」『』]{3,30})" + Q, flat)
+    if m and re.search(r"设置|设为|格式化", flat):
         target = {"has": m.group(1)[:10]}
         # 题干点名了标题原文，文档里就得真有这句话 —— 检查点按内容找段落
         if title is not None:
             title.append(m.group(1))
-    elif "标题" in flat:
+    elif _excerpt(flat):
+        # 「将文中介绍作者李绅的一段文字（"李绅（772﹣846）……"）字体格式化为……」
+        # —— 真题里几乎都会把那一段的原文抄在括号里。**按内容找段落**，
+        # 而且把这句原文塞进生成的正文里，学生才找得到要改的那一段。
+        key = _excerpt(flat)
+        needs.append(key)
+        target = {"has": key[:10]}
+    elif "标题" in flat or "题目" in flat:
         target = 0                        # 没给标题内容就按第一段算
     elif re.search(r"第一(?:自然)?段", flat):
         target = 0
+    elif re.search(r"第\s*([2-9１-９二三四五六七八九])\s*(?:个)?(?:自然)?段", flat):
+        m2 = re.search(r"第\s*([2-9１-９二三四五六七八九])\s*(?:个)?(?:自然)?段", flat)
+        digits = {"二": 2, "三": 3, "四": 4, "五": 5, "六": 6,
+                  "七": 7, "八": 8, "九": 9}
+        raw = m2.group(1)
+        n = digits.get(raw) or int(raw) if not raw.isdigit() else int(raw)
+        # 生成的文档第 0 段是标题，所以「第 N 自然段」就是下标 N
+        target = min(n, 4)
     elif re.search(r"正文(?:所有)?段落|所有段落|正文", flat):
         target = 1                        # 正文从第二段起
 
@@ -363,17 +553,31 @@ def _wps_item(text: str, checks: list, todo: list, needs: list,
     m = re.search(SIZE_WORDS, flat)
     if m:
         want["size"] = m.group(0)
+    # 字形：加粗、倾斜、下划线。**下划线只判"有没有"** —— 双下划线、波浪线
+    # 在 .docx 里是 w:u 的不同取值，客户端读回来只有"有/无"，判样式会冤枉人
+    if re.search(r"加粗|粗体|字形为粗", flat):
+        want["bold"] = True
+    if re.search(r"倾斜|斜体", flat):
+        want["italic"] = True
+    if re.search(r"下划线", flat):
+        want["underline"] = True
+    m = re.search(r"(红|绿|蓝|黄|紫|橙)色", flat)
+    if m:
+        want["color"] = m.group(0)
+    if re.search(r"设置为" + Q + r"?标题" + Q + r"?样式|应用[^。]{0,4}标题样式", flat):
+        want["style"] = "标题1"
     for word, value in ALIGN_WORDS.items():
         if word in flat:
             want["align"] = value
             break
-    m = re.search(r"首行缩进(\d+(?:\.\d+)?)字符", flat)
+    m = re.search(r"首行缩进(?:为)?(\d+(?:\.\d+)?)(?:个)?字符", flat)
     if m:
         want["indent"] = float(m.group(1))
-    m = re.search(r"文本之前缩进(\d+(?:\.\d+)?)字符", flat)
+    # 「文本之前2个字符」——真题里"缩进"两个字常常省掉
+    m = re.search(r"文本之前(?:缩进)?(\d+(?:\.\d+)?)(?:个)?字符", flat)
     if m:
         want["left"] = float(m.group(1))
-    m = re.search(r"文本之后缩进(\d+(?:\.\d+)?)字符", flat)
+    m = re.search(r"文本之后(?:缩进)?(\d+(?:\.\d+)?)(?:个)?字符", flat)
     if m:
         want["right"] = float(m.group(1))
     m = re.search(r"段前(?:间距)?(?:为)?(\d+(?:\.\d+)?)行", flat)
@@ -395,7 +599,9 @@ def _wps_item(text: str, checks: list, todo: list, needs: list,
         # 学生只做对一半时能拿一半分，老师也看得出差在哪一项
         labels = {"font": "字体", "size": "字号", "align": "对齐", "indent": "首行缩进",
                   "left": "文本之前缩进", "right": "文本之后缩进",
-                  "before": "段前间距", "after": "段后间距", "line": "行距"}
+                  "before": "段前间距", "after": "段后间距", "line": "行距",
+                  "bold": "加粗", "italic": "倾斜", "underline": "下划线",
+                  "color": "字体颜色", "style": "样式"}
         for key, value in want.items():
             checks.append({"desc": f"设置{labels.get(key, key)}", "score": 3,
                            "assert": {"op": "para", "at": target, key: value}})
@@ -449,7 +655,7 @@ def parse_wps(stem: str) -> dict:
         _wps_item(item, checks, todo, needs, title)
 
     name = "文档"
-    m = re.search(Q + r"([^\"“”'‘’「」『』]+?)\.docx?" + Q, str(stem))
+    m = re.search(Q + r"([^\"“”'‘’「」『』]+?)\.(?:docx?|wps)" + Q, str(stem))
     if m:
         name = m.group(1)
     topic = re.sub(r"[0-9]+$", "", name).strip() or "信息技术"

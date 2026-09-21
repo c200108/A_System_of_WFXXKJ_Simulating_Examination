@@ -259,6 +259,50 @@ def same_size(a, b) -> bool:
     return pa is not None and pb is not None and abs(pa - pb) < 0.01
 
 
+# 颜色：检查点里可以写中文名，也可以写十六进制。
+# **不能只认一个值** —— "红色"在 WPS 的标准色板里是 FF0000，在主题色里是
+# C00000，学生点哪个都是红色，判错了他会觉得莫名其妙。
+COLOR_ALIASES = {
+    "红色": {"ff0000", "c00000", "e60012", "dd0000", "ff3333"},
+    "绿色": {"00b050", "008000", "92d050", "00ff00", "70ad47"},
+    "蓝色": {"0070c0", "0000ff", "4472c4", "002060", "00b0f0"},
+    "黄色": {"ffff00", "ffc000", "ffd966"},
+    "紫色": {"7030a0", "800080", "9966ff"},
+    "橙色": {"ffa500", "ed7d31", "ff9900", "e36c09"},
+}
+
+
+def same_color(got, want) -> bool:
+    """学生设的颜色算不算题目要的那个颜色。"""
+    g = str(got or "").strip().lstrip("#").lower()
+    w = str(want or "").strip()
+    if w in COLOR_ALIASES:
+        return g in COLOR_ALIASES[w]
+    return g == w.lstrip("#").lower()
+
+
+# 纸张：按 twip（1/1440 英寸）认，允许几毫米的出入 —— 不同版本的 WPS/Word
+# 对同一种纸张的尺寸有零点几毫米的差别
+PAPER_SIZES = {
+    "A3": (16838, 23811), "A4": (11906, 16838), "A5": (8391, 11906),
+    "B4": (14570, 20636), "B5": (9978, 14173),
+    "Letter": (12240, 15840), "16开": (10433, 14740),
+}
+
+
+def paper_name(width, height) -> str:
+    """一对宽高是什么纸。认不出来就返回空串。"""
+    try:
+        w, h = float(width), float(height)
+    except (TypeError, ValueError):
+        return ""
+    w, h = min(w, h), max(w, h)            # 横排竖排都当同一种纸
+    for name, (pw, ph) in PAPER_SIZES.items():
+        if abs(w - pw) <= 220 and abs(h - ph) <= 220:
+            return name
+    return ""
+
+
 def _paras(state: dict) -> list[dict]:
     got = state.get("paras")
     return [p for p in got if isinstance(p, dict)] if isinstance(got, list) else []
@@ -290,6 +334,7 @@ PARA_LABELS = {
     "border": "边框", "bullet": "项目符号/编号", "style": "样式",
     "align": "对齐方式", "indent": "首行缩进",
     "before": "段前间距", "after": "段后间距",
+    "left": "文本之前缩进", "right": "文本之后缩进",
 }
 BULLET_NAMES = {"none": "无", "dot": "项目符号", "number": "编号"}
 ALIGN_NAMES = {"left": "左对齐", "center": "居中", "right": "右对齐",
@@ -304,8 +349,12 @@ def _check_wps(a: dict, state: dict):
         p = _pick_para(paras, a.get("at", 0))
         if not p:
             return False, "找不到要检查的那一段（段落被删了，或者内容被改了）"
-        # 取值型：字体、颜色、突出显示、底纹、样式、项目符号
-        for key in ("font", "color", "highlight", "shading", "style"):
+        # 颜色单独比：检查点里写「红色」，学生设的是 #ff0000 或 #c00000，
+        # 都该算对（见 COLOR_ALIASES）
+        if "color" in a and not same_color(p.get("color"), a["color"]):
+            return False, f"颜色是「{p.get('color') or '默认'}」，要求「{a['color']}」"
+        # 取值型：字体、突出显示、底纹、样式、项目符号
+        for key in ("font", "highlight", "shading", "style"):
             if key in a and str(p.get(key) or "") != str(a[key]):
                 return False, f"{PARA_LABELS[key]}是「{p.get(key) or '默认'}」，要求「{a[key]}」"
         if "bullet" in a and str(p.get("bullet") or "none") != str(a["bullet"]):
@@ -321,7 +370,9 @@ def _check_wps(a: dict, state: dict):
         if "align" in a and str(p.get("align") or "left") != str(a["align"]):
             got = ALIGN_NAMES.get(str(p.get("align") or "left"), p.get("align"))
             return False, f"对齐方式是{got}，要求{ALIGN_NAMES.get(a['align'], a['align'])}"
-        for key in ("indent", "before", "after"):
+        # left / right 是「文本之前/之后缩进」。**以前漏判了** —— 检查点里写得出来，
+        # 判分时却不看，于是这一问永远算对，白送分
+        for key in ("indent", "before", "after", "left", "right"):
             if key in a and abs(float(p.get(key) or 0) - float(a[key])) > 0.01:
                 return False, f"{PARA_LABELS[key]}是 {p.get(key) or 0}，要求 {a[key]}"
         if "line" in a:
@@ -354,6 +405,10 @@ def _check_wps(a: dict, state: dict):
                            ("top", "上边距"), ("bottom", "下边距")):
             if key in a and abs(float(page.get(key) or 0) - float(a[key])) > 0.01:
                 return False, f"{label}是 {page.get(key) or 0} 厘米，要求 {a[key]} 厘米"
+        if "size" in a:
+            got = str(page.get("size") or "")
+            if got != str(a["size"]):
+                return False, f"纸张是「{got or '未知'}」，要求「{a['size']}」"
         if "orient" in a and str(page.get("orient") or "portrait") != str(a["orient"]):
             return False, "纸张方向不对"
         return True, "页面设置对了"
