@@ -42,8 +42,11 @@ r"""桌面客户端（desktop/）和网页后台之间的那条线。
     wps   段落模型写成真 .docx，学生用真 WPS 改，交卷时读回段落比格式
     html  网页文件铺进单独的「网页」文件夹，学生用记事本改，交卷时读回源码
     ai    对话式的题，成果不在文件系统里，由客户端的对话框收集
+    drag  拖拽题（流程图补全、结构图热区、设备归类、程序填空、本机 IP 查询）：
+          包里带按原题重画的图和素材卡片（services/drag.py 按题干现算），客户端
+          交「哪张卡片放在哪个热区」；IP 题交学生填的地址和本机真实地址
 
-三类操作题**都是自动判分**，用的还是老师在网页仿真器里点出来的那份检查点。
+这几类操作题**都是自动判分**，检查点和网页端判的是同一份，一律留在服务器。
 """
 
 import io
@@ -68,13 +71,16 @@ from ..services.exam import group_items, load_items, strip_answers
 router = APIRouter(prefix="/api/desk", tags=["桌面客户端"])
 
 PKG_FORMAT = 1
-DESK_KINDS = ("win", "html", "wps", "ai")
+DESK_KINDS = ("win", "html", "wps", "ai", "drag")
 
 # 网页题的文件单独放一个文件夹，不和考试文件夹根目录上的东西混在一起。
 # 两个原因：学生点「打开」直接看见 index.html 和 style.css，不用在一堆
 # 别的题的素材里翻；一张卷子上有两道网页题时，各自的 index.html 也不会
 # 互相盖掉 —— 盖掉的后果是两道题判同一份源码，一道必错。
 WEB_DIR = "网页"
+
+# IP 查询题的 env 里只给网页端仿真命令行用的那几项，不进桌面端的考试包
+IP_SECRETS = ("sim_ip", "mask", "gateway", "host")
 
 
 def _dump(obj) -> bytes:
@@ -256,6 +262,16 @@ def build_package(db: Session, exam: Exam, server: str = "") -> bytes:
                         # html 看源码。manual 只留给没配仿真环境的题
                         "manual": False,
                     }
+                    if kind == "drag":
+                        # 拖拽题没有要铺的文件，客户端要的是**图本身**：结构图、热区、
+                        # 素材卡片。不含答案（答案在检查点里，留在服务端）。
+                        #
+                        # IP 查询题把仿真地址摘掉：那是给网页端仿真命令行显示用的，
+                        # 桌面端查的是真机的 ipconfig。留在包里的话，学生把考试包
+                        # 解压开就能直接抄到一个"对"的地址
+                        env = sim.get("env") or {}
+                        row["sim"]["env"] = {k: v for k, v in env.items()
+                                             if k not in IP_SECRETS}
             paper.append(row)
 
     roster = _roster(db, exam)

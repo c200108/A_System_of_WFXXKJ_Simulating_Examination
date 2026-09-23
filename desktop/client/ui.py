@@ -788,7 +788,7 @@ class TypingPage(Page):
         mode, level = self.mode.get(), self.level.get()      # 同上：主线程里读
         in_thread(self, lambda: api.typing_submit(
             self.app.server, self.app.student, mode, level,
-            len(typed), right, used), done)
+            len(typed), right, used, token=self.app.token), done)
 
 
 # ================================================================ 应用

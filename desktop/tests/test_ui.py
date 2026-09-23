@@ -31,19 +31,6 @@ def no_dialogs(monkeypatch):
     monkeypatch.setattr(messagebox, "showerror", lambda *a, **k: None)
 
 
-@pytest.fixture(scope="session")
-def tk_root():
-    """**整场自检就这一个根窗口。**
-
-    一个进程里反复 `Tk()` / `destroy()`，同时后台还跑着 uvicorn 线程，Tcl 会被
-    踩坏 —— 症状是 "couldn't read file scrlbar.tcl" 这种莫名其妙的报错。
-    """
-    root = tk.Tk()
-    root.withdraw()
-    yield root
-    root.destroy()
-
-
 @pytest.fixture(autouse=True, scope="session")
 def gc_on_main_thread():
     """自动回收关掉，改成每个用例结束时在主线程手动收。
@@ -224,6 +211,30 @@ def test_the_sidebar_switches_pages(app, server, exam):
     assert shell.page == "typing" and isinstance(shell.body, ui.TypingPage)
     shell.go("exam")
     assert isinstance(shell.body, ui.ExamListPage)
+
+
+def test_exe里练的打字算进首页(app, server, exam):
+    """机房和线上都报过：exe 里练完打字，首页的「练习次数 / 最快速度 /
+    平均正确率」一直是 0。
+
+    成绩其实交上去了（老师在成绩页看得见），只是 exe 交的时候没带登录令牌，
+    服务端认不出是谁，记录没挂到学生账号上 —— 而首页只统计挂了账号的记录。
+    这条按学生真实的操作走一遍：登录、进打字页、敲一段、交，再看首页。
+    """
+    shell = signed_in(app, server, "26090112")
+    before = api.home(server, app.token)["typing_count"]
+
+    shell.go("typing")
+    page = shell.body
+    assert settle(app, until=lambda: getattr(page, "passage", "")), "练习文本没取回来"
+    page.entry.insert("1.0", page.passage[:40])
+    page.started = time.time() - 30          # 当作敲了半分钟
+    page.submit()
+    assert settle(app, until=lambda: "已记录" in page.live.cget("text")),         page.live.cget("text")
+
+    home = api.home(server, app.token)
+    assert home["typing_count"] == before + 1, "exe 里交的打字成绩没算进首页"
+    assert home["typing_best_speed"] > 0
 
 
 def test_refresh_reloads_the_current_page(app, server, exam):
@@ -420,12 +431,9 @@ def test_switching_question_scrolls_back_to_the_top(app, server, exam):
     assert frame.canvas.yview()[0] == 0
 
 
-def test_a_drag_question_reserves_its_answer_area(app, server, exam):
-    """拖拽题（热区、流程图）交互还没做。
-
-    给一个「打开」按钮只会打开空的考试根目录，学生进去什么都没有，以为程序坏了。
-    现在先说清楚，并**把作答区的位置占住** —— 将来那块换成 Canvas 就行。
-    """
+def test_没有图的拖拽题说清楚由老师评阅(app, server, exam):
+    """老考试包、或者服务端认不出来的拖拽题：没有图可画。给一个「打开」按钮只会
+    打开空的考试根目录，学生进去什么都没有，以为程序坏了 —— 老实说清楚。"""
     frame = start_exam(app, server, exam, "26090119")
     frame.paper = [{"id": "9999", "no": 1, "type": "操作题", "score": 5,
                     "stem": "请将符合智能家居的设备拖拽到指定区域。"}]
@@ -434,9 +442,40 @@ def test_a_drag_question_reserves_its_answer_area(app, server, exam):
     app.root.update()
 
     words = labels_in(frame.area)
-    assert any("拖拽题" in t for t in words), words
-    assert any("作答区（待开发）" in t for t in words), "作答区的位置要先占住"
+    assert any("老师评阅" in t for t in words), words
     assert not any("打 开" in t for t in words), "不该给打开按钮"
+
+
+def test_拖拽题在答题界面上能拖_进度和草稿都记上(app, server, exam):
+    """真实的答题界面里放一道流程图题：画得出来、放了卡片答题卡变蓝、草稿里存着
+    —— 机房跳闸重开，学生不用把卡片再拖一遍。"""
+    from app.services import drag
+    from client import dragboard
+
+    entry = next(e for e in drag.BANK if e["key"] == "Q325-成绩")
+    frame = start_exam(app, server, exam, "26090120")
+    frame.paper = [{"id": "8888", "no": 1, "type": "操作题", "score": 10, "stem": entry["stem"],
+                    "sim": {"kind": "drag", "open": "", "manual": False, "env": entry["env"]}}]
+    frame.num_btns = frame.num_btns[:1]
+    frame.show(0)
+    app.root.update()
+
+    boards = [w for w in _walk(frame.area) if isinstance(w, dragboard.DragBoard)]
+    assert boards, "答题区里没有拖拽作答板"
+    board = boards[0]
+    assert "已答 0" in frame.progress.cget("text")
+    board.place("i1", "A")
+    board.place("i3", "B")
+    assert "已答 1" in frame.progress.cget("text"), frame.progress.cget("text")
+
+    draft = store.load_draft(app.package.exam_id, app.student["no"])
+    assert draft["drags"]["8888"] == {"placed": {"A": ["i1"], "B": ["i3"]}}
+
+
+def _walk(widget):
+    yield widget
+    for child in widget.winfo_children():
+        yield from _walk(child)
 
 
 def test_answering_marks_the_card_and_saves_a_draft(app, server, exam):

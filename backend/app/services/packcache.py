@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import threading
+from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -79,7 +80,31 @@ def fingerprint(db: Session, exam: Exam, server: str) -> str:
     ).scalar()
     marks.append(str(row))
 
+    # **生成考试包的代码本身**也算进去。操作题的考场文件、拖拽题的结构图都是
+    # 按题干现算的（stem.py / drag.py），库里一个字没变、代码升级了，包的内容
+    # 照样会变。不算的话，升级后学生机拿着旧包来问，ETag 对得上，服务器回
+    # 304 —— 学生考的还是旧题（比如少了一个文件夹的那一版）。
+    marks.append(code_mark())
+
     return hashlib.sha256("|".join(marks).encode("utf-8")).hexdigest()[:16]
+
+
+_CODE_MARK = ""
+
+
+def code_mark() -> str:
+    """出包那几段代码的指纹：改了哪一个，已经发出去的包就全部作废。"""
+    global _CODE_MARK
+    if not _CODE_MARK:
+        from . import docx_io, drag, sim, stem
+        h = hashlib.sha256()
+        for mod in (stem, drag, docx_io, sim):
+            try:
+                h.update(Path(mod.__file__).read_bytes())
+            except (OSError, TypeError):
+                h.update(mod.__name__.encode("utf-8"))
+        _CODE_MARK = h.hexdigest()[:12]
+    return _CODE_MARK
 
 
 def get(key: str, mark: str) -> bytes | None:

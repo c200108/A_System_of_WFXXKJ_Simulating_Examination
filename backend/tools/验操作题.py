@@ -17,8 +17,12 @@ r"""操作题体检：题干 → 环境 + 检查点 → 铺考场 → 照着做�
 ## 新加了题就跑一遍
 
 题库加题不用配环境（检查点是**按题干现算**的，见 app/services/stem.py 的
-auto_sim），但**得确认算得出来**。认不出来的题这里会标成「拖拽题」——
-那类题目前在 exe 里只占位、由老师评阅，不是错误。
+auto_sim），但**得确认算得出来**。
+
+拖拽类的题（流程图、热区、归类、程序填空、IP 查询）不走规则，走
+app/services/drag.py 里那份清单；这里照着检查点把卡片放好判一遍，一样要满分。
+规则和清单都认不出来的题标成「·」—— 学生端只能显示「由老师评阅」，
+多半是新加的拖拽题还没进清单。
 """
 
 from __future__ import annotations
@@ -161,13 +165,43 @@ def do_the_work(kind: str, env: dict, checks: list, box: Path, logical: str) -> 
         {**env, "paras": paras, "page": page, "header": header, "footer": footer}))
 
 
+def perfect_drag(checks: list) -> dict:
+    """照着检查点把拖拽题做对：该放哪张卡片就放哪张，IP 题填仿真地址。"""
+    placed, state = {}, {}
+    for c in checks:
+        a = c.get("assert") or {}
+        if a.get("op") == "slot":
+            placed[a["slot"]] = [a["is"][0]]
+        elif a.get("op") == "in":
+            free = [s for s in a["slots"] if not placed.get(s)]
+            placed.setdefault(free[0] if free else a["slots"][0], []).append(a["item"])
+        elif a.get("op") == "ip":
+            state["ip"] = a.get("sim_ip", "")
+    state["placed"] = placed
+    return state
+
+
 def check_one(row: dict, work: Path, loud: bool = False) -> tuple:
     """返回 (类别, 得分, 满分, 一句话)。"""
     got = stem_rules.auto_sim(row["stem"], row["scope"])
     if not got:
-        return "drag", 0, 0, "题干解析不出操作 → 按拖拽题处理（exe 里占位，老师评阅）"
+        return "none", 0, 0, "题干解析不出操作，拖拽题清单里也没有 → 只能老师评阅"
 
     kind, env, checks = got["kind"], got["env"], got["checks"]
+    if kind == "drag":
+        # 拖拽题（流程图、热区、归类、IP 查询、程序填空）：照着检查点把卡片放好，
+        # 判一遍。清单里的每一道都要能拿满分，拿不到就是图和检查点对不上
+        state = perfect_drag(checks)
+        ran = sim.run_checks("drag", checks, state)
+        if loud:
+            print("题干：", " ".join((got.get("stem") or row["stem"]).split())[:220])
+            print(f"\n清单项：{got.get('key')}　模式：{env.get('mode')}")
+            for r in ran["results"]:
+                print(f"   [{'√' if r['ok'] else '×'}] {r['desc']}（{r['score']} 分）"
+                      f"　—— {r['why']}")
+        bad = [r["why"] for r in ran["results"] if not r["ok"]]
+        why = "满分 · " + str(got.get("key")) if not bad else "；".join(bad[:2])
+        return kind, ran["score"], ran["full"], why
     if kind == "ai":
         ran = sim.run_checks("ai", sim.checks_for("ai", checks, row["stem"], 10),
                              {"messages": [{"role": "user", "text": row["stem"]}]})
@@ -219,16 +253,16 @@ def main() -> int:
     rows = from_xlsx(Path(args.xlsx)) if args.xlsx else from_db()
     print(f"操作题 {len(rows)} 道\n")
     work = Path(tempfile.mkdtemp(prefix="opcheck-"))
-    bad, drag = [], []
+    bad, unknown = [], []
 
     for i, row in enumerate(rows, 1):
         if args.n and i != args.n:
             continue
         kind, score, full, why = check_one(row, work, loud=bool(args.n))
-        flag = "√" if (full and score == full) else ("·" if kind == "drag" else "×")
+        flag = "√" if (full and score == full) else ("·" if kind == "none" else "×")
         print(f"{flag} {i:3d}. [{row['scope'][:10]:10s}] {kind:5s} {score:3d}/{full:<3d} {why[:46]}")
-        if kind == "drag":
-            drag.append(i)
+        if kind == "none":
+            unknown.append(i)
         elif not full or score != full:
             bad.append(i)
 
@@ -238,8 +272,10 @@ def main() -> int:
         print("判不满就是题目不自洽 —— 上面那一行写了是哪一条没过。")
     else:
         print("全部自洽：铺得出文件，照着题干做对就能判满分。")
-    if drag:
-        print(f"按拖拽题处理的 {len(drag)} 道：{drag}（exe 里占位，由老师评阅）")
+    if unknown:
+        print(f"认不出来的 {len(unknown)} 道：{unknown}（学生端只能显示「由老师评阅」）")
+        print("拖拽类的题认不出来，多半是题干和 services/drag.py 清单里记的不一样 ——"
+              "把这道题加进清单。")
     shutil.rmtree(work, ignore_errors=True)
     return 1 if bad else 0
 

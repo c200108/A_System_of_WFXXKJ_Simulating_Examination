@@ -87,7 +87,7 @@ def test_questions_get_a_simulation_even_without_a_sim_task(client, auth, bare_e
     kinds = {}
     for scope, qid in bare_exam["qid"].items():
         row = by_id[str(qid)]
-        assert row.get("sim"), f"{scope} 没有 sim，学生端会当成拖拽题占位"
+        assert row.get("sim"), f"{scope} 没有 sim，学生端只能显示「由老师评阅」"
         assert not row["sim"].get("manual"), f"{scope} 还挂着人工评阅"
         kinds[scope] = row["sim"]["kind"]
     assert kinds == {"Windows系统操作": "win", "WPS文字操作": "wps", "人工智能": "ai"}

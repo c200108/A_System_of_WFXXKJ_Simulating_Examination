@@ -182,3 +182,47 @@ def test_paragraph_added_at_the_end_is_seen(written):
                "assert": {"op": "order", "last": "带格式的一段"}}]
     got = sim.run_checks("wps", checks, state)
     assert got["score"] == got["full"] == 2
+
+
+# ================================================================ 样式按名字认，不按 ID 认
+def _doc_with_style(tmp_path, style_id: str, style_name: str):
+    """造一个和 WPS / Word 存出来一样结构的 docx：段落只写样式 ID，
+    ID 对应什么样式，要去 styles.xml 里按名字查。"""
+    import zipfile as _zip
+
+    w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    doc = (f'<w:document xmlns:w="{w}"><w:body>'
+           f'<w:p><w:pPr><w:pStyle w:val="{style_id}"/></w:pPr>'
+           f'<w:r><w:t>孔子对中华文明的贡献</w:t></w:r></w:p>'
+           f'<w:p><w:r><w:t>正文第一段</w:t></w:r></w:p>'
+           f'</w:body></w:document>')
+    styles = (f'<w:styles xmlns:w="{w}">'
+              f'<w:style w:type="paragraph" w:styleId="{style_id}">'
+              f'<w:name w:val="{style_name}"/></w:style></w:styles>')
+    path = tmp_path / f"样式{style_id}.docx"
+    with _zip.ZipFile(path, "w") as z:
+        z.writestr("word/document.xml", doc)
+        z.writestr("word/styles.xml", styles)
+    return path
+
+
+def test_WPS存的数字样式ID按名字认成标题1(tmp_path):
+    """机房里老师撞到的：WPS 里选的是「标题 1」，存进 .docx 的样式 ID 是 "2"，
+    判分说「样式是 2，要求标题 1」。ID 本身什么都说明不了，得查 styles.xml。"""
+    got = docx.read_docx(_doc_with_style(tmp_path, "2", "heading 1"))
+    assert got["paras"][0]["style"] == "标题1"
+    assert got["paras"][1]["style"] == "正文"
+
+
+def test_同一个ID在中文Word里是另一个样式(tmp_path):
+    """中文版 Word 里 "2" 是「标题 2」。要是图省事把 "2" 硬映射成标题 1，
+    Word 存的文档就全错了 —— 所以只能按名字认。"""
+    got = docx.read_docx(_doc_with_style(tmp_path, "2", "heading 2"))
+    assert got["paras"][0]["style"] == "标题2"
+
+
+def test_中文样式名和英文样式名写法都认(tmp_path):
+    for sid, name, want in (("Heading1", "标题 1", "标题1"), ("Title", "Title", "标题"),
+                            ("a3", "标题", "标题"), ("15", "副标题", "副标题")):
+        got = docx.read_docx(_doc_with_style(tmp_path, sid, name))
+        assert got["paras"][0]["style"] == want, (sid, name, got["paras"][0]["style"])

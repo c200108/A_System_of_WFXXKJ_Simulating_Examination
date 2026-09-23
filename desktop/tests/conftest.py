@@ -25,6 +25,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+import tkinter as tk
 
 HERE = Path(__file__).resolve().parent
 DESKTOP = HERE.parent
@@ -227,3 +228,17 @@ def exam_with_picture(server, exam):
               {"paper_id": paper["paper_id"], "target_class_ids": [cid]}, tk)
     yield {"exam": ex, "qid": q["id"]}
     call(server, "DELETE", f"/api/questions/{q['id']}", token=tk)
+
+
+# 放在这里而不是 test_ui.py：拖拽作答区的测试也要用同一个根窗口
+@pytest.fixture(scope="session")
+def tk_root():
+    """**整场自检就这一个根窗口。**
+
+    一个进程里反复 `Tk()` / `destroy()`，同时后台还跑着 uvicorn 线程，Tcl 会被
+    踩坏 —— 症状是 "couldn't read file scrlbar.tcl" 这种莫名其妙的报错。
+    """
+    root = tk.Tk()
+    root.withdraw()
+    yield root
+    root.destroy()

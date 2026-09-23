@@ -49,6 +49,53 @@ ALIGN_BACK = {"left": "left", "start": "left", "center": "center",
               "distribute": "distribute"}
 STYLE_BACK = {"Normal": "正文", "Heading1": "标题1", "Heading2": "标题2",
               "Heading3": "标题3", "a": "正文"}
+
+
+def style_name(raw) -> str:
+    """样式名 → 判分用的写法：「标题 1」「heading 1」都成「标题1」。
+
+    **和 sim.py 的 style_name 一模一样，改要一起改** —— 客户端只用标准库，
+    不能 import 后端那边的代码。
+    """
+    s = re.sub(r"\s+", "", str(raw or ""))
+    low = s.lower()
+    m = re.match(r"(?:heading|标题)(\d)$", low)
+    if m:
+        return f"标题{m.group(1)}"
+    return {"title": "标题", "subtitle": "副标题", "normal": "正文"}.get(low, s)
+
+
+def read_styles(zf: zipfile.ZipFile) -> dict:
+    """styles.xml → {样式 ID: 规范化后的样式名}。
+
+    **样式 ID 本身什么都说明不了**，得按 styles.xml 里记的名字认：
+
+        WPS            ID 是数字，"2" 是它的「标题 1」
+        中文版 Word    "1"、"2" 是标题 1、标题 2，"a" 是正文
+        英文版 Word    "Heading1"、"Normal"
+
+    同一个 "2"，在 WPS 里是标题 1、在中文 Word 里是标题 2，只看 ID 必然判错。
+    原来就是只看 ID：学生在 WPS 里明明选的「标题 1」，判分说「样式是 2」。
+
+    名字也缺的（手搓的文档里可能有），退回看大纲级别：级别 0 就是标题 1。
+    """
+    try:
+        root = ET.fromstring(zf.read("word/styles.xml"))
+    except (KeyError, ET.ParseError):
+        return {}
+    out = {}
+    for st in root.iter(W + "style"):
+        sid = st.get(W + "styleId")
+        if not sid:
+            continue
+        name = _val(st, "name")
+        if name:
+            out[sid] = style_name(name)
+            continue
+        level = _val(st.find(W + "pPr"), "outlineLvl")
+        if level is not None and str(level).isdigit() and int(level) < 9:
+            out[sid] = f"标题{int(level) + 1}"
+    return out
 RULE_BACK = {"exact": "fixed", "atLeast": "least", "auto": "multiple"}
 
 
@@ -142,12 +189,13 @@ def _apply_rpr(para: dict, rpr) -> None:
             para["shading"] = "#" + fill.lower()
 
 
-def _read_ppr(para: dict, ppr) -> None:
+def _read_ppr(para: dict, ppr, styles: dict | None = None) -> None:
     if ppr is None:
         return
     style = _val(ppr, "pStyle")
     if style:
-        para["style"] = STYLE_BACK.get(style, style)
+        para["style"] = ((styles or {}).get(style) or STYLE_BACK.get(style)
+                         or style_name(style))
     if ppr.find(W + "numPr") is not None:
         num = _val(ppr.find(W + "numPr"), "numId") or "1"
         para["bullet"] = "number" if str(num) == "2" else "dot"
@@ -195,9 +243,9 @@ def _read_ppr(para: dict, ppr) -> None:
     _apply_rpr(para, rpr)
 
 
-def _read_para(node) -> dict:
+def _read_para(node, styles: dict | None = None) -> dict:
     para = blank_para()
-    _read_ppr(para, node.find(W + "pPr"))
+    _read_ppr(para, node.find(W + "pPr"), styles)
 
     texts, first_rpr = [], None
     for run in node.iter(W + "r"):
@@ -291,10 +339,11 @@ def read_docx(path) -> dict:
             body = root.find(W + "body")
             if body is None:
                 return {}
-            paras = [_read_para(node) for node in body.findall(W + "p")]
+            styles = read_styles(zf)
+            paras = [_read_para(node, styles) for node in body.findall(W + "p")]
             # 表格里的段落也算：题目有「在表格中输入……」的写法
             for cell_para in body.iter(W + "tbl"):
-                paras.extend(_read_para(node) for node in cell_para.iter(W + "p"))
+                paras.extend(_read_para(node, styles) for node in cell_para.iter(W + "p"))
             page, columns = _read_sect(body.find(W + "sectPr"))
             return {
                 "paras": paras,

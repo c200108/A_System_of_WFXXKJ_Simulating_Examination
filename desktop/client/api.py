@@ -368,13 +368,23 @@ def typing_passage(server: str, module: str, difficulty: str) -> str:
 
 
 def typing_submit(server: str, student: dict, module: str, difficulty: str,
-                  typed: int, correct: int, seconds: float) -> dict:
+                  typed: int, correct: int, seconds: float, token: str = "") -> dict:
     """交一次打字成绩。**速度、正确率、星级都由后端算** —— 客户端只报原始量，
-    和网页端一个口径，免得两边算法飘开。"""
+    和网页端一个口径，免得两边算法飘开。
+
+    **令牌和学号一定要带上**：这条成绩要挂到学生账号上，首页那三个数字
+    （练习次数、最快速度、平均正确率）只统计挂上了账号的记录。不带的话成绩
+    照样入库、老师在成绩页也看得见，但学生自己的首页永远是 0 —— 这个坑
+    交卷那条路踩过一次（4.4.0 修的），打字这条当时漏了。
+
+    两样都带是有意的：令牌是正经凭据，但它会过期（默认 12 小时）；练了一下午
+    再交的时候令牌可能已经失效，这时服务端按学号认领，和交卷那条路一个写法。
+    """
     return _json(f"{norm(server)}/api/typing/records", {
         "student_name": student.get("name", ""),
         "student_class": student.get("cls", "") or student.get("student_class", ""),
+        "student_no": str(student.get("no", "") or student.get("student_no", "")),
         "module": module, "difficulty": difficulty,
         "typed_chars": int(typed), "correct_chars": int(correct),
         "duration": float(seconds),
-    })
+    }, token=token)

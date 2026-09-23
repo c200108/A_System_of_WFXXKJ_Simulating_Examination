@@ -22,6 +22,9 @@
 from __future__ import annotations
 
 import json
+import re
+import socket
+import subprocess
 from pathlib import Path
 
 from . import docx, snapshot
@@ -110,17 +113,44 @@ def auto_graded(paper: list[dict]) -> list[dict]:
     return out
 
 
+def local_ipv4() -> list:
+    """这台机器的 IPv4 地址（不含 127.x）。IP 查询题要拿学生填的和它比。
+
+    两条路都走一遍再合起来：按主机名查最省事，但多网卡、装了虚拟网卡的机器
+    上它只给一部分；ipconfig 最全，但万一被组策略禁了也不能让交卷卡住。
+    """
+    got = []
+    try:
+        got += socket.gethostbyname_ex(socket.gethostname())[2]
+    except OSError:
+        pass
+    try:
+        out = subprocess.run(["ipconfig"], capture_output=True, timeout=5,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+        text = out.decode("gbk", "replace")
+        got += re.findall(r"IPv4[^:：]*[:：]\s*([\d.]+)", text)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    seen = []
+    for ip in got:
+        if ip and not ip.startswith("127.") and ip not in seen:
+            seen.append(ip)
+    return seen
+
+
 def collect(paper: list[dict], root: Path, logical_root: str,
-            chats: dict | None = None) -> dict:
+            chats: dict | None = None, drags: dict | None = None) -> dict:
     """把这份卷子里所有自动判分的操作题，各自的终态收一遍。
 
     文件夹快照只拍**一次**给所有 win 题共用：一场考试里 win 题可能有好几道，
     每道都重拍一遍既慢又可能拍出不一致的结果（学生还在动文件）。
 
     chats 是 AI 工具题的对话记录 `{题号: [{"role","text"}, …]}`，由界面给。
+    drags 是拖拽题的作答 `{题号: {"placed": {热区: [卡片]}}}`，也由界面给。
     """
     root = Path(root)
     chats = chats or {}
+    drags = drags or {}
     need_shot = any((q.get("sim") or {}).get("kind") == "win" for q in auto_graded(paper))
     shot = snapshot.snapshot(root) if need_shot else None
     out = {}
@@ -128,6 +158,13 @@ def collect(paper: list[dict], root: Path, logical_root: str,
         qid, kind = str(q["id"]), (q["sim"].get("kind") or "")
         if kind == "ai":
             out[qid] = {"messages": list(chats.get(qid) or [])}
+        elif kind == "drag":
+            # 拖拽题的成果在界面上（哪张卡片放在哪个热区），不在文件系统里
+            got = dict(drags.get(qid) or {})
+            got.setdefault("placed", {})
+            if ((q.get("sim") or {}).get("env") or {}).get("mode") == "ip":
+                got["real_ips"] = local_ipv4()      # 学生查的是这台真机
+            out[qid] = got
         else:
             out[qid] = state_for(kind, root, q["sim"].get("open") or "",
                                  logical_root, shot)
