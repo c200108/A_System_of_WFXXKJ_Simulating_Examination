@@ -9,12 +9,14 @@
 
 from sqlalchemy import select
 
+from . import clock
 from .config import settings
 from .constants import DICT_SCOPE, DICT_TYPE
 from .database import SessionLocal
-from .models import DictItem, User
+from .models import AppMeta, DictItem, ExamSubmission, User
 from .security import hash_password
 from .changelog_seed import seed_changelog
+from .services.exam import settle_submission
 from .services.typing_texts import seed_from_config
 from .siteconfig import site
 
@@ -38,9 +40,29 @@ def _sync_dict(db, category: str, names: list[str], sync: bool) -> None:
                 print(f"[seed] 配置里已无「{name}」，停用（历史题目不受影响）")
 
 
+def _settle_old_submissions(db) -> int:
+    """2.10.0 起操作题检查点全过给满分、全没过给 0 分，算评完。老答卷补一遍，只补一次。"""
+    if db.get(AppMeta, "auto_settle_v1"):
+        return 0
+    n = sum(1 for sub in db.scalars(select(ExamSubmission)) if settle_submission(sub))
+    db.add(AppMeta(key="auto_settle_v1", value=clock.now().isoformat(sep=" ")))
+    db.commit()
+    return n
+
+
 def seed() -> None:
     db = SessionLocal()
     try:
+        # 最先做：服务器时钟校正值改了，已有记录的时间一起挪（见 app/clock.py）。
+        # 赶在下面建任何新记录之前 —— 不然新记录会被多挪一次
+        moved = clock.rebase(db)
+        if moved:
+            print(f"[seed] 时钟校正改成 {site.time.offset_hours:+g} 小时，已有记录的时间挪了 {moved:+g} 小时")
+
+        n = _settle_old_submissions(db)
+        if n:
+            print(f"[seed] {n} 份老答卷里检查点全过 / 全没过的操作题已自动定分")
+
         if not db.scalar(select(User).where(User.username == settings.admin_username)):
             db.add(
                 User(

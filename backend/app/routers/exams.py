@@ -17,7 +17,6 @@
 
 import io
 import json
-from datetime import datetime
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -25,14 +24,18 @@ from openpyxl import Workbook
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from .. import clock
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import Exam, ExamSubmission, Paper, SchoolClass, User
 from ..routers.classes import owned_class_ids
-from ..schemas import ExamCreate, ExamOut, ExamUpdate, ManualGradeIn, SubmissionOut
+from ..schemas import ExamCreate, ExamOut, ExamUpdate, IdsIn, ManualGradeIn, SubmissionOut
+from ..services.analysis import analyze
+from ..siteconfig import site
 from ..services.exam import (
     apply_manual,
     group_items,
+    has_scores,
     load_items,
     new_token,
     question_stats,
@@ -243,9 +246,11 @@ def _sub_out(db: Session, sub: ExamSubmission) -> SubmissionOut:
     item = SubmissionOut.model_validate(sub)
     item.full_score = sub.objective_total + sub.subjective_total
     detail = json.loads(sub.detail_json or "[]")
+    # 没设分值的老卷子（subjective_total 为 0）操作题不计分，没什么可阅的 ——
+    # 原来这里照样报「阅卷 12」，点进去保存又被拒绝（grade_manual 回 400），是条死路
     item.pending_manual = sum(
         1 for d in detail if d.get("manual") and not d.get("graded")
-    )
+    ) if sub.subjective_total > 0 else 0
     if sub.graded_by:
         grader = db.get(User, sub.graded_by)
         item.graded_by_name = (grader.name or grader.username) if grader else ""
@@ -295,7 +300,8 @@ def submission_detail(
         "subjective_score": sub.subjective_score,
         "subjective_total": sub.subjective_total,
         "full_score": sub.objective_total + sub.subjective_total,
-        "pending_manual": sum(1 for d in detail if d.get("manual") and not d.get("graded")),
+        "pending_manual": sum(1 for d in detail if d.get("manual") and not d.get("graded"))
+        if sub.subjective_total > 0 else 0,
         "graded_by_name": (grader.name or grader.username) if grader else "",
         "graded_at": sub.graded_at,
         "submitted_at": sub.submitted_at,
@@ -341,7 +347,7 @@ def grade_manual(
     sub.score = sub.objective_score + sub.subjective_score
     sub.graded_by = user.id
     # 只有全批完才算"批过了"，批一半不该让考试列表上的待阅提示消失
-    sub.graded_at = datetime.now() if result["pending"] == 0 else None
+    sub.graded_at = clock.now() if result["pending"] == 0 else None
     db.commit()
     db.refresh(sub)
 
@@ -354,6 +360,106 @@ def grade_manual(
         "full_score": sub.objective_total + sub.subjective_total,
         "pending_manual": result["pending"],
     }
+
+
+def _delete_subs(db: Session, exam: Exam, ids: list[int]) -> int:
+    """删答卷。只删这场考试自己的 —— 别的考试的 id 混进来一律不认。"""
+    rows = db.scalars(select(ExamSubmission).where(
+        ExamSubmission.exam_id == exam.id, ExamSubmission.id.in_(ids))).all()
+    for sub in rows:
+        db.delete(sub)
+    db.commit()
+    return len(rows)
+
+
+@router.delete("/{exam_id}/submissions/{sub_id}", summary="删除一份答卷")
+def delete_submission(
+    exam_id: int, sub_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    """删成绩要**改得动**这场考试（自己发的，或者管理员）—— 管理员发的全校统考，
+    任课老师能批不能删。删掉之后这个学生可以重新交卷（不允许重考的考试也一样）。"""
+    exam = _get(db, exam_id, user, edit=True)
+    if not _delete_subs(db, exam, [sub_id]):
+        raise HTTPException(status_code=404, detail="答卷不存在")
+    return {"ok": True, "deleted": 1}
+
+
+@router.post("/{exam_id}/submissions/delete", summary="批量删除答卷")
+def delete_submissions(
+    exam_id: int, body: IdsIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    exam = _get(db, exam_id, user, edit=True)
+    if not body.ids:
+        raise HTTPException(status_code=400, detail="没选答卷")
+    return {"ok": True, "deleted": _delete_subs(db, exam, body.ids)}
+
+
+@router.get("/{exam_id}/paper", summary="这场考试的样卷（带答案，老师看）")
+def exam_paper(exam_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """老师在成绩页一键看卷子：按大题分组，题干、选项、答案、分值、配图。
+    答案只在这个教师接口里出现，学生取卷走的是 strip_answers 那条路。"""
+    exam = _get(db, exam_id, user)
+    groups = group_items(load_items(db, exam.paper))
+    no = 0
+    out = []
+    for g in groups:
+        items = []
+        for it in g["items"]:
+            no += 1
+            items.append({
+                "no": no, "id": it["id"], "type": it["type"], "stem": it["stem"],
+                "options": it.get("options") or [], "answer": it.get("answer") or "",
+                "score": int(it.get("score") or 0), "scope": it.get("scope") or "",
+                "image_url": it.get("image_url"),
+                "sim_kind": (it.get("sim") or {}).get("kind") or "",
+                "checks": [c.get("desc") or "" for c in (it.get("sim_checks") or [])
+                           if isinstance(c, dict)],
+            })
+        out.append({"name": g["name"], "score": g["score"], "items": items})
+    paper = exam.paper
+    return {
+        "title": exam.title,
+        "paper_title": paper.title if paper else "",
+        "school": paper.school if paper else "",
+        "duration": paper.duration if paper else "",
+        "full_score": sum(g["score"] for g in out),
+        "groups": out,
+    }
+
+
+@router.get("/{exam_id}/analysis", summary="成绩分析（可视化页用）")
+def exam_analysis(
+    exam_id: int,
+    classes: str = "",
+    students: str = "",
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """classes：逗号分隔的班级名，只看这几个班；students：逗号分隔的答卷 id，几个学生对比。
+    都不给就是全体参考学生。页面每隔一会儿重新拉一次 —— 老师阅完卷，图跟着变。"""
+    exam = _get(db, exam_id, user)
+    items = load_items(db, exam.paper)
+    everyone = list(exam.submissions)
+    want_ids = {int(x) for x in students.split(",") if x.strip().isdigit()}
+    want_cls = {x.strip() for x in classes.split(",") if x.strip()}
+    if want_ids:
+        subs, scope = [s for s in everyone if s.id in want_ids], {"kind": "students"}
+    elif want_cls:
+        subs, scope = [s for s in everyone if (s.student_class or "未填班级") in want_cls],             {"kind": "classes", "classes": sorted(want_cls)}
+    else:
+        subs, scope = everyone, {"kind": "all"}
+    result = analyze(items, subs, site.exam.pass_score, scope, all_subs=everyone,
+                     scored=has_scores(items))
+    result["exam"] = {"id": exam.id, "title": exam.title}
+    result["pass_line"] = site.exam.pass_score
+    result["options"] = {
+        "classes": sorted({s.student_class or "未填班级" for s in everyone}),
+        "students": [{"sub_id": s.id, "name": s.student_name, "class": s.student_class,
+                      "no": s.student_no, "score": s.score}
+                     for s in sorted(everyone, key=lambda x: (x.student_class or "", x.student_no or ""))],
+    }
+    result["updated_at"] = clock.now().isoformat(sep=" ")
+    return result
 
 
 @router.get("/{exam_id}/stats", summary="题目分析：每题正确率")

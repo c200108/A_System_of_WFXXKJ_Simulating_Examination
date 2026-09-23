@@ -10,12 +10,12 @@
 import json
 import os
 import uuid
-from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from .. import clock
 from ..config import settings
 from ..database import get_db
 from ..deps import (
@@ -321,7 +321,7 @@ def review_feedback(
     row.status = body.status
     row.review_note = body.note.strip()[:255]
     row.reviewed_by = me.id
-    row.reviewed_at = datetime.now()
+    row.reviewed_at = clock.now()
     db.commit()
     db.refresh(row)
     return _out(row, me)
@@ -339,7 +339,7 @@ def review_bulk(
         raise HTTPException(status_code=400, detail="没有选中任何反馈")
 
     rows = list(db.scalars(select(Feedback).where(Feedback.id.in_(ids))))
-    now = datetime.now()
+    now = clock.now()
     for r in rows:
         r.status = body.status
         r.reviewed_by = me.id
@@ -455,7 +455,7 @@ def create_entry(
 
     row = ChangelogEntry(
         version=body.version.strip(),
-        released_on=body.released_on or date.today(),
+        released_on=body.released_on or clock.today(),
         change_type=body.change_type,
         content=content,
         sort_order=body.sort_order,

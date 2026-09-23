@@ -17,6 +17,9 @@ export default defineConfig({
         manualChunks(id) {
           if (!id.includes('node_modules')) return
           if (id.includes('element-plus')) return 'el'
+          // 图表库只有「成绩分析」页用，单独一块、跟着那一页按需加载 ——
+          // 混进 vendor 的话每个页面（包括五十台机器同时打开的考试页）都得先下它
+          if (id.includes('echarts') || id.includes('zrender')) return 'charts'
           if (id.includes('vue') || id.includes('pinia')) return 'vue'
           return 'vendor'
         }
