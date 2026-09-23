@@ -54,7 +54,7 @@ SIZE_PT = {
 ALIGN_XML = {"left": "left", "center": "center", "right": "right",
              "justify": "both", "distribute": "distribute"}
 # 样式：WPS 存的是样式 id，界面上显示的是中文名
-STYLE_ID = {"正文": "Normal", "标题1": "Heading1", "标题2": "Heading2",
+STYLE_ID = {"正文": "Normal", "标题": "Title", "标题1": "Heading1", "标题2": "Heading2",
             "标题3": "Heading3"}
 LINE_RULE = {"fixed": "exact", "least": "atLeast", "multiple": "auto"}
 
@@ -231,6 +231,8 @@ STYLES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:rFonts w:ascii="宋体" w:eastAsia="宋体" w:hAnsi="宋体"/><w:sz w:val="21"/>
 </w:rPr></w:rPrDefault></w:docDefaults>
 <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="正文"/></w:style>
+<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="标题"/>
+<w:pPr><w:jc w:val="center"/></w:pPr><w:rPr><w:b/><w:sz w:val="44"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="标题 1"/>
 <w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="44"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="标题 2"/>

@@ -113,10 +113,20 @@ def _item_from_row(item: PaperItem, q: Question) -> dict:
         auto = stem_rules.auto_sim(q.stem or "", q.scope or "")
         if auto:
             out["sim"] = sim.sim_for_student({
-                "id": 0, "kind": auto["kind"], "title": (q.stem or "")[:60],
+                # 拖拽题不要标题：题干（补全过的）就在正上方，再抄一遍原题干只会
+                # 把补全前那句「请点击开始操作进入仿真系统」又端出来
+                "id": 0, "kind": auto["kind"],
+                "title": "" if auto["kind"] == "drag" else (q.stem or "")[:60],
                 "env": auto["env"],
             })
             out["sim_checks"] = auto["checks"]
+            # 拖拽题：题干不全的换成补全版（原题干留在库里不动 —— 改了它，下次
+            # 导库就认不出这道题了）；原图是旧考试系统的截图，素材区烤在图上、
+            # 说明弹窗挡着半张图，现在结构图是重画的，旧图不再显示
+            if auto.get("stem"):
+                out["stem"] = auto["stem"]
+            if auto["kind"] == "drag":
+                out["image_url"] = None
     return out
 
 
@@ -214,8 +224,18 @@ def grade(items: list[dict], answers: dict) -> dict:
             kind = (it.get("sim") or {}).get("kind")
             # AI 工具题老师不出检查点，按题干现算（sim.checks_for）
             sim_checks = sim.checks_for(kind, it.get("sim_checks"), it.get("stem", ""), pts)
-            if manual and kind and sim_checks:
-                ran = sim.run_checks(kind, sim_checks, sim.load_state(mine))
+            state = sim.load_state(mine) if manual and kind and sim_checks else None
+            # 拖拽题交上来一个**空终态** {"state": {}}：那是旧版桌面端（4.7 及以前）——
+            # 它画不出拖拽题，只会交个空的，学生根本没机会做。这时别自动判 0 分还标
+            # "自动判分"，老样子留给老师评阅。
+            # 新版桌面端哪怕一张没放也会交 {"placed": {}}；网页端没碰过的题交的是
+            # 空串 —— 这两种照常判分，和别的操作题一样，没做就是 0 分
+            if kind == "drag" and mine and state is not None and not state:
+                entry["reason"] = "没有拖拽作答数据（旧版桌面端做不了这类题），请老师评阅"
+                detail.append(entry)
+                continue
+            if state is not None:
+                ran = sim.run_checks(kind, sim_checks, state)
                 earned = scale_sim(ran, pts)
                 auto_manual[str(it["id"])] = earned
                 auto_sub += earned

@@ -15,6 +15,7 @@ const SimWindows = defineAsyncComponent(() => import('./SimWindows.vue'))
 const SimWps = defineAsyncComponent(() => import('./SimWps.vue'))
 const SimHtml = defineAsyncComponent(() => import('./SimHtml.vue'))
 const SimAi = defineAsyncComponent(() => import('./SimAi.vue'))
+const SimDrag = defineAsyncComponent(() => import('./SimDrag.vue'))
 
 const props = defineProps({
   /** { kind, title, env } —— 服务端下发的那一份，不含检查点 */
@@ -25,8 +26,8 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:modelValue'])
 
-const KIND_NAMES = { win: 'Windows 操作', wps: 'WPS 文字', html: '网页编程', ai: 'AI 工具' }
-const COMPONENTS = { win: SimWindows, wps: SimWps, html: SimHtml, ai: SimAi }
+const KIND_NAMES = { win: 'Windows 操作', wps: 'WPS 文字', html: '网页编程', ai: 'AI 工具', drag: '拖拽作答' }
+const COMPONENTS = { win: SimWindows, wps: SimWps, html: SimHtml, ai: SimAi, drag: SimDrag }
 
 const state = ref(null)
 const log = ref([])
@@ -80,7 +81,10 @@ const seed = ref(0)
       <span class="grow" />
       <span v-if="touched" class="saved">已记录你的操作</span>
       <span v-else class="hint">
-        {{ sim.kind === 'ai' ? '把题目要求描述给 AI 工具并发送' : '按题目要求操作，系统自动记录结果' }}
+        {{ sim.kind === 'ai' ? '把题目要求描述给 AI 工具并发送'
+           : sim.kind === 'drag' && sim.env?.mode === 'ip' ? '在命令行里查到 IP 地址，填到下面的方框里'
+           : sim.kind === 'drag' ? '把素材拖到对应位置，系统自动记录结果'
+           : '按题目要求操作，系统自动记录结果' }}
       </span>
       <button v-if="!readonly" class="reset" @click="reset">重来</button>
     </div>

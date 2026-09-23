@@ -43,6 +43,7 @@ from __future__ import annotations
 import re
 from functools import lru_cache
 
+from . import drag
 from .sim import blank_para
 
 # 仿真环境里的路径统一带这个前缀，和老师在网页仿真器里点出来的写法一致
@@ -429,6 +430,26 @@ def _win_item(text: str, base: str, fs: dict, checks: list, todo: list) -> None:
                        "assert": {"op": "exists", "path": _join(base, name), "is": "dir"}})
         return
 
+    # ③ 在"X"文件夹中，将按名称排序后的**中间一个**文件改名为"Y.doc"
+    #    题干没点名是哪个文件，那就铺一组出来，让"中间一个"只有一种理解。
+    #    漏过一次：这一问整句没认出来，考场里连「长江中下游平原」文件夹都没有。
+    m = re.search(r"(?:按|以)?(?:名称|名字|文件名)排序(?:后)?的?(?:最)?中间(?:的)?(?:那)?一个文件"
+                  r"(?:重命名|改名)为" + Q + r"([^\"“”'‘’「」『』]+?)" + Q, flat)
+    if m:
+        new = m.group(1)
+        where = _in_folder(flat)
+        ext = new.rsplit(".", 1)[-1] if "." in new else "doc"
+        trio = _sorted_trio(where, ext)
+        fs[_join(base, where)] = {"type": "dir"}
+        for name in trio:
+            fs[_join(base, where, name)] = file_node(name)
+        checks.append({"desc": f"把「{where}」里按名称排在中间的「{trio[1]}」改名为「{new}」",
+                       "score": 5, "assert": {"op": "exists", "path": _join(base, where, new),
+                                              "is": "file"}})
+        checks.append({"desc": f"改完不该还有「{trio[1]}」（改的是中间那一个）", "score": 3,
+                       "assert": {"op": "missing", "path": _join(base, where, trio[1])}})
+        return
+
     # ③ 把"A.doc"（文件）重命名 / 改名为"B.doc"
     #    **原名必须铺出来**，否则学生打开文件夹里根本没有要改的那个文件
     m = re.search(Q + r"([^\"“”'‘’「」『』]+?)" + Q + r"(?:文件|文件夹)?(?:重命名|改名)为"
@@ -510,6 +531,23 @@ def _win_item(text: str, base: str, fs: dict, checks: list, todo: list) -> None:
         todo.append(text.strip())
 
 
+# 「按名称排序后的中间一个文件」要铺的那一组。**排序以学生屏幕上看到的为准**：
+# 中文 Windows 的资源管理器按拼音排，而程序里的 sorted() 按码位排，两种经常
+# 对不上（「太湖」码位最小、拼音却排在后面）。这里挑的名字**两种排法结果
+# 一样**，不然学生照着屏幕改对了，判分却说改错了。
+#   巢湖(chao, U+5DE2) < 江汉(jiang, U+6C5F) < 鄱阳湖(po, U+9131)
+SORTED_TRIOS = {
+    "长江中下游平原": ("巢湖平原", "江汉平原", "鄱阳湖平原"),
+}
+
+
+def _sorted_trio(folder: str, ext: str) -> tuple:
+    """铺三个文件，中间那个是要改名的。没见过的文件夹用「资料A/B/C」：
+    前缀相同、只差一个英文字母，拼音和码位两种排法都是 A<B<C。"""
+    names = SORTED_TRIOS.get(folder) or ("资料A", "资料B", "资料C")
+    return tuple(f"{n}.{ext}" for n in names)
+
+
 def _seed_mentioned(stem: str, base: str, fs: dict, checks: list) -> None:
     """题干点过名的文件和文件夹，**没被任何规则铺出来的，补铺**。
 
@@ -534,6 +572,14 @@ def _seed_mentioned(stem: str, base: str, fs: dict, checks: list) -> None:
     for item in split_items(stem):
         flat = _clean(item)
         here = _context_folder(flat)             # 这一句在说哪个文件夹里的事
+        # 「在"X"文件夹中，……」—— X 本身也得有。原来这里直接跳过了 X（本意是
+        # 别把它铺到它自己里面去），结果是**哪儿都没铺**：win04 那道题第 (2) 问
+        # 没有规则认得，考场里就少了整个「长江中下游平原」文件夹
+        if here and "/" not in here and "\\" not in here:
+            spot = _join(base, here)
+            if spot not in fs and here not in {p.rsplit("/", 1)[-1] for p in made}:
+                fs[spot] = {"type": "dir"}
+                have.add(here)
         for token in _quoted(flat):
             token = token.strip().strip("。，,、")
             if not token or len(token) > 40 or token == here:
@@ -709,7 +755,7 @@ def _wps_item(text: str, checks: list, todo: list, needs: list,
         style = m.group(1)
         checks.append({"desc": f"标题应用「{style}」样式", "score": 4,
                        "assert": {"op": "para", "at": 0,
-                                  "style": "标题1" if style.startswith("标题") else style}})
+                                  "style": style}})
         return
 
     # ① 将文档中所有的"A"替换为/替换成"B"，或者「把文中所有的"A"改为"B"」
@@ -833,7 +879,7 @@ def _wps_item(text: str, checks: list, todo: list, needs: list,
     if m:
         want["color"] = m.group(0)
     if re.search(r"设置为" + Q + r"?标题" + Q + r"?样式|应用[^。]{0,4}标题样式", flat):
-        want["style"] = "标题1"
+        want["style"] = "标题"            # 判分时「标题」「标题 1」都认，见 sim.same_style
     for word, value in ALIGN_WORDS.items():
         if word in flat:
             want["align"] = value
@@ -1100,10 +1146,14 @@ def auto_sim(stem_text: str, scope: str = "") -> dict | None:
     结果按题干缓存：出包和判分都会走到这儿，同一道题一场考试里要算好几十遍。
     """
     got = parse(stem_text or "", scope or "")
-    if not got:
-        return None
-    if got["kind"] != "ai" and not got["checks"]:
-        return None                  # 认出题型却一条检查点都没造出来，不如不给
+    if not got or (got["kind"] != "ai" and not got["checks"]):
+        # 通用规则认不出来的，再查拖拽题清单（流程图、结构图热区、设备归类、
+        # 本机 IP、程序填空 —— 见 drag.py）。
+        #
+        # **顺序不能反过来。** 清单是按题干里的几句话认题的，放在前面会把规则
+        # 认得好好的题抢走：一道「智慧食堂」宣传网页的 HTML 题，就曾被当成
+        # 「智慧食堂」管理系统的结构图拖拽题，题干被整段换掉。
+        return drag.auto(stem_text or "", scope or "")
 
     env, checks = got["env"], got["checks"]
     fs = env.get("fs")

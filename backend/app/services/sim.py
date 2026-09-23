@@ -129,7 +129,7 @@ def run_checks(kind: str, checks: list[dict], state: dict) -> dict:
     单条检查点抛异常时算没通过并把原因记下来，不让一条坏规则毁掉整道题。
     """
     runner = {"win": _check_win, "wps": _check_wps,
-              "html": _check_html, "ai": _check_ai}.get(kind)
+              "html": _check_html, "ai": _check_ai, "drag": _check_drag}.get(kind)
     results = []
     got = full = 0
     for i, chk in enumerate(checks or []):
@@ -150,6 +150,14 @@ def run_checks(kind: str, checks: list[dict], state: dict) -> dict:
             "why": why,
         })
     return {"score": got, "full": full, "results": results}
+
+
+# ================================================================ drag
+def _check_drag(a: dict, state: dict) -> tuple:
+    """拖拽题（流程图、热区、归类、IP 查询、程序填空）。规则在 drag.py，
+    和题目清单放在一起 —— 改一道题的热区，检查点就在旁边。"""
+    from . import drag
+    return drag.check(a, state)
 
 
 # ================================================================ win
@@ -272,6 +280,31 @@ COLOR_ALIASES = {
 }
 
 
+def style_name(raw) -> str:
+    """样式名 → 统一写法：「标题 1」「heading 1」「Heading1」都成「标题1」。
+
+    **和桌面端 client/docx.py 的 style_name 一模一样，改要一起改。**
+    """
+    s = re.sub(r"\s+", "", str(raw or ""))
+    low = s.lower()
+    m = re.match(r"(?:heading|标题)(\d)$", low)
+    if m:
+        return f"标题{m.group(1)}"
+    return {"title": "标题", "subtitle": "副标题", "normal": "正文"}.get(low, s)
+
+
+def same_style(got, want) -> bool:
+    """样式对不对。
+
+    题干写的是「设置为"标题"样式」时，**「标题」和「标题 1」都算对**：Word 里
+    叫「标题」的是 Title 样式，可 WPS 样式栏排在最前面的是「标题 1」，老师出题、
+    学生答题说"标题样式"多半指的是它。学生真用了「标题 1」却判错，才是冤枉人
+    （老师在机房实际撞到过）。反过来要求「标题1」的，就只认「标题1」。
+    """
+    g, w = style_name(got), style_name(want)
+    return g == w or (w == "标题" and g == "标题1")
+
+
 def same_color(got, want) -> bool:
     """学生设的颜色算不算题目要的那个颜色。"""
     g = str(got or "").strip().lstrip("#").lower()
@@ -353,10 +386,13 @@ def _check_wps(a: dict, state: dict):
         # 都该算对（见 COLOR_ALIASES）
         if "color" in a and not same_color(p.get("color"), a["color"]):
             return False, f"颜色是「{p.get('color') or '默认'}」，要求「{a['color']}」"
-        # 取值型：字体、突出显示、底纹、样式、项目符号
-        for key in ("font", "highlight", "shading", "style"):
+        # 取值型：字体、突出显示、底纹、项目符号
+        for key in ("font", "highlight", "shading"):
             if key in a and str(p.get(key) or "") != str(a[key]):
                 return False, f"{PARA_LABELS[key]}是「{p.get(key) or '默认'}」，要求「{a[key]}」"
+        if "style" in a and not same_style(p.get("style") or "正文", a["style"]):
+            want = "「标题」或「标题 1」" if style_name(a["style"]) == "标题" else f"「{a['style']}」"
+            return False, f"样式是「{p.get('style') or '正文'}」，要求{want}"
         if "bullet" in a and str(p.get("bullet") or "none") != str(a["bullet"]):
             got = BULLET_NAMES.get(str(p.get("bullet") or "none"), p.get("bullet"))
             return False, f"项目符号/编号是「{got}」，要求「{BULLET_NAMES.get(a['bullet'], a['bullet'])}」"

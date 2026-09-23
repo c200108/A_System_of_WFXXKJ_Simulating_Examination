@@ -166,3 +166,76 @@ def test_delete_and_clear(client, auth):
         "/api/typing/records", params={"student_class": "八(1)班"}, headers=auth
     ).json()
     assert left == []
+
+
+# ---------- 成绩挂到学生账号上（首页那三个数字靠它） ----------
+# 学生首页的「练习次数 / 最快速度 / 平均正确率」只统计 student_id 等于自己的
+# 记录。桌面端交成绩原来不带令牌，记录照样入库、老师也看得见，但 student_id
+# 是空的 —— 学生自己的首页于是永远是 0。交卷那条路 4.4.0 修过同一个毛病，
+# 打字这条当时漏了。
+def _student(client, auth, no, name):
+    from tests.test_students import _class_id
+
+    res = client.post("/api/students", headers=auth, json={
+        "student_no": no, "name": name, "class_id": _class_id(client, auth, "八年级", "2班")})
+    assert res.status_code == 200, res.text
+    tok = client.post("/api/student/login", params={"student_no": no, "password": no})
+    assert tok.status_code == 200, tok.text
+    return {"Authorization": f"Bearer {tok.json()['access_token']}"}
+
+
+def _home(client, headers):
+    res = client.get("/api/student/home", headers=headers)
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+def test_带令牌交的成绩算进学生首页(client, auth):
+    me = _student(client, auth, "26090101", "打字甲")
+    assert _home(client, me)["typing_count"] == 0
+
+    res = client.post("/api/typing/records", headers=me, json={
+        "student_name": "随便填", "student_class": "随便填", "module": "中文",
+        "difficulty": "简单", "typed_chars": 120, "correct_chars": 114, "duration": 60})
+    assert res.status_code == 200, res.text
+
+    home = _home(client, me)
+    assert home["typing_count"] == 1
+    assert home["typing_best_speed"] == 114
+    assert home["typing_avg_accuracy"] == 95
+
+
+def test_令牌过期了按学号认领(client, auth):
+    """桌面端两样都带：令牌是正经凭据，但练了一下午令牌可能已经过期，
+    这时服务端按学号认领 —— 和交卷那条路一个写法。"""
+    me = _student(client, auth, "26090102", "打字乙")
+    res = client.post("/api/typing/records", json={
+        "student_name": "打字乙", "student_class": "八年级2班", "student_no": "26090102",
+        "module": "英文", "difficulty": "中等", "typed_chars": 200, "correct_chars": 180,
+        "duration": 120})
+    assert res.status_code == 200, res.text
+    assert _home(client, me)["typing_count"] == 1
+
+
+def test_不带令牌也不带学号的照旧能交(client, auth):
+    """公开的 /dazi 页面：手填班级姓名，成绩照样入库，只是不挂账号。"""
+    res = _submit(client, student_name="校外同学", student_class="九(9)班")
+    assert res.status_code == 200, res.text
+    rows = client.get("/api/typing/records", headers=auth,
+                      params={"keyword": "校外同学"}).json()
+    assert rows and rows[0]["student_name"] == "校外同学"
+
+
+def test_账号上的班级姓名说了算(client, auth):
+    """带着账号来的，前端填的班级姓名一律不算数 —— 改个输入框就能把成绩
+    记到别人头上的口子不能开。按学号认领的那条路也一样。"""
+    _student(client, auth, "26090103", "打字丙")
+    client.post("/api/typing/records", json={
+        "student_name": "冒名顶替", "student_class": "别的班", "student_no": "26090103",
+        "module": "中文", "difficulty": "简单", "typed_chars": 50, "correct_chars": 50,
+        "duration": 30})
+    rows = client.get("/api/typing/records", headers=auth,
+                      params={"keyword": "打字丙"}).json()
+    assert rows and rows[0]["student_class"] == "八年级2班"
+    assert not client.get("/api/typing/records", headers=auth,
+                          params={"keyword": "冒名顶替"}).json()

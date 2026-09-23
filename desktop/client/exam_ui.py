@@ -18,6 +18,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from . import api, cleanup, package, snapshot, states, store
+from .dragboard import DragBoard, IpBox
 from .shell import (AMBER, APP_NAME, BG, BLUE, CARD, CLIENT_VER, FONT, GRAY,
                     GREEN, LINE, RED, ai_reply, open_in_system)
 
@@ -31,6 +32,9 @@ class ExamFrame(ttk.Frame):
         self.answers: dict[str, str] = {}
         # AI 工具题的对话记录，一题一份。交卷时当作那道题的"终态"交上去
         self.chats: dict[str, list] = {}
+        # 拖拽题的作答，一题一份：{"placed": {热区: [卡片]}} 或 {"ip": "…"}。
+        # 和 AI 对话一样，交卷时当作那道题的"终态"交上去
+        self.drags: dict[str, dict] = {}
         self.index = 0
         self.left = app.package.duration_min * 60
         self.started = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -307,37 +311,46 @@ class ExamFrame(ttk.Frame):
             bg=CARD, fg=GREEN, font=(FONT, 9))
         self._op_state.pack(anchor="w", padx=14, pady=(0, 8))
 
-    # ---------------- 拖拽题（热区 / 流程图）----------------
+    # ---------------- 拖拽题（流程图 / 热区 / 归类 / 程序填空 / IP 查询）----------------
     def _render_drag(self, q, qid):
-        """热区拖拽题、流程图补全题 —— **交互还没做，这里先占住位置。**
+        """拖拽题的作答区。图是服务端按原题重画的（见 client/dragboard.py）。
 
-        这类题在网页端是把素材拖到答题区的热区上。要搬到桌面端，缺的是画布：
-        一块 Canvas 放底图，素材做成可拖的小块，落点吸附到热区，作答就是
-        「哪个素材落在哪个热区」的一份映射。判分那头不用改 —— 和别的操作题
-        一样，交一份终态上去就行。
-
-        在那之前**不能给一个「打开」按钮**：它只会打开考试文件夹的根目录，
-        学生进去一看什么都没有，以为程序坏了。先老实说清楚。
-
-        接好之后这里换成画布，`states.collect()` 里加一条 drag 分支，别处不用动。
+        判分那头和别的操作题一样：交一份终态上去 —— 这里是「哪张卡片放在哪个热区」
+        （IP 查询题是填的地址），服务端按检查点判。
         """
-        box = tk.Frame(self.area, bg=CARD, highlightbackground=LINE,
-                       highlightthickness=1)
+        sim = q.get("sim") or {}
+        env = sim.get("env") or {}
+        box = tk.Frame(self.area, bg=CARD, highlightbackground=LINE, highlightthickness=1)
         box.pack(fill="both", expand=True, pady=4)
-        tk.Label(box, text="拖拽题（热区 / 流程图）", bg=CARD, fg=AMBER,
-                 font=(FONT, 11, "bold")).pack(anchor="w", padx=14, pady=(10, 2))
-        tk.Label(box, text="这类题的拖拽作答区正在开发中。目前请在网页端完成，"
-                          "或由老师评阅 —— 可以先做别的题，不影响交卷。",
-                 bg=CARD, fg=GRAY, font=(FONT, 9), anchor="w",
-                 wraplength=640, justify="left").pack(fill="x", padx=14)
+        if not env:
+            # 老考试包、或者服务端认不出来的拖拽题：没有图可画，老实说清楚，
+            # **别给「打开」按钮** —— 它只会打开一个空的考试文件夹
+            tk.Label(box, text="这道题由老师评阅", bg=CARD, fg=AMBER,
+                     font=(FONT, 11, "bold")).pack(anchor="w", padx=14, pady=(10, 2))
+            tk.Label(box, text="这道题在本机没有可操作的作答区，可以先做别的题，不影响交卷。",
+                     bg=CARD, fg=GRAY, font=(FONT, 9), anchor="w", wraplength=640,
+                     justify="left").pack(fill="x", padx=14, pady=(0, 10))
+            return
 
-        # 预留的作答区：将来这块换成 Canvas，底图铺上去，素材在上面拖
-        hold = tk.Frame(box, bg="#f7f9fc", highlightbackground=LINE,
-                        highlightthickness=1, height=200)
-        hold.pack(fill="both", expand=True, padx=14, pady=12)
-        hold.pack_propagate(False)
-        tk.Label(hold, text="作答区（待开发）", bg="#f7f9fc", fg="#b9c2d0",
-                 font=(FONT, 13)).place(relx=0.5, rely=0.5, anchor="center")
+        mode = env.get("mode") or "diagram"
+        title = {"ip": "查询本机 IP 地址", "code": "把代码块拖到程序里"}.get(mode, "拖拽作答")
+        tk.Label(box, text=title, bg=CARD, fg=BLUE,
+                 font=(FONT, 11, "bold")).pack(anchor="w", padx=12, pady=(8, 0))
+
+        def changed(new: dict) -> None:
+            self.drags[qid] = dict(self.drags.get(qid) or {}, **new)
+            self.answer(qid, self._drag_mark(qid))
+
+        kind = IpBox if mode == "ip" else DragBoard
+        kind(box, env, self.drags.get(qid), changed).pack(fill="x", padx=12, pady=(4, 12))
+
+    def _drag_mark(self, qid: str) -> str:
+        """答题卡上的进度：放了几张 / 填没填。空串表示还没作答。"""
+        got = self.drags.get(qid) or {}
+        if got.get("ip"):
+            return "已填写 IP 地址"
+        n = sum(len(v) for v in (got.get("placed") or {}).values())
+        return f"已放 {n} 张卡片" if n else ""
 
     # ---------------- AI 工具题 ----------------
     def _render_ai(self, q, qid):
@@ -442,7 +455,8 @@ class ExamFrame(ttk.Frame):
 
     def save_draft(self):
         store.save_draft(self.app.package.exam_id, self.app.student.get("no", ""),
-                         {"answers": self.answers, "started": self.started, "left": self.left})
+                         {"answers": self.answers, "drags": self.drags,
+                          "started": self.started, "left": self.left})
 
     def restore_draft(self):
         got = store.load_draft(self.app.package.exam_id, self.app.student.get("no", ""))
@@ -451,6 +465,7 @@ class ExamFrame(ttk.Frame):
         if messagebox.askyesno("接着考", "发现上次没交完的答卷（可能是断电或程序关闭）。\n"
                                          "要接着考吗？\n\n选「否」则从头开始。"):
             self.answers = {str(k): v for k, v in got["answers"].items()}
+            self.drags = {str(k): v for k, v in (got.get("drags") or {}).items()}
             self.started = got.get("started", self.started)
             self.left = int(got.get("left") or self.left)
 
@@ -494,7 +509,7 @@ class ExamFrame(ttk.Frame):
         # 操作题各收各的终态：win 拍文件夹快照、wps 读文档格式、html 读源码、
         # AI 题交对话记录。**三类不能都交一份文件夹快照** —— 判分器认的形状不同
         got = states.collect(self.paper, self.app.exam_root,
-                             self.app.package.logical_root, self.chats)
+                             self.app.package.logical_root, self.chats, self.drags)
         shot = snapshot.snapshot(self.app.exam_root)   # 存档用的整机快照，老师能核
         name = f"{self.app.student.get('no', '')}-{self.app.student.get('name', '')}"
         try:

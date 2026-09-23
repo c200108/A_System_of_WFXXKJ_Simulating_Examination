@@ -358,3 +358,46 @@ def test_两道win题一起发包_前缀对得上(client, auth):
         assert f"{EXAM_ROOT}/{rel}" in (_env_with_own_dir_node()["fs"]
                                         | _env_without_own_dir_node()["fs"]), \
             f"{rel} 加回前缀后对不上任何一道题的环境"
+
+
+# ================================================================ 拖拽题进考试包
+def test_拖拽题的图进包_答案和仿真地址不进包(client, auth):
+    """桌面端要自己画图，所以结构图、热区、素材卡片要进包；检查点（答案）不能进。
+    IP 查询题的仿真地址也不能进 —— 那是网页端仿真命令行用的，桌面端查真机，
+    留在包里等于把一个"对"的答案放在学生机的硬盘上。"""
+    import zipfile as _zip
+
+    from app.database import SessionLocal
+    from app.models import Exam, Paper, PaperItem, Question
+    from app.routers.desk import build_package
+    from tests.test_drag import REAL_STEMS
+
+    db = SessionLocal()
+    try:
+        paper = Paper(title="拖拽题进包", school="昌邑市实验中学", duration="40")
+        for i, key in enumerate(("Q322-话费", "Q310-本机IP")):
+            q = Question(type="操作题", stem=REAL_STEMS[key], stem_hash=f"desk-drag-{key}",
+                         answer="", scope="计算机网络基础", image_url="/uploads/images/旧图.jpg")
+            db.add(q)
+            db.flush()
+            paper.items.append(PaperItem(question_id=q.id, order_no=i, section="操作题", score=10))
+        db.add(paper)
+        db.flush()
+        exam = Exam(paper_id=paper.id, title=paper.title, token=f"desk-drag-{paper.id}")
+        db.add(exam)
+        db.commit()
+        raw = build_package(db, exam)
+    finally:
+        db.close()
+
+    z = _zip.ZipFile(io.BytesIO(raw))
+    rows = json.loads(z.read("paper.json"))
+    flow, ip = rows
+    assert flow["sim"]["kind"] == "drag" and not flow["sim"]["manual"]
+    assert flow["sim"]["env"]["slots"] and flow["sim"]["env"]["items"], "图没进包，桌面端画不出来"
+    assert "image" not in flow, "旧考试系统的截图不再发"
+    assert ip["sim"]["env"]["mode"] == "ip"
+    assert "sim_ip" not in ip["sim"]["env"], "仿真地址进了包，学生解压就能抄"
+    text = raw.decode("utf-8", "ignore") + json.dumps(rows, ensure_ascii=False)
+    for bad in ('"op"', '"assert"', '"checks"', "192.168.1.108"):
+        assert bad not in text, f"考试包里出现了 {bad}"

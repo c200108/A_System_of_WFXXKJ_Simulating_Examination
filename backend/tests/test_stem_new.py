@@ -195,7 +195,8 @@ def test_page_margins_in_pairs():
 def test_paper_size_and_heading_style():
     ops = asserts_of(sim_of(KONGZI))
     assert {"op": "page", "size": "A4"} in ops
-    assert any(a.get("style") == "标题1" for a in ops), ops
+    # 题干说的是「标题」样式；判分时「标题」「标题 1」都认（见 sim.same_style）
+    assert any(a.get("style") == "标题" for a in ops), ops
 
 
 def test_replace_needs_the_word_to_be_there():
@@ -319,7 +320,7 @@ def test_the_style_name_is_not_mistaken_for_the_title():
     """
     got = sim_of(KONGZI_FULL)
     assert got["env"]["paras"][0]["text"] == "孔子对中华文明的贡献"
-    assert {"op": "para", "at": 0, "style": "标题1"} in asserts_of(got)
+    assert {"op": "para", "at": 0, "style": "标题"} in asserts_of(got)
 
 
 def test_the_document_really_contains_the_quoted_sentence():
@@ -354,3 +355,80 @@ def test_a_filename_is_never_read_as_a_font():
     它会被当成字体，造出一条**谁也做不到**的检查点。"""
     for a in asserts_of(sim_of(KONGZI_FULL)):
         assert "华文明" not in str(a.get("font", "")), a
+
+
+# ================================================================ win04：按名称排序的中间一个
+WIN04 = """请打开本题工作目录下的win04文件夹，按要求请完成以下操作：
+（1）在“盆地”文件夹中，新建名为“四川盆地”的文件夹。
+（2）在“长江中下游平原”文件夹中，将按名称排序后的中间一个文件改名为“长江三角洲.doc”。
+（3）将名为“黄土高原”的文件夹复制到“高原”文件夹中。
+（4）将名为“三江平原.txt”的文件移动到“东北平原”文件夹中。
+（5）删除“塔里木盆地”文件夹。"""
+
+
+def test_中间一个文件那一问_文件夹和文件都铺出来():
+    """老师在考场里做到第 (2) 问，打开工作目录发现根本没有「长江中下游平原」
+    —— 那一整句原来没有规则认得，兜底铺文件的逻辑又恰好跳过了它。"""
+    got = sim_of(WIN04)
+    fs = got["env"]["fs"]
+    folder = "C:/EXAM/win04/长江中下游平原"
+    assert fs.get(folder, {}).get("type") == "dir", "「长江中下游平原」没铺出来"
+    inside = sorted(p.rsplit("/", 1)[-1] for p in fs if p.startswith(folder + "/"))
+    assert len(inside) == 3, f"要有一组文件才说得清哪个是「中间一个」：{inside}"
+    assert "长江三角洲.doc" not in inside, "改名后的名字是答案，不能预先铺"
+
+    ops = asserts_of(got)
+    assert {"op": "exists", "path": folder + "/长江三角洲.doc", "is": "file"} in ops
+    middle = sorted(inside)[1]
+    assert {"op": "missing", "path": f"{folder}/{middle}"} in ops, "检查的得是中间那一个"
+
+
+def test_中间一个按拼音排和按码位排是同一个():
+    """资源管理器（中文 Windows）按**拼音**排，程序按**码位**排。铺的名字两种
+    排法结果必须一样，不然学生照着屏幕改对了，判分却说错了。
+    拼音：巢(chao) < 江(jiang) < 鄱(po)；码位：5DE2 < 6C5F < 9131。"""
+    trio = stem._sorted_trio("长江中下游平原", "doc")
+    assert list(trio) == sorted(trio), "码位顺序和铺的顺序不一致"
+    pinyin = {"巢": "chao", "江": "jiang", "鄱": "po"}
+    assert [pinyin[n[0]] for n in trio] == sorted(pinyin[n[0]] for n in trio)
+    # 没见过的文件夹：只差一个英文字母，两种排法都是 A < B < C
+    assert stem._sorted_trio("随便什么", "txt") == ("资料A.txt", "资料B.txt", "资料C.txt")
+
+
+def test_在某文件夹中这句没认出来_那个文件夹也要铺():
+    """兜底那一层原来会跳过句子自己的那个文件夹（本意是别把它铺进它自己里），
+    结果哪儿都没铺。这里拿一句**没有规则认得**的话来验兜底。"""
+    got = sim_of("请打开本题工作目录下的win77文件夹，完成以下操作："
+                 "（1）在“冷门文件夹”文件夹中，把里面的东西按大小重新整理一遍。"
+                 "（2）删除“旧资料”文件夹。")
+    assert got and got["env"]["fs"].get("C:/EXAM/win77/冷门文件夹", {}).get("type") == "dir"
+
+
+# ================================================================ 「标题」样式
+def test_标题样式那一问_标题和标题1都算对():
+    """老师在机房实际做这道题：用的是 WPS 样式栏里的「标题 1」，判分却说错了。
+    题干写的是「设置为"标题"样式」—— Word 里叫「标题」的是 Title 样式，可 WPS
+    样式栏最前面的就是「标题 1」，说"标题样式"多半指它，两个都得认。"""
+    from app.services import sim
+
+    got = sim_of(KONGZI_FULL)
+    style_checks = [c for c in got["checks"] if "style" in (c.get("assert") or {})]
+    assert style_checks, "「标题」样式那一问没出检查点"
+    check = style_checks[0]
+
+    def run(style):
+        paras = [dict(p) for p in got["env"]["paras"]]
+        paras[0]["style"] = style
+        return sim.run_checks("wps", [check], {"paras": paras, "page": got["env"].get("page", {})})
+
+    for ok in ("标题1", "标题 1", "heading 1", "标题", "Title"):
+        assert run(ok)["results"][0]["ok"], f"用「{ok}」样式应该算对"
+    for bad in ("正文", "标题2", "2"):
+        assert not run(bad)["results"][0]["ok"], f"用「{bad}」样式不该算对"
+
+
+def test_要求标题1的只认标题1():
+    from app.services import sim
+
+    assert sim.same_style("标题 1", "标题1")
+    assert not sim.same_style("标题", "标题1"), "明确要求「标题1」时，Title 样式不算"

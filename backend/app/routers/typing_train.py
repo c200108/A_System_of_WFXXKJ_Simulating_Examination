@@ -97,7 +97,17 @@ def submit_record(
     db: Session = Depends(get_db),
 ):
     _enabled()
-    # 学生平台上带着令牌来的，班级姓名一律以账号为准，前端填什么都不算数，
+    # **认领到账号上。** 首页那三个数字（练习次数、最快速度、平均正确率）只统计
+    # 挂了账号的记录，没挂上的话成绩照样入库、老师也看得见，但学生自己的首页
+    # 永远是 0 —— 桌面端就踩过这个（交卷那条路 4.4.0 修过，打字这条漏了）。
+    #
+    # 令牌优先；没令牌或者令牌过期了，就按学号认领。学号是全校唯一的，
+    # 认得准；认不上（校外的公开页面、学号写错）就照旧留空，不挡着交成绩。
+    if not me and body.student_no.strip():
+        me = db.scalar(select(Student).where(
+            Student.student_no == body.student_no.strip(), Student.is_active.is_(True)))
+
+    # 带着账号来的，班级姓名一律以账号为准，前端填什么都不算数，
     # 免得改个输入框就把成绩记到别人头上。公开页面来的还是手填。
     if me:
         body.student_name, body.student_class = me.name, me.student_class

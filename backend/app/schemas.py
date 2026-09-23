@@ -557,6 +557,9 @@ class TypingRecordIn(BaseModel):
 
     student_name: str = Field(max_length=64)
     student_class: str = Field(max_length=64)
+    # 桌面端交上来的会带学号：令牌过期时服务端靠它把成绩认领到账号上，
+    # 和交卷那条路一个写法。网页端不带（它有令牌），留空即可。
+    student_no: str = Field(default="", max_length=64)
     module: str                      # 键盘 / 英文 / 中文
     difficulty: str = ""
     typed_chars: int = Field(ge=0)   # 实际敲了多少（键盘模块是按键次数）
