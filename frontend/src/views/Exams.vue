@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { siteConfig } from '../siteConfig'
 import { api, download } from '../api'
@@ -28,9 +29,32 @@ const form = reactive({
   show_answer: siteConfig.exam.defaults.show_answer
 })
 
+const router = useRouter()
 const current = ref(null) // 正在看成绩的那场考试
 const subs = ref([])
 const stats = ref(null)
+
+// 成绩表的筛选：按班、按姓名学号搜。都在前端做 —— 一场考试最多几百份，
+// 全拿下来再筛比每敲一个字问一次服务器快
+const filterClass = ref('')
+const keyword = ref('')
+const selected = ref([])
+const classOptions = computed(() =>
+  [...new Set(subs.value.map(s => s.student_class || '未填班级'))].sort()
+)
+const shownSubs = computed(() => {
+  const k = keyword.value.trim().toLowerCase()
+  return subs.value.filter(s =>
+    (!filterClass.value || (s.student_class || '未填班级') === filterClass.value) &&
+    (!k ||
+      String(s.student_name || '').toLowerCase().includes(k) ||
+      String(s.student_no || '').toLowerCase().includes(k))
+  )
+})
+
+// 样卷
+const paperDlg = ref(false)
+const paper = ref(null)
 const detailDlg = ref(false)
 const detail = ref(null)
 // 阅卷：{题目id: 老师给的分}。操作题这类机器判不了的题由老师逐题给分，
@@ -120,17 +144,60 @@ async function remove(exam) {
 }
 
 async function openScores(exam) {
+  if (current.value?.id !== exam.id) {
+    filterClass.value = ''
+    keyword.value = ''
+  }
+  selected.value = []
   current.value = exam
   subs.value = await api.submissions(exam.id)
   stats.value = await api.examStats(exam.id)
 }
 
+/** 成绩分析新开一个标签页：图多，铺满整屏看 */
+function openAnalysis(exam) {
+  window.open(router.resolve({ path: `/js/analysis/${exam.id}` }).href, '_blank')
+}
+
+async function openPaper() {
+  paper.value = await api.examPaper(current.value.id)
+  paperDlg.value = true
+}
+
+async function removeSub(row) {
+  await ElMessageBox.confirm(
+    `删除 ${row.student_name}（${row.student_no || '无学号'}）的答卷？删掉后这个学生可以重新交卷。`,
+    '删除答卷',
+    { type: 'warning' }
+  )
+  await api.deleteSubmission(current.value.id, row.id)
+  ElMessage.success('已删除')
+  await openScores(current.value)
+  await load()
+}
+
+async function removeSelected() {
+  const rows = selected.value
+  if (!rows.length) return
+  await ElMessageBox.confirm(
+    `删除选中的 ${rows.length} 份答卷？删掉后这些学生可以重新交卷，删了找不回来。`,
+    '批量删除答卷',
+    { type: 'warning', confirmButtonText: `删除 ${rows.length} 份` }
+  )
+  const res = await api.deleteSubmissions(current.value.id, rows.map(r => r.id))
+  ElMessage.success(`已删除 ${res.deleted} 份`)
+  await openScores(current.value)
+  await load()
+}
+
 async function openDetail(row) {
   detail.value = await api.submission(current.value.id, row.id)
   Object.keys(manual).forEach(k => delete manual[k])
-  // 已经给过分的回填，没给过的留空（留空和给 0 分是两回事）
+  // 已经给过分的回填，没给过的留空（留空和给 0 分是两回事）。
+  // 按检查点判过的操作题（d.auto）也回填：全过 / 全没过的系统已经定了分；
+  // 部分通过的按比例预填，老师看一眼、点保存就行
   detail.value.detail
-    .filter(d => d.manual && d.graded)
+    .filter(d => d.manual && (d.graded || d.auto))
     .forEach(d => (manual[d.id] = d.earned))
   detailDlg.value = true
 }
@@ -279,9 +346,10 @@ const hardest = computed(() => {
           {{ row.avg_score ?? '—' }}<span v-if="row.full_score" class="of">/{{ row.full_score }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="176" fixed="right">
+      <el-table-column label="操作" width="214" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openScores(row)">成绩</el-button>
+          <el-button link type="primary" @click="openAnalysis(row)">分析</el-button>
           <el-button
             link
             type="primary"
@@ -307,6 +375,8 @@ const hardest = computed(() => {
         <span>{{ current.title }} — 成绩</span>
         <div>
           <el-button size="small" @click="openScores(current)">刷新</el-button>
+          <el-button size="small" @click="openPaper">样卷</el-button>
+          <el-button size="small" type="success" @click="openAnalysis(current)">成绩分析</el-button>
           <el-button size="small" type="primary" @click="exportScores">导出成绩 Excel</el-button>
         </div>
       </div>
@@ -323,11 +393,43 @@ const hardest = computed(() => {
       <el-col :span="14">
         <div class="sub-t">学生成绩</div>
         <el-empty v-if="!subs.length" description="还没有人交卷" :image-size="60" />
-        <el-table v-else :data="subs" border size="small" max-height="420">
+        <template v-else>
+        <div class="bar">
+          <el-select v-model="filterClass" clearable placeholder="全部班级" size="small" style="width: 130px">
+            <el-option v-for="c in classOptions" :key="c" :label="c" :value="c" />
+          </el-select>
+          <el-input
+            v-model="keyword"
+            clearable
+            size="small"
+            placeholder="搜姓名或学号"
+            style="width: 150px"
+          />
+          <span class="of">
+            {{ shownSubs.length === subs.length ? `共 ${subs.length} 人` : `筛出 ${shownSubs.length} / ${subs.length} 人` }}
+          </span>
+          <el-button
+            v-if="current.can_edit && selected.length"
+            size="small"
+            type="danger"
+            plain
+            @click="removeSelected"
+          >删除选中的 {{ selected.length }} 份</el-button>
+        </div>
+        <el-table
+          :data="shownSubs"
+          border
+          size="small"
+          max-height="420"
+          row-key="id"
+          :default-sort="{ prop: 'score', order: 'descending' }"
+          @selection-change="rows => (selected = rows)"
+        >
+          <el-table-column v-if="current.can_edit" type="selection" width="36" reserve-selection />
           <el-table-column prop="student_name" label="姓名" width="90" />
           <el-table-column prop="student_class" label="班级" width="110" show-overflow-tooltip />
           <el-table-column prop="student_no" label="学号" width="110" show-overflow-tooltip />
-          <el-table-column label="总分" width="84">
+          <el-table-column prop="score" label="总分" width="84" sortable>
             <template #default="{ row }">
               <b :class="passed(row) ? 'ok' : 'no'">{{ row.score }}</b>
               <span v-if="row.full_score" class="of">/{{ row.full_score }}</span>
@@ -353,14 +455,16 @@ const hardest = computed(() => {
               {{ String(row.submitted_at).replace('T', ' ').slice(5, 19) }}
             </template>
           </el-table-column>
-          <el-table-column label="" width="86">
+          <el-table-column label="" :width="current.can_edit ? 132 : 86">
             <template #default="{ row }">
               <el-button link :type="row.pending_manual ? 'warning' : 'primary'" @click="openDetail(row)">
                 {{ row.pending_manual ? '阅卷 ' + row.pending_manual : '答卷' }}
               </el-button>
+              <el-button v-if="current.can_edit" link type="danger" @click="removeSub(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
+        </template>
       </el-col>
 
       <el-col :span="10">
@@ -436,6 +540,40 @@ const hardest = computed(() => {
     </template>
   </el-dialog>
 
+  <!-- 样卷：带答案，老师看 -->
+  <el-dialog v-model="paperDlg" :title="`样卷 · ${paper?.title || ''}`" width="780px" top="5vh">
+    <template v-if="paper">
+      <p class="who">
+        {{ paper.school }}　{{ paper.paper_title }}
+        <span v-if="paper.duration" class="of">　考试时长 {{ paper.duration }} 分钟</span>
+        <span class="of">　满分 {{ paper.full_score }}</span>
+      </p>
+      <div v-for="g in paper.groups" :key="g.name" class="pg">
+        <div class="pg-h">{{ g.name }}<span class="of">（共 {{ g.items.length }} 题，{{ g.score }} 分）</span></div>
+        <div v-for="q in g.items" :key="q.id" class="dq">
+          <div class="dstem">
+            {{ q.no }}. {{ q.stem }}
+            <span v-if="q.score" class="of">（{{ q.score }} 分）</span>
+            <el-tag v-if="q.scope" size="small" type="info" effect="plain">{{ q.scope }}</el-tag>
+          </div>
+          <img v-if="q.image_url" :src="q.image_url" class="qimg" alt="题目配图" />
+          <div v-if="q.options.length" class="opts">
+            <span v-for="o in q.options" :key="o.label" :class="{ right: String(q.answer).includes(o.label) }">
+              {{ o.label }}. {{ o.content }}
+            </span>
+          </div>
+          <div v-if="q.answer" class="dans">参考答案：<b>{{ q.answer }}</b></div>
+          <div v-if="q.checks.length" class="checks">
+            <span v-for="(c, i) in q.checks" :key="i" class="chip">判分点 {{ i + 1 }}：{{ c }}</span>
+          </div>
+        </div>
+      </div>
+    </template>
+    <template #footer>
+      <el-button @click="paperDlg = false">关闭</el-button>
+    </template>
+  </el-dialog>
+
   <!-- 单份答卷 + 主观题阅卷 -->
   <el-dialog v-model="detailDlg" title="学生答卷" width="760px" top="6vh">
     <template v-if="detail">
@@ -455,8 +593,9 @@ const hardest = computed(() => {
       </p>
 
       <el-alert v-if="manualItems.length" type="warning" :closable="false" class="hint">
-        下面带输入框的是<b>操作题</b>。挂了仿真任务的已经按检查点自动判过分，分数填在框里了，
-        你觉得不对可以改；没挂仿真的机器判不了，要你看着作答给分。
+        下面带输入框的是<b>操作题</b>。按检查点判过的：<b>全部通过的已经给了满分、全部没过的给了 0 分</b>，
+        不用再管；部分通过的按比例预填了分数，看一眼没问题就保存（觉得不对可以改）。
+        没挂仿真的机器判不了，要你看着作答给分。
         给完保存，总分自动重算，学生在「我的考试」里就能看到更新后的分数。
         留空表示<b>还没评</b>，和给 0 分不是一回事。
       </el-alert>
@@ -468,7 +607,13 @@ const hardest = computed(() => {
           <el-tag v-if="d.auto" size="small" type="success" effect="plain">
             自动判分 {{ d.check_passed }}/{{ d.check_total }} 问
           </el-tag>
-          <el-tag v-if="d.manual" size="small" :type="manual[d.id] === undefined ? 'warning' : 'success'">
+          <el-tag v-if="d.auto_graded" size="small" type="success">
+            {{ d.earned >= d.score ? '检查点全过，已自动给满分' : '检查点全没过，已自动给 0 分' }}
+          </el-tag>
+          <el-tag v-else-if="d.manual && d.auto && !d.graded" size="small" type="warning">
+            部分通过，已按比例预填，待复核
+          </el-tag>
+          <el-tag v-else-if="d.manual" size="small" :type="manual[d.id] === undefined ? 'warning' : 'success'">
             {{ manual[d.id] === undefined ? '待评阅' : '已给分' }}
           </el-tag>
           <el-tag v-else-if="!d.scored" size="small" type="info">不计分</el-tag>
@@ -627,5 +772,36 @@ const hardest = computed(() => {
   color: var(--el-color-danger);
 }
 .checks .chip em { font-style: normal; opacity: 0.85; }
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.pg {
+  margin-bottom: 10px;
+}
+.pg-h {
+  font-weight: 600;
+  margin: 10px 0 2px;
+}
+.opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  font-size: 13px;
+  margin-top: 4px;
+}
+.opts .right {
+  color: var(--el-color-success);
+  font-weight: 600;
+}
+.qimg {
+  max-width: 100%;
+  max-height: 240px;
+  margin-top: 6px;
+  border: 1px solid var(--el-border-color-lighter);
+}
 
 </style>

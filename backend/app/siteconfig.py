@@ -258,6 +258,12 @@ class UploadConf(_Base):
     )
 
 
+class TimeConf(_Base):
+    # 服务器时钟不准、又改不了系统时间时，用它把整个系统的时间拨正。单位小时，
+    # 可以是负数和小数（-8、0.5）。见 app/clock.py
+    offset_hours: float = Field(default=0, ge=-24, le=24)
+
+
 class SiteConfig(_Base):
     site: SiteMeta = Field(default_factory=SiteMeta)
     school: SchoolConf = Field(default_factory=SchoolConf)
@@ -267,6 +273,7 @@ class SiteConfig(_Base):
     import_: ImportConf = Field(default_factory=ImportConf, alias="import")
     upload: UploadConf = Field(default_factory=UploadConf)
     typing: TypingConf = Field(default_factory=TypingConf)
+    time: TimeConf = Field(default_factory=TimeConf)
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 

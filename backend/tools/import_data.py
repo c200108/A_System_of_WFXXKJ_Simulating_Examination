@@ -71,7 +71,8 @@ from app.database import engine
 from app.models import Base
 from tools import uploads_archive
 
-SKIP_TABLES = {"alembic_version"}
+# app_meta 记的是这台机器自己的状态（时钟校正挪到了哪），不能被别处的备份盖掉
+SKIP_TABLES = {"alembic_version", "app_meta"}
 SHOW = 20          # 每类问题最多列多少条，其余只报个数
 
 

@@ -218,6 +218,13 @@ export const api = {
     http.patch(`/exams/${id}/submissions/${sid}/manual`, { scores }),
   examStats: id => http.get(`/exams/${id}/stats`),
   exportScores: id => http.get(`/exams/${id}/export.xlsx`, { responseType: 'blob' }),
+  // 删答卷（要改得动这场考试）：删掉的学生可以重新交卷
+  deleteSubmission: (id, sid) => http.delete(`/exams/${id}/submissions/${sid}`),
+  deleteSubmissions: (id, ids) => http.post(`/exams/${id}/submissions/delete`, { ids }),
+  // 样卷：带答案，只给老师
+  examPaper: id => http.get(`/exams/${id}/paper`),
+  // 成绩分析：params 可带 classes（逗号分隔班级名）或 students（逗号分隔答卷 id）
+  examAnalysis: (id, params = {}) => http.get(`/exams/${id}/analysis`, { params }),
   // 桌面考试包：正常流程用不着（学生端联网自己取卷），这是机房断网时的后路
   exportDeskPack: id =>
     http.get(`/desk/export/${id}`, { params: { server: location.origin }, responseType: 'blob' }),

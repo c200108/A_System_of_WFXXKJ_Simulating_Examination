@@ -52,7 +52,6 @@ r"""桌面客户端（desktop/）和网页后台之间的那条线。
 import io
 import json
 import zipfile
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import Response
@@ -60,6 +59,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from urllib.parse import quote
 
+from .. import clock
 from ..config import settings
 from ..database import get_db
 from ..deps import get_current_user
@@ -182,7 +182,7 @@ def _root_of(kind: str, env: dict) -> str:
 @router.get("/ping", summary="客户端探活")
 def ping():
     """桌面客户端启动时探一下服务器通不通，好早点提示监考老师。"""
-    return {"ok": True, "server": settings.public_base_url or "", "at": datetime.now().isoformat()}
+    return {"ok": True, "server": settings.public_base_url or "", "at": clock.now().isoformat()}
 
 
 def build_package(db: Session, exam: Exam, server: str = "") -> bytes:
@@ -284,7 +284,7 @@ def build_package(db: Session, exam: Exam, server: str = "") -> bytes:
         "duration_min": _minutes(exam.paper.duration),
         "count": len(paper),
         "full_score": sum(q["score"] for q in paper),
-        "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "created": clock.now().strftime("%Y-%m-%d %H:%M:%S"),
         # 桌面端交卷就是拿这两样去调 /api/take/{token}/submit
         "server": base,
         "token": exam.token,

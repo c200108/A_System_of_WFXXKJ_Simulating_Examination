@@ -85,6 +85,14 @@ const routes = [
     meta: { public: true, bare: true }
   },
 
+  // 成绩分析：从成绩页新开一个标签页，整页铺开看图，不套后台的顶栏。
+  // 放在 /js 下面 —— 请求带哪个令牌是按路径前缀认的（见 api.js 的 pickToken）
+  {
+    path: '/js/analysis/:id',
+    component: () => import('./views/ExamAnalysis.vue'),
+    meta: { title: '成绩分析' }
+  },
+
   teacherRoutes,
   studentRoutes,
 

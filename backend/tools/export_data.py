@@ -45,6 +45,7 @@ from decimal import Decimal
 
 from sqlalchemy import inspect, select
 
+from app import clock
 from app.config import settings
 from app.database import SessionLocal, engine
 from app.models import Base
@@ -52,7 +53,7 @@ from tools import uploads_archive
 
 # 这张表不导：它记的是"目标库的表结构升到第几版了"，属于目标库自己的状态。
 # 导过去会让目标库以为自己退回了旧版本，正是上面说的那个坑。
-SKIP_TABLES = {"alembic_version"}
+SKIP_TABLES = {"alembic_version", "app_meta"}
 
 
 def encode(value):
@@ -132,7 +133,7 @@ def main() -> int:
                 "本目录由 tools/export_data.py 生成，只含数据、不含表结构、不含口令。"
                 "导入时表结构以目标库为准，按列名对齐 —— 所以老备份能导进新版本系统。"
             ),
-            "导出时间": datetime.now().isoformat(sep=" ", timespec="seconds"),
+            "导出时间": clock.now().isoformat(sep=" ", timespec="seconds"),
             "来源主机": os.environ.get("HOSTNAME", ""),
             "迁移版本": version,
             "来源数据库": engine.dialect.name,

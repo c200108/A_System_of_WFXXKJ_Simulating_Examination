@@ -482,6 +482,12 @@ class SubmissionOut(ORMModel):
     submitted_at: datetime | None = None
 
 
+class IdsIn(BaseModel):
+    """勾选的一批 id（批量删答卷等）。"""
+
+    ids: list[int] = Field(default_factory=list, max_length=5000)
+
+
 class ManualGradeIn(BaseModel):
     """老师给一份答卷的主观题赋分。键是题目 id，值是得分，超过本题满分按满分算。"""
 

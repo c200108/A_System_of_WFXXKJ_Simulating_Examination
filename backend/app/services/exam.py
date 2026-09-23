@@ -19,10 +19,10 @@ has_scores()：卷面上有没有任何一道题带分值。
 
 import json
 import secrets
-from datetime import datetime
 
 from sqlalchemy.orm import Session
 
+from .. import clock
 from ..models import Exam, Paper, PaperItem, Question
 from ..siteconfig import site
 from . import sim, stem as stem_rules
@@ -247,6 +247,7 @@ def grade(items: list[dict], answers: dict) -> dict:
                     check_passed=sum(1 for r in ran["results"] if r["ok"]),
                     check_total=len(ran["results"]),
                 )
+                settle_auto(entry)
             detail.append(entry)
             continue
 
@@ -288,10 +289,68 @@ def grade(items: list[dict], answers: dict) -> dict:
         # 仿真题已经判了，总分把那部分算进去；剩下的等老师批完再补
         "score": obj_score + auto_sub,
         "full_score": obj_total + sub_total,
-        "pending_manual": sum(1 for d in detail if d.get("manual") and not d.get("auto")),
+        # 待老师评阅的：机器判不了的，加上检查点部分通过、等老师复核的
+        "pending_manual": sum(1 for d in detail if d.get("manual") and not d.get("graded")),
         "auto_manual": auto_manual,
         "detail": detail,
     }
+
+
+def settle_auto(d: dict) -> bool:
+    """按检查点给操作题定分：全过给满分、全没过给 0 分，这两种算**已评完**，老师不用再点。
+
+    部分通过的按比例预填（scale_sim 算好的 earned），留给老师复核 —— 那种情况机器
+    说不准学生差在哪、该扣多少，得人看一眼。
+
+    老师已经评过的（graded 且不是这里自动定的）一律不动：老师的判断优先。
+    返回这一题有没有被改动。
+    """
+    if not d.get("manual") or not d.get("auto") or d.get("graded"):
+        return False
+    total = int(d.get("check_total") or 0)
+    passed = int(d.get("check_passed") or 0)
+    if total <= 0:
+        return False
+    full = int(d.get("score") or 0)
+    if passed == total:
+        d.update(earned=full, graded=True, auto_graded=True,
+                 reason="检查点全部通过，自动给满分")
+        return True
+    if passed == 0:
+        d.update(earned=0, graded=True, auto_graded=True,
+                 reason="检查点全部没通过，自动给 0 分")
+        return True
+    d["reason"] = f"部分检查点通过（{passed}/{total}），已按比例预填 {d.get('earned', 0)} 分，请老师复核"
+    return False
+
+
+def settle_submission(sub) -> bool:
+    """老答卷补一遍 settle_auto（这条规则 2.10.0 才有）。改了返回 True，调用方负责 commit。
+
+    全过 / 全没过的题，分数本来就是满分 / 0（scale_sim 算出来的），这里只把它们
+    标成已评完；一份卷子的题全评完了，graded_at 落上，老师列表里的「待阅」就消失。
+    """
+    detail = json.loads(sub.detail_json or "[]")
+    changed = False
+    for d in detail:
+        before = d.get("earned", 0)
+        if settle_auto(d):
+            changed = True
+            if d["earned"] != before:          # 理论上不会：全过/全没过本来就是满分/0
+                sub.subjective_score += d["earned"] - before
+                sub.score += d["earned"] - before
+    if not changed:
+        return False
+    sub.detail_json = json.dumps(detail, ensure_ascii=False)
+    manual = json.loads(sub.manual_json or "{}")
+    for d in detail:
+        if d.get("auto_graded"):
+            manual[str(d["id"])] = d["earned"]
+    sub.manual_json = json.dumps(manual, ensure_ascii=False)
+    pending = sum(1 for d in detail if d.get("manual") and not d.get("graded"))
+    if pending == 0 and sub.subjective_total > 0 and sub.graded_at is None:
+        sub.graded_at = clock.now()
+    return True
 
 
 def scale_sim(ran: dict, pts: int) -> int:
@@ -325,7 +384,7 @@ def submission_scores(result: dict) -> dict:
     # 主观题全是仿真题、已经当场判完的，就别再出现在老师的"待批"里了。
     # graded_by 留空表示不是人批的，成绩页上会标「自动判分」。
     if result["subjective_total"] > 0 and result["pending_manual"] == 0:
-        fields["graded_at"] = datetime.now()
+        fields["graded_at"] = clock.now()
     return fields
 
 
@@ -345,6 +404,11 @@ def apply_manual(detail: list[dict], manual_scores: dict) -> dict:
             continue
         full = int(d.get("score") or 0)
         raw = manual_scores.get(str(d["id"]), manual_scores.get(d["id"]))
+        if (raw is None or raw == "") and d.get("auto_graded") and d.get("graded"):
+            # 检查点全过 / 全没过、系统已经定了分的：老师这次没动它，保持原样
+            got += int(d.get("earned") or 0)
+            graded += 1
+            continue
         if raw is None or raw == "":
             d["earned"] = 0
             d["graded"] = False
@@ -357,6 +421,7 @@ def apply_manual(detail: list[dict], manual_scores: dict) -> dict:
         value = max(0, min(full, value))
         d["earned"] = value
         d["graded"] = True
+        d["auto_graded"] = False             # 老师给的分，以后 settle_auto 不再碰它
         got += value
         graded += 1
 

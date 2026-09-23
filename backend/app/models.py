@@ -45,8 +45,11 @@ def now_local() -> datetime:
     23:59:59.6 会进到第二天。
 
     server_default 留着，只给绕过程序、直接写 SQL 插行的情况兜底。
+
+    2.10.0 起再加上 config.yaml 的 time.offset_hours（服务器时钟不准时校正），见 app/clock.py。
     """
-    return datetime.now().replace(microsecond=0)
+    from .clock import now
+    return now()
 
 
 class Base(DeclarativeBase):
@@ -483,3 +486,15 @@ class SimTask(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=now_local, server_default=func.now(), onupdate=now_local
     )
+
+
+class AppMeta(Base):
+    """这台机器自己的几项状态（键值对）。**不跟着数据导出导入**（见 tools/export_data.py）。
+
+    time_offset_applied：已有记录的时间挪到了哪个校正值上（见 app/clock.py）。
+    """
+
+    __tablename__ = "app_meta"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(255), default="", server_default="")
