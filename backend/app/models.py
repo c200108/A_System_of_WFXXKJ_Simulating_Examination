@@ -26,6 +26,28 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 # 它只在正式服务器的 MySQL 上炸，而且炸在学生交卷那一刻。
 BIG_JSON = Text().with_variant(LONGTEXT, "mysql")
 
+# 所有长文本列都用它（0014 起）。SQLite 的 TEXT 没上限，MySQL 的只有 64 KB ——
+# 机房版（SQLite）里建的题目、仿真任务、导入记录导进服务器时，超了就整批导不进去。
+# 两边容量一致，互相导才不会出错。
+LONG_TEXT = BIG_JSON
+
+
+def now_local() -> datetime:
+    """建记录时的时间：**本机本地时间，精确到秒**。
+
+    时间由程序给，不靠数据库的 now()。两个库的 now() 不是一回事：
+    MySQL 的 NOW() 是服务器时区（容器里 TZ=Asia/Shanghai），SQLite 的
+    CURRENT_TIMESTAMP 却是 **UTC** —— 机房版（SQLite）里建的每一行都比服务器
+    早 8 小时，互相一导，同一张表里就混着两种时间；同一份答卷的 submitted_at
+    是 UTC、graded_at（程序给的 datetime.now()）又是北京时间。
+
+    去掉微秒：MySQL 的 DATETIME 只存到秒，而且是**四舍五入** ——
+    23:59:59.6 会进到第二天。
+
+    server_default 留着，只给绕过程序、直接写 SQL 插行的情况兜底。
+    """
+    return datetime.now().replace(microsecond=0)
+
 
 class Base(DeclarativeBase):
     pass
@@ -47,7 +69,7 @@ class User(Base):
     # 默认关着：这些东西全校共用，误删一条题目所有人都受影响，
     # 要删得先找管理员开权限。管理员天然有这个权限，不看这个字段。
     can_delete: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
 
     classes: Mapped[list["SchoolClass"]] = relationship(
         back_populates="owner", lazy="selectin"
@@ -77,7 +99,7 @@ class SchoolClass(Base):
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
 
     owner: Mapped["User | None"] = relationship(back_populates="classes")
 
@@ -118,7 +140,7 @@ class Student(Base):
     password_hash: Mapped[str] = mapped_column(String(128))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
 
 
 class DictItem(Base):
@@ -143,9 +165,9 @@ class Question(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     code: Mapped[str | None] = mapped_column(String(32), nullable=True)  # 展示用编号 C001
     type: Mapped[str] = mapped_column(String(16), index=True)
-    stem: Mapped[str] = mapped_column(Text)
+    stem: Mapped[str] = mapped_column(LONG_TEXT)
     stem_hash: Mapped[str] = mapped_column(String(64), unique=True)  # 查重
-    answer: Mapped[str] = mapped_column(Text, default="")
+    answer: Mapped[str] = mapped_column(LONG_TEXT, default="")
     scope: Mapped[str] = mapped_column(String(64), index=True)
     source: Mapped[str] = mapped_column(String(64), default="自定义")
     image_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -160,9 +182,9 @@ class Question(Base):
     is_pinned: Mapped[bool] = mapped_column(Boolean, default=False)  # 必出题
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now()
+        DateTime, default=now_local, server_default=func.now(), onupdate=now_local
     )
 
     # 选 selectin：题库列表一次几十道题，惰性加载会变成几十条 SQL
@@ -183,7 +205,7 @@ class Option(Base):
         ForeignKey("questions.id", ondelete="CASCADE"), index=True
     )
     label: Mapped[str] = mapped_column(String(8))
-    content: Mapped[str] = mapped_column(Text)
+    content: Mapped[str] = mapped_column(LONG_TEXT)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
 
     question: Mapped[Question] = relationship(back_populates="options")
@@ -197,9 +219,9 @@ class Paper(Base):
     school: Mapped[str] = mapped_column(String(128), default="")
     duration: Mapped[str] = mapped_column(String(16), default="")  # 考试时长（分钟）
     code: Mapped[str] = mapped_column(String(32), default="")  # 卷号 NO.12345
-    config_json: Mapped[str] = mapped_column(Text, default="{}")
+    config_json: Mapped[str] = mapped_column(LONG_TEXT, default="{}")
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
 
     items: Mapped[list["PaperItem"]] = relationship(
         back_populates="paper",
@@ -224,7 +246,7 @@ class PaperItem(Base):
     score: Mapped[int] = mapped_column(Integer, default=0)
     # 打乱选项后这道题在这份卷子里的最终样子（选项顺序 + 跟着变的答案），
     # 存下来重新打开历史试卷才和当初印出去的一模一样
-    snapshot_json: Mapped[str] = mapped_column(Text, default="")
+    snapshot_json: Mapped[str] = mapped_column(LONG_TEXT, default="")
 
     paper: Mapped[Paper] = relationship(back_populates="items")
 
@@ -246,7 +268,7 @@ class Exam(Base):
     # 只影响学生平台的列表，凭链接直接答题的老路子不受它限制。
     target_classes: Mapped[str] = mapped_column(String(255), default="")
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
 
     paper: Mapped[Paper] = relationship(lazy="selectin")
     submissions: Mapped[list["ExamSubmission"]] = relationship(
@@ -282,12 +304,12 @@ class ExamSubmission(Base):
     # 老师在成绩页逐题给分之后，总分自动补上。
     subjective_score: Mapped[int] = mapped_column(Integer, default=0)
     subjective_total: Mapped[int] = mapped_column(Integer, default=0)
-    manual_json: Mapped[str] = mapped_column(Text, default="{}")  # {题目id: 老师给的分}
+    manual_json: Mapped[str] = mapped_column(LONG_TEXT, default="{}")  # {题目id: 老师给的分}
     graded_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     graded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    submitted_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    submitted_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
 
     exam: Mapped[Exam] = relationship(back_populates="submissions")
 
@@ -317,7 +339,7 @@ class TypingRecord(Base):
     typed_chars: Mapped[int] = mapped_column(Integer, default=0)  # 实际敲了多少
     stars: Mapped[int] = mapped_column(Integer, default=0)  # 0~3
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), index=True
+        DateTime, default=now_local, server_default=func.now(), index=True
     )
 
 
@@ -332,9 +354,9 @@ class ImportLog(Base):
     success: Mapped[int] = mapped_column(Integer, default=0)
     failed: Mapped[int] = mapped_column(Integer, default=0)
     skipped: Mapped[int] = mapped_column(Integer, default=0)
-    detail_json: Mapped[str] = mapped_column(Text, default="[]")
+    detail_json: Mapped[str] = mapped_column(LONG_TEXT, default="[]")
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
 
 
 class TypingText(Base):
@@ -350,12 +372,12 @@ class TypingText(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     mode: Mapped[str] = mapped_column(String(16), index=True)  # english / chinese
     difficulty: Mapped[str] = mapped_column(String(16), index=True)
-    content: Mapped[str] = mapped_column(Text)
+    content: Mapped[str] = mapped_column(LONG_TEXT)
     content_hash: Mapped[str] = mapped_column(String(64), unique=True)  # 查重
     source: Mapped[str] = mapped_column(String(32), default="自定义")  # 内置 / 自定义 / 导入
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
 
 
 class Feedback(Base):
@@ -367,9 +389,9 @@ class Feedback(Base):
     author: Mapped[str] = mapped_column(String(64))
     contact: Mapped[str] = mapped_column(String(64), default="")  # 选填，方便回访
     category: Mapped[str] = mapped_column(String(16), default="建议", index=True)
-    content: Mapped[str] = mapped_column(Text)
+    content: Mapped[str] = mapped_column(LONG_TEXT)
     # 配图：本地上传的路径或外链，JSON 数组存一列。一条最多几张，不值得单开一张表。
-    images: Mapped[str] = mapped_column(Text, default="[]")
+    images: Mapped[str] = mapped_column(LONG_TEXT, default="[]")
     # 审核状态：pending 待审核 / approved 已通过 / rejected 已拒绝。
     # **新提交的一律是 pending**，管理员审过才出现在公开区 ——
     # 评论区谁都能发，先发后审的话不当内容会有一段时间挂在首页上。
@@ -377,7 +399,7 @@ class Feedback(Base):
     reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     review_note: Mapped[str] = mapped_column(String(255), default="")  # 拒绝原因，只给管理端看
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now(), index=True)
 
     replies: Mapped[list["FeedbackReply"]] = relationship(
         back_populates="feedback", cascade="all, delete-orphan", lazy="selectin",
@@ -401,8 +423,8 @@ class FeedbackReply(Base):
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     author: Mapped[str] = mapped_column(String(64), default="")
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)  # 回复时是不是管理员
-    content: Mapped[str] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    content: Mapped[str] = mapped_column(LONG_TEXT)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
 
     feedback: Mapped[Feedback] = relationship(back_populates="replies")
 
@@ -418,7 +440,7 @@ class FeedbackLike(Base):
         ForeignKey("feedbacks.id", ondelete="CASCADE"), index=True
     )
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
 
 
 class ChangelogEntry(Base):
@@ -432,9 +454,9 @@ class ChangelogEntry(Base):
     released_on: Mapped[date] = mapped_column(Date, index=True)
     # Added / Changed / Deprecated / Removed / Fixed / Security
     change_type: Mapped[str] = mapped_column(String(16), index=True)
-    content: Mapped[str] = mapped_column(Text)
+    content: Mapped[str] = mapped_column(LONG_TEXT)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
 
 
 class SimTask(Base):
@@ -452,12 +474,12 @@ class SimTask(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     kind: Mapped[str] = mapped_column(String(16), index=True)      # win / wps / html
     title: Mapped[str] = mapped_column(String(128), default="")
-    env_json: Mapped[str] = mapped_column(Text, default="{}")
-    checks_json: Mapped[str] = mapped_column(Text, default="[]")
+    env_json: Mapped[str] = mapped_column(LONG_TEXT, default="{}")
+    checks_json: Mapped[str] = mapped_column(LONG_TEXT, default="[]")
     created_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now()
+        DateTime, default=now_local, server_default=func.now(), onupdate=now_local
     )
