@@ -1,9 +1,14 @@
 """把数据库里的数据导成一份「跟版本无关」的文件夹。
 
     python -m tools.export_data /输出目录
+    python -m tools.export_data /输出目录 --no-uploads    不打配图（只要表）
 
-产物：每张表一个 `表名.jsonl`（一行一条记录），外加一份 `meta.json` 记着
-导出时间、迁移版本、每张表有哪些列和多少行。
+产物：每张表一个 `表名.jsonl`（一行一条记录），一份 `meta.json` 记着导出时间、
+迁移版本、每张表有哪些列和多少行，外加 `uploads.tar.gz`（题目配图、反馈图片、
+导入的 Excel 原件，见 tools/uploads_archive.py）。
+
+服务器（data-export.sh）和机房版（工具/数据搬家.py）导出都走这里，
+所以两边的备份长一个样，谁导给谁都认得。
 
 ## 为什么不用 mysqldump
 
@@ -40,8 +45,10 @@ from decimal import Decimal
 
 from sqlalchemy import inspect, select
 
+from app.config import settings
 from app.database import SessionLocal, engine
 from app.models import Base
+from tools import uploads_archive
 
 # 这张表不导：它记的是"目标库的表结构升到第几版了"，属于目标库自己的状态。
 # 导过去会让目标库以为自己退回了旧版本，正是上面说的那个坑。
@@ -70,7 +77,9 @@ def alembic_version(conn) -> str:
 
 
 def main() -> int:
-    out_dir = sys.argv[1] if len(sys.argv) > 1 else "/data-export"
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    out_dir = args[0] if args else "/data-export"
+    with_uploads = "--no-uploads" not in sys.argv
     tables_dir = os.path.join(out_dir, "tables")
     os.makedirs(tables_dir, exist_ok=True)
 
@@ -111,6 +120,13 @@ def main() -> int:
         with engine.connect() as conn:
             version = alembic_version(conn)
 
+        uploads = {"文件数": 0, "字节": 0, "说明": "这次没打配图（--no-uploads）"}
+        if with_uploads:
+            n, size = uploads_archive.pack(
+                settings.upload_dir, os.path.join(out_dir, "uploads.tar.gz"))
+            uploads = {"文件数": n, "字节": size}
+            print(f"  {'uploads（配图等）':<18} {n:>7} 个文件")
+
         meta = {
             "说明": (
                 "本目录由 tools/export_data.py 生成，只含数据、不含表结构、不含口令。"
@@ -119,8 +135,10 @@ def main() -> int:
             "导出时间": datetime.now().isoformat(sep=" ", timespec="seconds"),
             "来源主机": os.environ.get("HOSTNAME", ""),
             "迁移版本": version,
+            "来源数据库": engine.dialect.name,
             "表数量": len(meta_tables),
             "总行数": total_rows,
+            "配图": uploads,
             "表": meta_tables,
         }
         with open(os.path.join(out_dir, "meta.json"), "w", encoding="utf-8") as f:

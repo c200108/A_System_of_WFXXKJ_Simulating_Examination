@@ -48,6 +48,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # MySQL 上外键还挂在这一列上时删不掉列（1828 needed in a foreign key constraint），
+    # 先把外键摘掉。SQLite 走 batch 整表重建，列一删外键跟着就没了，不用单独摘
+    if op.get_bind().dialect.name == "mysql":
+        op.drop_constraint("fk_question_sim_task", "questions", type_="foreignkey")
     with op.batch_alter_table("questions") as batch:
         batch.drop_column("sim_task_id")
     op.drop_table("sim_tasks")

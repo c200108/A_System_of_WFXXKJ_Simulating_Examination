@@ -8,7 +8,8 @@
 #   tables/*.jsonl   每张表一个文件，一行一条记录（学生、教师、题库、成绩、
 #                    班级、反馈、打字记录、系统设置……一张不落）
 #   meta.json        导出时间、迁移版本、每张表有哪些列和多少行
-#   uploads.tar.gz   题目配图和导入的 Excel 原件
+#   uploads.tar.gz   题目配图、反馈图片和导入的 Excel 原件（由 tools/export_data.py 打包，
+#                    和机房版导出的是同一种格式 —— 两边的备份可以互相导）
 #   config.yaml      平台配置
 #   settings.env     端口、对外地址、镜像源（**不含任何口令**）
 #
@@ -81,6 +82,8 @@ rm -rf "$OUT/tables" "$OUT/meta.json"
 CID="$(docker compose ps -q backend)"
 docker cp "$CID:/tmp/data-export/tables" "$OUT/tables" >/dev/null || die "拷不出 tables 目录"
 docker cp "$CID:/tmp/data-export/meta.json" "$OUT/meta.json" >/dev/null || die "拷不出 meta.json"
+rm -f "$OUT/uploads.tar.gz" "$OUT/uploads.zip"
+docker cp "$CID:/tmp/data-export/uploads.tar.gz" "$OUT/uploads.tar.gz" >/dev/null 2>&1 || true
 docker compose exec -T backend rm -rf /tmp/data-export >/dev/null 2>&1
 
 # 宁可失败也不要产出一个看似成功的空备份
@@ -91,7 +94,10 @@ ok "$COUNT 张表已导出（$(du -sh "$OUT/tables" | cut -f1)）"
 
 # ---------------------------------------------------------------- 3 文件
 step "[3/5] 导出题目配图与导入原件..."
-if [ -d "$ROOT/data/uploads" ] && [ -n "$(ls -A "$ROOT/data/uploads" 2>/dev/null)" ]; then
+if [ -s "$OUT/uploads.tar.gz" ]; then
+    # 上一步 export_data.py 在容器里已经打好了（uploads 目录是挂载进容器的）
+    ok "配图已打包（$(du -h "$OUT/uploads.tar.gz" | cut -f1)）"
+elif [ -d "$ROOT/data/uploads" ] && [ -n "$(ls -A "$ROOT/data/uploads" 2>/dev/null)" ]; then
     tar czf "$OUT/uploads.tar.gz" -C "$ROOT/data" uploads || die "打包 uploads 失败"
     ok "配图已打包（$(du -h "$OUT/uploads.tar.gz" | cut -f1)）"
 else

@@ -34,6 +34,7 @@ Win7 能跑的 exe 只能用 Python 3.8 打（3.9 起 python3X.dll 要 Win7 没�
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -42,8 +43,26 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-PY32 = r"C:\Users\czr\AppData\Local\Programs\Python\Python38-32\python.exe"
-PY64 = r"C:\Users\czr\AppData\Local\Programs\Python\Python38\python.exe"
+
+
+def _find_py38(folder: str) -> str:
+    """Python 3.8.10 装在哪。不写死用户名 —— 换台电脑、换个账号照样找得到。
+
+    只给当前用户装的在 %LOCALAPPDATA%\\Programs\\Python，给所有用户装的在 Program Files。
+    都找不到就返回第一个候选，打包时会报"找不到"，那时用 --py32 / --py64 指。
+    """
+    candidates = [Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Python" / folder,
+                  Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / folder,
+                  Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / folder,
+                  Path("C:/") / folder]
+    for c in candidates:
+        if (c / "python.exe").is_file():
+            return str(c / "python.exe")
+    return str(candidates[0] / "python.exe")
+
+
+PY32 = _find_py38("Python38-32")
+PY64 = _find_py38("Python38")
 SERVER = "111.170.33.3:3315"
 
 # (build.py 产物的文件名前缀, 附件名后缀, 页面上的说明)

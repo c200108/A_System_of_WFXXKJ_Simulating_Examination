@@ -24,7 +24,7 @@
 #   2. 先把本机现有数据导一份到「回滚点」，万一导错了能退回去
 #   3. 试算：列出每张表要导多少行、有哪些版本差异
 #   4. 让你确认，然后真导
-#   5. 还原配图和 config.yaml
+#   5. 还原配图（合并：本机原有的一个不删）和 config.yaml
 #   6. 重启后端，逐表核对行数
 
 set -uo pipefail
@@ -96,6 +96,7 @@ if docker compose exec -T backend python -m tools.export_data /tmp/rollback >/de
     CID="$(docker compose ps -q backend)"
     docker cp "$CID:/tmp/rollback/tables" "$ROLLBACK/tables" >/dev/null 2>&1
     docker cp "$CID:/tmp/rollback/meta.json" "$ROLLBACK/meta.json" >/dev/null 2>&1
+    docker cp "$CID:/tmp/rollback/uploads.tar.gz" "$ROLLBACK/uploads.tar.gz" >/dev/null 2>&1
     docker compose exec -T backend rm -rf /tmp/rollback >/dev/null 2>&1
     ok "回滚点已存到 $(basename "$ROLLBACK")"
     echo "        导错了可以退回去：sudo bash scripts/data-import.sh $ROLLBACK"
@@ -110,7 +111,8 @@ CID="$(docker compose ps -q backend)"
 docker cp "$SRC" "$CID:/tmp/data-import" >/dev/null || die "拷不进容器"
 
 docker compose exec -T backend python -m tools.import_data /tmp/data-import \
-    || die "试算失败，上面是原始报错。本机数据一个字都没动。"
+    || die "试算没过，上面列了是哪些数据、哪张表哪一行。本机数据一个字都没动。
+      多半是机房版（SQLite）里有服务器（MySQL）装不下的数据 —— 去导出的那一边改好再导。"
 
 # ---------------------------------------------------------------- 4 确认
 step "[4/6] 确认操作..."
@@ -130,13 +132,11 @@ docker compose exec -T backend python -m tools.import_data /tmp/data-import --wr
 docker compose exec -T backend rm -rf /tmp/data-import >/dev/null 2>&1
 
 # ---------------------------------------------------------------- 5 文件
-step "[6/6] 还原配图与配置，重启服务..."
-if [ -s "$SRC/uploads.tar.gz" ]; then
-    mkdir -p "$ROOT/data"
-    rm -rf "$ROOT/data/uploads"
-    tar xzf "$SRC/uploads.tar.gz" -C "$ROOT/data" 2>/dev/null || true
-    mkdir -p "$ROOT/data/uploads"
-    ok "配图已还原（$(find "$ROOT/data/uploads" -type f 2>/dev/null | wc -l) 个文件）"
+step "[6/6] 还原配置，重启服务..."
+# 配图在上一步由 import_data.py 还原好了（uploads 目录是挂载进容器的）：
+# 备份里有的写进去，本机原有的一个不删。uploads.tar.gz 和机房版的 uploads.zip 都认。
+if [ -d "$ROOT/data/uploads" ]; then
+    ok "配图现有 $(find "$ROOT/data/uploads" -type f 2>/dev/null | wc -l) 个文件"
 fi
 
 if [ -s "$SRC/config.yaml" ]; then

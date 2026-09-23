@@ -17,7 +17,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(r"D:\Pythonproject\A_System_of_WFXXKJ_Simulating_Examination")
+ROOT = Path(__file__).resolve().parents[2]      # 项目根目录，不写死 —— 换台电脑也能跑
 sys.path.insert(0, str(ROOT / "backend"))
 sys.path.insert(0, str(ROOT / "desktop"))
 
