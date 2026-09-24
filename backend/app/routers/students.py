@@ -4,6 +4,11 @@
 - `/api/student/*` 给学生用，认 `get_current_student`（学生令牌）；
 - `/api/students/*` 给老师用，认 `get_current_user`（教师令牌）。
 
+**教师端按班隔离**（2.10.1 起）：管理员看全校；老师只看得到、只管得着**自己名下的班**
+（「班级」页面里 owner 是自己的班）的学生 —— 列表、导出、增改、导入、批量操作都一样。
+别的班的学生，老师连"有这个人"都看不出来（改、删一律回 404）。班级管理本身不变。
+见 `_scope` / `_mine` / `_own_class`。
+
 学生令牌过不了教师接口，教师令牌也过不了学生接口 —— 令牌里带了身份类型，
 两边各认各的（见 security.TOKEN_TEACHER / TOKEN_STUDENT）。
 
@@ -17,7 +22,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from openpyxl import Workbook
-from sqlalchemy import func, select
+from sqlalchemy import and_, false, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -40,6 +45,7 @@ from ..security import (
     hash_password,
     verify_password,
 )
+from ..routers.classes import owned_class_ids
 from ..routers.take import _submit_out as submit_out
 from ..services.exam import submission_scores
 from ..services import roster
@@ -90,6 +96,63 @@ def resolve_class(db: Session, class_id: int | None) -> SchoolClass | None:
     if not row:
         raise HTTPException(status_code=404, detail="选择的班级不存在，刷新页面看看")
     return row
+
+
+def _scope(db: Session, me: User) -> dict | None:
+    """这位老师管得着的班：{班级 id: 班级}。管理员返回 None —— 全校不设限。"""
+    ids = owned_class_ids(db, me)
+    if ids is None:
+        return None
+    if not ids:
+        return {}
+    return {c.id: c for c in db.scalars(select(SchoolClass).where(SchoolClass.id.in_(ids)))}
+
+
+def _mine(stmt, scope: dict | None):
+    """把学生查询收窄到老师自己的班。
+
+    老数据里可能有 class_id 没填、只写了班级名的学生（班级表是 2.3 才有的），
+    名字和自己的班对得上的也算。
+    """
+    if scope is None:
+        return stmt
+    if not scope:
+        return stmt.where(false())
+    names = [c.display for c in scope.values()]
+    return stmt.where(or_(
+        Student.class_id.in_(list(scope)),
+        and_(Student.class_id.is_(None), Student.student_class.in_(names)),
+    ))
+
+
+def _in_scope(row: Student, scope: dict | None) -> bool:
+    if scope is None:
+        return True
+    if row.class_id is not None:
+        return row.class_id in scope
+    return row.student_class in {c.display for c in scope.values()}
+
+
+NO_CLASS_TIP = "你名下还没有班级。请管理员在「班级」页面把班分给你，之后这里就能管自己班的学生了。"
+
+
+def _own_class(db: Session, scope: dict | None, class_id: int | None,
+               *, required: bool) -> SchoolClass | None:
+    """要把学生放进哪个班。老师只能放进自己的班，而且必须选一个 ——
+    放进"未分班"的话，他自己马上就看不到这个学生了。"""
+    cls = resolve_class(db, class_id)
+    if scope is None:
+        return cls
+    if not scope:
+        raise HTTPException(status_code=403, detail=NO_CLASS_TIP)
+    if cls is None:
+        if required:
+            raise HTTPException(status_code=400, detail="请选一个你带的班")
+        return None
+    if cls.id not in scope:
+        raise HTTPException(status_code=403,
+                            detail=f"「{cls.display}」不是你带的班，只能管自己班的学生")
+    return cls
 
 
 def initial_password(student_no: str) -> str:
@@ -469,10 +532,10 @@ def list_students(
     # 不会因为一次拿太多把表格撑卡。10000 是硬上限，防止有人误传个巨大的值
     # 把整库拉出来撑爆内存。
     limit: int = Query(10000, ge=1, le=10000),
-    _: User = Depends(get_current_user),
+    me: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    stmt = select(Student)
+    stmt = _mine(select(Student), _scope(db, me))
     if class_id is not None:
         stmt = stmt.where(Student.class_id == class_id)
     if student_class:
@@ -487,9 +550,9 @@ def list_students(
 
 
 @admin_api.get("/classes", response_model=list[str], summary="出现过的班级，供筛选下拉")
-def student_classes(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def student_classes(me: User = Depends(get_current_user), db: Session = Depends(get_db)):
     rows = db.execute(
-        select(Student.student_class)
+        _mine(select(Student.student_class), _scope(db, me))
         .where(Student.student_class != "")
         .distinct()
         .order_by(Student.student_class)
@@ -506,10 +569,10 @@ def create_student(
     if not name:
         raise HTTPException(status_code=400, detail="姓名不能为空")
 
+    cls = _own_class(db, _scope(db, me), body.class_id, required=True)
     if db.scalar(select(Student).where(Student.student_no == no)):
         raise HTTPException(status_code=400, detail=f"学号「{no}」已经有账号了")
 
-    cls = resolve_class(db, body.class_id)
     pwd = check_student_password(body.password) if body.password else initial_password(no)
     row = Student(
         student_no=no,
@@ -539,13 +602,15 @@ def batch_students(
     初始密码就是学号，学生登录后自己改。已存在的学号跳过而不是报错 ——
     名单里混进几个已建的很正常，不该因此让整批都导不进去。
     """
-    fallback = resolve_class(db, body.class_id)
+    scope = _scope(db, me)
+    fallback = _own_class(db, scope, body.class_id, required=False)
     rows = roster.paste_rows(body.text)
     if not rows:
         raise HTTPException(status_code=400, detail="名单是空的，没有可导入的内容")
     return roster.ingest(
         db, rows, me.id, fallback,
         make_password=initial_password, hash_it=hash_password,
+        allowed=scope,
     )
 
 
@@ -553,11 +618,13 @@ def batch_students(
 def update_student(
     sid: int,
     body: StudentUpdate,
-    _: User = Depends(get_current_user),
+    me: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    scope = _scope(db, me)
     row = db.get(Student, sid)
-    if not row:
+    # 别的班的学生：和不存在一个回法，连"有这个人"都不透露
+    if not row or not _in_scope(row, scope):
         raise HTTPException(status_code=404, detail="学生不存在")
 
     data = body.model_dump(exclude_unset=True)
@@ -566,7 +633,8 @@ def update_student(
 
     # 换班时显示名要跟着换，成绩筛选和导出都用那个字符串
     if "class_id" in data:
-        cls = resolve_class(db, data.pop("class_id"))
+        # 老师只能在自己的几个班之间调，调出去就管不着了
+        cls = _own_class(db, scope, data.pop("class_id"), required=True)
         row.class_id = cls.id if cls else None
         row.student_class = cls.display if cls else ""
 
@@ -584,9 +652,11 @@ def update_student(
 
 @admin_api.post("/bulk", summary="批量启用／停用／删除／重置密码")
 def bulk_students(
-    body: StudentBulkIn, _: User = Depends(get_current_user), db: Session = Depends(get_db)
+    body: StudentBulkIn, me: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
     """删除是真删，界面上要手工输入「删除」两个字才放行。
+
+    老师只能动自己班的学生：勾选里混进别的班的 id（接口被直接调用时）一律不认。
 
     删掉学生账号后，他交过的卷子和练过的字都保留（外键置空），
     只是不再挂在账号上 —— 成绩是班级资料，不该跟着账号一起消失。
@@ -595,7 +665,7 @@ def bulk_students(
     if not ids:
         raise HTTPException(status_code=400, detail="没有选中任何学生")
 
-    rows = list(db.scalars(select(Student).where(Student.id.in_(ids))))
+    rows = list(db.scalars(_mine(select(Student).where(Student.id.in_(ids)), _scope(db, me))))
     if not rows:
         raise HTTPException(status_code=404, detail="选中的学生都不存在了，刷新看看")
 
@@ -627,20 +697,20 @@ def bulk_students(
 
 
 @admin_api.get("/template.xlsx", summary="下载学生导入模板")
-def student_template(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def student_template(me: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """三列：学号、姓名、班级。
 
     班级名必须和「班级」页面里的一模一样，所以模板里直接把现有班级列出来，
     老师照着填就不会错 —— 让人凭记忆敲「七(3)班」还是「七年级3班」，
     十有八九对不上。
     """
-    classes = list(
-        db.scalars(
-            select(SchoolClass)
-            .where(SchoolClass.is_active.is_(True))
-            .order_by(SchoolClass.sort_order, SchoolClass.grade, SchoolClass.name)
-        )
-    )
+    scope = _scope(db, me)
+    stmt = select(SchoolClass).where(SchoolClass.is_active.is_(True))
+    if scope is not None:
+        # 老师的模板只列自己的班 —— 列了别人的班，照抄进去也导不进来
+        stmt = stmt.where(SchoolClass.id.in_(list(scope) or [-1]))
+    classes = list(db.scalars(
+        stmt.order_by(SchoolClass.sort_order, SchoolClass.grade, SchoolClass.name)))
     sample_class = classes[0].display if classes else "七年级1班"
 
     wb = Workbook()
@@ -727,10 +797,12 @@ def import_students(
             "表格要有「学号」「姓名」两列，第一行写表头即可。",
         )
 
-    fallback = resolve_class(db, class_id)
+    scope = _scope(db, me)
+    fallback = _own_class(db, scope, class_id, required=False)
     result = roster.ingest(
         db, rows, me.id, fallback,
         make_password=initial_password, hash_it=hash_password,
+        allowed=scope,
     )
     result["sheets_skipped"] = skipped_sheets
     return result
@@ -740,11 +812,12 @@ def import_students(
 def export_students(
     class_id: int | None = None,
     keyword: str | None = None,
-    _: User = Depends(get_current_user),
+    me: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """导出的表和导入模板同构（学号、姓名在前两列），改完能直接再导回来。"""
-    stmt = select(Student)
+    """导出的表和导入模板同构（学号、姓名在前两列），改完能直接再导回来。
+    老师只导得出自己班的学生。"""
+    stmt = _mine(select(Student), _scope(db, me))
     if class_id is not None:
         stmt = stmt.where(Student.class_id == class_id)
     if keyword:

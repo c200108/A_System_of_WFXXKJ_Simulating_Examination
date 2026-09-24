@@ -12,6 +12,11 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download } from '../api'
+import { currentUser } from '../auth'
+
+// 管理员看全校；老师只看得到、只管得着自己名下班级（「班级」页面里分到自己的班）的学生。
+// 真正拦人的在后端（routers/students.py 的 _scope），这里只是把下拉和说明对上
+const isAdmin = computed(() => currentUser.value?.role === 'admin')
 
 const rows = ref([])
 const classes = ref([])
@@ -48,7 +53,7 @@ async function load() {
     if (query.class_id) params.class_id = query.class_id
     if (query.keyword.trim()) params.keyword = query.keyword.trim()
     rows.value = await api.students(params)
-    classes.value = await api.classes()
+    classes.value = await api.classes(isAdmin.value ? {} : { mine: true })
     page.value = 1   // 换了筛选条件就回第一页，否则会停在一个空页上
   } finally {
     loading.value = false
@@ -253,6 +258,11 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
       学生用<b>学号</b>登录学生平台（网站首页），初始密码就是学号。
       系统里没有邮箱，学生忘了密码只能由老师重置。
       班级要先在「班级」页面建好，这里从下拉里选。
+      <template v-if="!isAdmin">
+        <br />这里只列<b>你带的班</b>的学生（「班级」页面里分到你名下的班），加学生、导入名单也只能进这几个班；
+        别的班的学生你看不到，也改不了。
+        <template v-if="!classes.length"><br /><b>你名下还没有班级</b>，请管理员在「班级」页面把班分给你。</template>
+      </template>
     </el-alert>
 
     <div class="bar">
@@ -355,7 +365,7 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
         <el-input v-model="form.name" placeholder="学生姓名" />
       </el-form-item>
       <el-form-item label="班级">
-        <el-select v-model="form.class_id" placeholder="选择班级" clearable style="width: 100%">
+        <el-select v-model="form.class_id" :placeholder="isAdmin ? '选择班级' : '选择你带的班（必选）'" :clearable="isAdmin" style="width: 100%">
           <el-option v-for="c in classes" :key="c.id" :label="c.display" :value="c.id" />
         </el-select>
       </el-form-item>
@@ -392,7 +402,7 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
       报错会指明是哪张表的第几行。模板自带的「填写说明」「可用班级」两页会自动跳过。<br />
       <b>班级要和「班级」页面里的名称完全一致</b>（如「七年级1班」）；写错的那一行会被跳过并报出来，
       其余行照常导入。模板的「可用班级」页里列好了所有班，照抄就不会错。<br />
-      <b>班级列留空</b>的行归到上面选的班；上面也没选就是「未分班」。<br />
+      <b>班级列留空</b>的行归到上面选的班；上面也没选就是「未分班」<template v-if="!isAdmin">（老师不能导未分班的学生，这些行会被跳过）</template>。<br />
       <b>性别</b>填「男」或「女」，<b>选填</b> —— 留空或写得认不出来都不影响建账号，
       只是那一栏空着，之后可以在列表里补。<br />
       支持 <b>.xlsx</b> 和 <b>.csv</b>（UTF-8 或 GBK 编码都认）。已存在的学号会跳过，
@@ -413,7 +423,7 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
   <el-dialog v-model="batchDlg" title="粘贴名单批量建号" width="560px">
     <el-form label-width="80px">
       <el-form-item label="班级">
-        <el-select v-model="batch.class_id" placeholder="选择班级（留空则不分班）" clearable style="width: 260px">
+        <el-select v-model="batch.class_id" :placeholder="isAdmin ? '选择班级（留空则不分班）' : '名单里没写班级的归到这个班'" clearable style="width: 260px">
           <el-option v-for="c in classes" :key="c.id" :label="c.display" :value="c.id" />
         </el-select>
       </el-form-item>
