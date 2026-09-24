@@ -80,3 +80,13 @@ def teacher_auth(client, auth):
 @pytest.fixture(scope="session")
 def teacher2_auth(client, auth):
     return _make_teacher(client, auth, "teacher_b", "乙老师", "七年级", "2班")
+
+
+@pytest.fixture(autouse=True)
+def _typing_limits_off(monkeypatch):
+    """打字防刷（2.11.0）默认关掉：别的测试一分钟里要交好几次成绩、取好几次文本，
+    也不关心交的时候打没打完一半。专门测这几条的在 test_typing_limits.py 里自己打开。"""
+    from app.siteconfig import site
+
+    for key in ("min_done_ratio", "submit_interval_sec", "passage_per_minute"):
+        monkeypatch.setattr(site.typing, key, 0)

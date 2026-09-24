@@ -556,6 +556,10 @@ class TypingConfigOut(BaseModel):
     time_limits: list[int] = []
     default_difficulty: str = "简单"
     default_limit: int = 0
+    # 防刷规则，客户端拿来提前提示（真正把关的是服务端）
+    min_done_ratio: float = 0
+    submit_interval_sec: int = 0
+    passage_per_minute: int = 0
 
 
 class TypingRecordIn(BaseModel):
@@ -571,6 +575,10 @@ class TypingRecordIn(BaseModel):
     typed_chars: int = Field(ge=0)   # 实际敲了多少（键盘模块是按键次数）
     correct_chars: int = Field(ge=0) # 其中对了多少
     duration: float = Field(ge=0)    # 秒
+    # 2.11.0 起：这段文本多长、限时几分钟（0 = 不限时，exe 就是不限时的）。
+    # 「打完一半才能交」靠这两个数判；不带的是旧版学生端，中文英文交不上来
+    target_chars: int = Field(default=0, ge=0)
+    time_limit: int = Field(default=0, ge=0)
 
 
 class TypingResultOut(BaseModel):

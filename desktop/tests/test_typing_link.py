@@ -20,8 +20,19 @@ def test_交打字成绩带上令牌和学号(monkeypatch):
 
     monkeypatch.setattr(api, "_json", fake_json)
     api.typing_submit("1.2.3.4:80", {"no": "26090101", "name": "张三", "cls": "八年级2班"},
-                      "中文", "简单", 100, 95, 60.0, token="学生令牌")
+                      "中文", "简单", 100, 95, 60.0, token="学生令牌", target=180)
 
     assert seen["url"].endswith("/api/typing/records")
     assert seen["token"] == "学生令牌", "不带令牌，服务端认不出是谁，首页永远是 0"
     assert seen["body"]["student_no"] == "26090101", "令牌过期时服务端靠学号认领"
+    assert seen["body"]["target_chars"] == 180, "服务端靠它判「打完一半没有」"
+    assert seen["body"]["time_limit"] == 0, "exe 不限时"
+
+
+def test_设备号每次都一样_服务端认得(monkeypatch):
+    """「同一台电脑每分钟只能交一次」服务端按 X-Device-Id 认电脑。按机器名和网卡算，
+    不存文件 —— 机房还原卡一重启文件就没了。"""
+    import re
+
+    assert api._device_id() == api._device_id() == api.DEVICE_ID
+    assert re.fullmatch(r"[A-Za-z0-9_-]{8,64}", api.DEVICE_ID), "格式不对服务端就当没带，退回认 IP"

@@ -11,9 +11,10 @@
 """
 
 import io
+import math
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from openpyxl import Workbook
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
@@ -32,6 +33,7 @@ from ..schemas import (
     TypingResultOut,
     TypingStatsOut,
 )
+from ..services import throttle
 from ..services.typing_texts import add_texts, build_passage, parse_txt, text_hash
 from ..siteconfig import site
 
@@ -70,29 +72,67 @@ def get_config():
         time_limits=c.time_limits,
         default_difficulty=c.default_difficulty,
         default_limit=c.default_limit,
+        min_done_ratio=c.min_done_ratio,
+        submit_interval_sec=c.submit_interval_sec,
+        passage_per_minute=c.passage_per_minute,
     )
+
+
+def _not_done(body: TypingRecordIn) -> str:
+    """中文英文没打完「一半」（min_done_ratio）就不收，返回原因；够了返回空串。
+
+    **限时练习过了一半时间也算够**：拼出来的文本有 7～9 段，英文简单难度一篇就四五百个字母，
+    1 分钟限时的练习谁也敲不完一半，只认字数的话限时练习就永远交不上了。
+    exe 不限时（time_limit=0），只认字数。键盘模块不管这一条。
+    """
+    ratio = site.typing.min_done_ratio
+    if body.module == "键盘" or ratio <= 0:
+        return ""
+    if body.target_chars <= 0:
+        return "学生端版本太旧，交不了成绩：网页刷新一下页面，exe 请老师换成新版"
+    need = math.ceil(body.target_chars * ratio)
+    if body.typed_chars >= need:
+        return ""
+    limit = body.time_limit if body.time_limit in site.typing.time_limits else 0
+    if limit and body.duration >= limit * 60 * ratio:
+        return ""
+    pct = round(ratio * 100)
+    tip = f"要打完 {pct}% 才能交成绩：这段 {body.target_chars} 字，你敲了 {body.typed_chars} 字，至少要 {need} 字"
+    if limit:
+        tip += f"（或者练满 {math.ceil(limit * ratio * 10) / 10:g} 分钟）"
+    return tip
 
 
 @router.get("/passage", summary="按难度随机取一篇练习文本（公开）")
 def get_passage(
+    request: Request,
     mode: str = Query(..., pattern="^(english|chinese)$"),
     difficulty: str = Query(...),
     db: Session = Depends(get_db),
 ):
-    """文本来自数据库，老师可在「打字」页增删改或上传 txt 批量导入。"""
+    """文本来自数据库，老师可在「打字」页增删改或上传 txt 批量导入。
+
+    同一台电脑每分钟最多取 passage_per_minute 次 —— 不限的话有人一直点「换一段」挑短的。
+    """
     _enabled()
+    who = throttle.device_of(request)
+    n = site.typing.passage_per_minute
+    throttle.check(db, "passage", who, n, 60, f"换文本太频繁了，同一台电脑每分钟最多换 {n} 次")
     text = build_passage(db, mode, difficulty)
     if not text:
         raise HTTPException(
             status_code=404,
             detail=f"「{difficulty}」难度下还没有{'英文' if mode == 'english' else '中文'}文本，请老师先在打字页添加",
         )
+    throttle.hit(db, "passage", who)
+    db.commit()
     return {"text": text}
 
 
 @router.post("/records", response_model=TypingResultOut, summary="学生交成绩（公开）")
 def submit_record(
     body: TypingRecordIn,
+    request: Request,
     me: Student | None = Depends(get_optional_student),
     db: Session = Depends(get_db),
 ):
@@ -115,6 +155,15 @@ def submit_record(
         raise HTTPException(status_code=400, detail="请填写班级和姓名")
     if body.module not in MODULES:
         raise HTTPException(status_code=400, detail=f"模块只能是 {'/'.join(MODULES)}")
+    why = _not_done(body)
+    if why:
+        raise HTTPException(status_code=400, detail=why)
+    # 放在最后判：前面几条不过的根本没交上，不该占这一分钟的名额
+    who = throttle.device_of(request)
+    gap = site.typing.submit_interval_sec
+    throttle.check(db, "submit", who, 1, gap,
+                   f"交得太快了，同一台电脑每 {gap} 秒只能交一次成绩" if gap != 60
+                   else "交得太快了，同一台电脑每分钟只能交一次成绩")
 
     typed = max(0, body.typed_chars)
     correct = max(0, min(body.correct_chars, typed))
@@ -138,6 +187,7 @@ def submit_record(
         stars=stars,
     )
     db.add(rec)
+    throttle.hit(db, "submit", who)
     db.commit()
 
     return TypingResultOut(

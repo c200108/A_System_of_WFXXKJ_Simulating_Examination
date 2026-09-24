@@ -664,6 +664,88 @@ def test_typing_needs_something_typed(app, server, exam):
     assert "先敲几个字" in shell.body.live.cget("text")
 
 
+def test_刷新按钮3秒只能点一次(app, server, exam):
+    """一个机房几十个人一起狂点刷新，每点一下就把这一页的接口全打一遍。"""
+    shell = signed_in(app, server)
+    shell.go("exam")
+    shell.refresh()
+    once = shell.body
+    assert str(shell.refresh_btn["state"]) == "disabled"
+    shell.refresh()
+    assert shell.body is once, "3 秒内又刷了一次"
+    assert settle(app, 5, until=lambda: str(shell.refresh_btn["state"]) == "normal"),         "3 秒过了按钮没放开"
+    shell.refresh()
+    assert shell.body is not once
+
+
+def test_打字没打完一半交不了(app, server, exam, typing_limits_on):
+    shell = signed_in(app, server)
+    shell.go("typing")
+    page = shell.body
+    assert settle(app, until=lambda: page.passage), page.msg.cget("text")
+    assert page.ratio == 0.5, "规则要从服务端配置里拿"
+    page.entry.insert("end", page.passage[:5])
+    page.started = time.time() - 5
+    page.submit()
+    assert "还没打完 50%" in page.live.cget("text")
+    assert str(page.submit_btn["state"]) == "normal", "没交出去，按钮不该锁"
+
+
+def _half(page):
+    return page.passage[: -(-len(page.passage) // 2)]
+
+
+def test_打字一分钟只能交一次_挡回来的那次停表等着自动交(app, server, exam, typing_limits_on):
+    from conftest import age_rate_hits
+
+    shell = signed_in(app, server, "26090113")
+    before = api.home(server, app.token)["typing_count"]
+    shell.go("typing")
+    page = shell.body
+    assert settle(app, until=lambda: page.passage), page.msg.cget("text")
+    page.entry.insert("end", _half(page))
+    page.started = time.time() - 60
+    page.submit()
+    assert settle(app, until=lambda: "已记录" in page.live.cget("text")), page.live.cget("text")
+
+    page.started = time.time() - 50
+    page.submit()
+    assert settle(app, until=lambda: page.frozen), page.live.cget("text")
+    assert "秒后自动交" in page.live.cget("text")
+    assert str(page.entry["state"]) == "disabled" and page.started is None, "等的时候要停表、锁输入框"
+    assert str(page.submit_btn["state"]) == "disabled"
+
+    age_rate_hits(61)
+    page.wait_then_send(0)                 # 当作倒数到了
+    assert settle(app, until=lambda: "已记录" in page.live.cget("text")), page.live.cget("text")
+    assert page.frozen is None and str(page.entry["state"]) == "normal"
+    assert api.home(server, app.token)["typing_count"] == before + 2, "扣着的那次没交上去"
+
+
+def test_取过的文本记着_只有换一段才去要新的_每分钟最多三次(app, server, exam, typing_limits_on):
+    shell = signed_in(app, server)
+    shell.go("typing")
+    page = shell.body
+    assert settle(app, until=lambda: page.passage), page.msg.cget("text")
+    first = page.passage
+
+    # 刷新、来回切页都不该再占次数
+    shell.go("home")
+    shell.go("typing")
+    page = shell.body
+    assert settle(app, until=lambda: page.passage)
+    assert page.passage == first, "切回来应该还是刚才那段"
+
+    for _ in range(2):                     # 第 2、3 次
+        page.fetch(fresh=True)
+        assert settle(app, until=lambda: str(page.swap_btn["state"]) == "normal")
+    kept = page.passage
+    page.fetch(fresh=True)                 # 第 4 次：被挡
+    assert settle(app, until=lambda: "秒后可换" in page.swap_btn.cget("text")),         page.msg.cget("text")
+    assert "每分钟最多换 3 次" in page.msg.cget("text")
+    assert page.passage == kept, "被挡回来不该把手上这段弄没"
+
+
 # ================================================================ 离线后路
 def test_offline_needs_a_number(app, server, exam, monkeypatch, tmp_path):
     raw = api.fetch_exam(server, exam["exam"]["token"], tmp_path / "离线.ekb")

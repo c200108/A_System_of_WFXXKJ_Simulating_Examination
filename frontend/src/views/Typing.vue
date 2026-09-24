@@ -10,7 +10,7 @@
  * 三个原始量 —— 改评分标准不用重新构建前端。
  */
 import { computed, onMounted, onUnmounted, reactive, ref, nextTick } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
 
 // 键盘五排，和原页面一致
@@ -52,6 +52,9 @@ const elapsed = ref(0)
 const leftSec = ref(0)
 let timer = null
 let startedAt = 0
+// 同一台电脑每分钟只能交一次成绩（2.11.0）：被挡回来的那次先扣着，倒数完自动再交
+const waitLeft = ref(0)
+let waitTimer = null
 
 // ---------- 认识键盘 ----------
 const kb = reactive({ row: 0, ci: 0, total: 0, correct: 0, status: [] })
@@ -203,10 +206,6 @@ async function start() {
   }
   localStorage.setItem(LS_KEY, JSON.stringify({ n: me.student_name, c: me.student_class }))
 
-  result.value = null
-  elapsed.value = 0
-  leftSec.value = me.limit * 60
-
   if (mode.value === 'keyboard') {
     resetKb()
     kbTip.value = `请按下 ${KB_LABEL[0][0]} 键`
@@ -215,6 +214,7 @@ async function start() {
       const res = await api.typingPassage(mode.value, me.difficulty)
       target.value = res.text
     } catch {
+      // 换文本太勤被挡（每分钟最多三次）之类：上一次的成绩卡片留着，别先清掉
       return
     }
     typed.value = ''
@@ -222,14 +222,52 @@ async function start() {
     inputRef.value?.focus()
   }
 
+  result.value = null
+  elapsed.value = 0
+  leftSec.value = me.limit * 60
   running.value = true
   startedAt = Date.now()
   clearInterval(timer)
   timer = setInterval(tick, 300)
 }
 
-async function finish() {
+/**
+ * 中文英文要打完一半（min_done_ratio）才能交；限时练习练满一半时间也算。
+ * 服务端也判，这里先判是为了在点「结束」的时候就说清楚，别白交一次。够了返回空串。
+ */
+function shortOf(secs) {
+  const ratio = conf.value?.min_done_ratio || 0
+  if (mode.value === 'keyboard' || ratio <= 0) return ''
+  const need = Math.ceil(target.value.length * ratio)
+  if (typed.value.length >= need) return ''
+  if (me.limit && secs >= me.limit * 60 * ratio) return ''
+  const mins = Math.ceil(me.limit * ratio * 10) / 10
+  return `还没打完 ${Math.round(ratio * 100)}%：这段 ${target.value.length} 字，已敲 ${typed.value.length} 字，` +
+    `至少要 ${need} 字${me.limit ? `（或者练满 ${mins} 分钟）` : ''}`
+}
+
+// manual：学生自己点的「结束并交成绩」。到时间、敲完了自动结束的不走确认
+async function finish(manual = false) {
   if (!running.value) return
+  if (manual === true) {
+    const short = shortOf((Date.now() - startedAt) / 1000)
+    if (short) {
+      try {
+        await ElMessageBox.confirm(`${short}。现在结束的话这次不记成绩，确定结束吗？`, '还不能交成绩', {
+          confirmButtonText: '结束，不记成绩',
+          cancelButtonText: '接着练',
+          type: 'warning'
+        })
+      } catch {
+        return inputRef.value?.focus()
+      }
+      // 对话框开着的时候可能已经到点自动交了
+      if (!running.value) return
+      running.value = false
+      clearInterval(timer)
+      return
+    }
+  }
   running.value = false
   clearInterval(timer)
   const secs = (Date.now() - startedAt) / 1000
@@ -240,19 +278,41 @@ async function finish() {
       : {
           module: mode.value === 'english' ? '英文' : '中文',
           typed_chars: typed.value.length,
-          correct_chars: correctCount.value
+          correct_chars: correctCount.value,
+          // 服务端靠这两个判「打完一半没有」
+          target_chars: target.value.length,
+          time_limit: me.limit
         }
 
+  await send({
+    student_name: me.student_name.trim(),
+    student_class: me.student_class.trim(),
+    difficulty: me.difficulty,
+    duration: secs,
+    ...payload
+  })
+}
+
+async function send(payload) {
   try {
-    result.value = await api.typingSubmit({
-      student_name: me.student_name.trim(),
-      student_class: me.student_class.trim(),
-      difficulty: me.difficulty,
-      duration: secs,
-      ...payload
-    })
-  } catch {
-    ElMessage.error('成绩上传失败，请截图保存后告诉老师')
+    result.value = await api.typingSubmit(payload)
+  } catch (err) {
+    const st = err?.response?.status
+    if (st === 429) {
+      // 同一台电脑一分钟只能交一次：这次的成绩留着，倒数完自动再交，不用重练
+      waitLeft.value = Number(err.response.headers?.['retry-after']) || 60
+      clearInterval(waitTimer)
+      waitTimer = setInterval(() => {
+        waitLeft.value -= 1
+        if (waitLeft.value <= 0) {
+          clearInterval(waitTimer)
+          send(payload)
+        }
+      }, 1000)
+    } else if (!st || st >= 500) {
+      ElMessage.error('成绩上传失败，请截图保存后告诉老师')
+    }
+    // 其余（没打完一半、学生端太旧）拦截器已经把后端写好的原因弹出来了
   }
 }
 
@@ -367,10 +427,10 @@ onUnmounted(() => {
           </template>
           <div class="seg"><span>剩余</span><b>{{ fmt(leftSec) }}</b></div>
           <div class="grow" />
-          <el-button type="primary" :disabled="running" @click="start">
+          <el-button type="primary" :disabled="running || waitLeft > 0" @click="start">
             {{ result ? '再练一次' : '开始' }}
           </el-button>
-          <el-button v-if="running" @click="finish">结束并交成绩</el-button>
+          <el-button v-if="running" @click="finish(true)">结束并交成绩</el-button>
         </template>
       </div>
 
@@ -452,6 +512,9 @@ onUnmounted(() => {
       </div>
 
       <!-- 成绩 -->
+      <div v-if="waitLeft > 0" class="waitbar">
+        同一台电脑每分钟只能交一次成绩。这次的成绩已经留好，<b>{{ waitLeft }}</b> 秒后自动交，不用重练，也别关这个页面。
+      </div>
       <div v-if="result" class="result">
         <h3>本次成绩 · {{ result.module }}</h3>
         <div class="grid">
@@ -737,6 +800,15 @@ h1 small {
   text-align: center;
   color: var(--el-text-color-secondary);
   padding: 50px 0;
+}
+.waitbar {
+  margin: 0 20px 20px;
+  padding: 12px 18px;
+  border-radius: 11px;
+  font-size: 13.5px;
+  background: var(--el-color-warning-light-9);
+  border: 1px solid var(--el-color-warning-light-5);
+  color: var(--el-text-color-regular);
 }
 .result {
   margin: 0 20px 20px;
