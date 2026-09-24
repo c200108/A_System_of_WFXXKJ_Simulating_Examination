@@ -199,6 +199,10 @@ typing:
   default_limit: 3
   passages_per_round: [7, 9] # 每次从文本库随机抽这么多段拼成长文
   three_star_min_speed: 18 # 简单难度之外，三星还要求速度达到这个值
+  # 防刷：「同一台电脑」认浏览器里存的设备号 / exe 按本机网卡算的号，都没有就认 IP。填 0 = 不限
+  min_done_ratio: 0.5 # 中文英文至少打完这么多（0.5 = 一半）才能交；限时练习练满这么多时间也算
+  submit_interval_sec: 60 # 同一台电脑两次交成绩至少隔多少秒
+  passage_per_minute: 3 # 同一台电脑每分钟最多换几次练习文本（exe 的「换一段」、网页的「开始」都算）
   star_thresholds: # 正确率达到 base 给两星，base+12 给三星
     简单: 68
     中等: 80

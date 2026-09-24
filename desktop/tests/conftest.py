@@ -57,6 +57,48 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+@pytest.fixture(autouse=True)
+def typing_limits_off(monkeypatch):
+    """打字防刷（2.11.0）自检里默认关掉：整套自检都是**同一台电脑**（同一个设备号），
+    一分钟里要交好几次、取好几次文本；很多用例也只敲几个字就交。
+    专门测这几条的用例自己用 `typing_limits_on` 打开。"""
+    from app.siteconfig import site
+
+    for key in ("min_done_ratio", "submit_interval_sec", "passage_per_minute"):
+        monkeypatch.setattr(site.typing, key, 0)
+
+
+@pytest.fixture
+def typing_limits_on(monkeypatch):
+    """按 config.yaml 的默认值打开防刷，并清掉前面用例留下的计数。"""
+    from sqlalchemy import delete
+
+    from app.database import SessionLocal
+    from app.models import RateHit
+    from app.siteconfig import site
+
+    monkeypatch.setattr(site.typing, "min_done_ratio", 0.5)
+    monkeypatch.setattr(site.typing, "submit_interval_sec", 60)
+    monkeypatch.setattr(site.typing, "passage_per_minute", 3)
+    with SessionLocal() as db:
+        db.execute(delete(RateHit))
+        db.commit()
+
+
+def age_rate_hits(seconds: int) -> None:
+    """把限频计数往前挪，等于时间过去了这么久 —— 自检里不真的等一分钟。"""
+    from datetime import timedelta
+
+    from sqlalchemy import update
+
+    from app.database import SessionLocal
+    from app.models import RateHit
+
+    with SessionLocal() as db:
+        db.execute(update(RateHit).values(at=RateHit.at - timedelta(seconds=seconds)))
+        db.commit()
+
+
 @pytest.fixture(scope="session")
 def server():
     """一个真的后端，跑在 127.0.0.1 的随机端口上，库是临时的。"""

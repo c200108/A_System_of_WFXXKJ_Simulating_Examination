@@ -26,6 +26,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 import tkinter as tk
 from pathlib import Path
@@ -342,17 +343,35 @@ class ShellFrame(ttk.Frame):
                          "typing": TypingPage}[key](self.holder, self.app)
         self.body.pack(fill="both", expand=True)
 
+    REFRESH_GAP = 3          # 秒：两次刷新至少隔这么久
+
     def refresh(self):
         """重新拉一遍当前页的数据。
 
         考试是老师随时发布的 —— 学生已经登录着，不该为了看见新考试去重开程序。
+
+        **3 秒内只能点一次**：每点一下就把这一页的接口全打一遍，一个机房几十个人
+        一起狂点，服务器就是被这么点慢的。
         """
+        if str(self.refresh_btn["state"]) == "disabled":
+            return
         self.refresh_btn.config(state="disabled", text="刷新中")
         self.hint.config(text="")
         self.update_idletasks()
         self.go(self.page)
-        self.refresh_btn.config(state="normal", text="刷 新")
+        self.refresh_btn.config(text="刷 新")
         self.hint.config(text=f"已更新 {time.strftime('%H:%M:%S')}")
+        self._refresh_job = self.after(self.REFRESH_GAP * 1000, self._refresh_ready)
+
+    def _refresh_ready(self):
+        self._refresh_job = None
+        self.refresh_btn.config(state="normal")
+
+    def destroy(self):
+        # 退出登录时「3 秒后恢复刷新」的定时器还挂着的话，到点会去碰一个已经没了的按钮
+        if getattr(self, "_refresh_job", None):
+            self.after_cancel(self._refresh_job)
+        super().destroy()
 
 
 class Page(tk.Frame):
@@ -665,6 +684,12 @@ class TypingPage(Page):
 
     速度、正确率、星级**一律由后端算** —— 客户端只报"敲了多少、对了多少、
     用了多久"，和网页端一个口径，两边的成绩才能放进同一张表里比。
+
+    防刷（服务端把关，这里提前说清楚）：
+    - 要打完一半（config.yaml 的 min_done_ratio）才能交；
+    - 同一台电脑每分钟只能交一次 —— 被挡回来的那次**先扣着、停表**，倒数完自动再交，不用重敲；
+    - 同一台电脑每分钟最多换三次文本 —— 所以取过的文本记在 app 上，刷新、切页、
+      来回切模式都不重新取，只有点「换一段」才去要新的。
     """
 
     # 只做中文和英文：取练习文本的接口就这两种。网页端还有一个「键盘」模块，
@@ -674,6 +699,9 @@ class TypingPage(Page):
     def load(self):
         self.started = None
         self.passage = ""
+        self.ratio = 0.0             # 打完多少才能交，从服务端配置来；旧服务端没有这项就是 0
+        self.frozen = None           # 被「每分钟只能交一次」挡回来、等着自动再交的那一次
+        self.jobs = []               # 倒数用的 after，离开这一页时一起取消
         self.mode = tk.StringVar(value="中文")
         self.level = tk.StringVar(value="")
 
@@ -690,8 +718,9 @@ class TypingPage(Page):
                                       state="readonly")
         self.level_box.pack(side="left")
         self.level_box.bind("<<ComboboxSelected>>", lambda _e: self.fetch())
-        tk.Button(bar, text="换一段", font=(FONT, 9), relief="groove",
-                  command=self.fetch).pack(side="left", padx=10)
+        self.swap_btn = tk.Button(bar, text="换一段", font=(FONT, 9), relief="groove",
+                                  command=lambda: self.fetch(fresh=True))
+        self.swap_btn.pack(side="left", padx=10)
 
         c = self.card()
         self.text_view = tk.Text(c, height=5, font=(FONT, 12), wrap="word",
@@ -710,12 +739,25 @@ class TypingPage(Page):
 
         row = tk.Frame(self.box, bg=BG)
         row.pack(fill="x", pady=10)
-        self.live = tk.Label(row, text="还没开始", bg=BG, fg=GRAY, font=(FONT, 10))
+        self.live = tk.Label(row, text="还没开始", bg=BG, fg=GRAY, font=(FONT, 10),
+                             wraplength=620, justify="left")
         self.live.pack(side="left")
-        tk.Button(row, text="交成绩", bg=BLUE, fg="white", font=(FONT, 10, "bold"),
-                  relief="flat", cursor="hand2", command=self.submit
-                  ).pack(side="right", ipadx=14, ipady=3)
+        self.submit_btn = tk.Button(row, text="交成绩", bg=BLUE, fg="white",
+                                    font=(FONT, 10, "bold"), relief="flat",
+                                    cursor="hand2", command=self.submit)
+        self.submit_btn.pack(side="right", ipadx=14, ipady=3)
         self.load_levels()
+
+    def later(self, ms: int, fn):
+        self.jobs.append(self.after(ms, fn))
+
+    def destroy(self):
+        for job in self.jobs:
+            try:
+                self.after_cancel(job)
+            except tk.TclError:
+                pass
+        super().destroy()
 
     def load_levels(self):
         """难度是后端配的（config.yaml），**不在客户端写死** —— 学校改了难度分档，
@@ -724,35 +766,62 @@ class TypingPage(Page):
             if err:
                 return self.msg.config(text=err, fg=RED)
             levels = list((got or {}).get("difficulties") or [])
+            self.ratio = float((got or {}).get("min_done_ratio") or 0)
             self.level_box.config(values=levels)
             self.level.set((got or {}).get("default_difficulty") or
                            (levels[0] if levels else ""))
             self.fetch()
         in_thread(self, lambda: api.typing_config(self.app.server), done)
 
-    def fetch(self):
-        self.msg.pack(anchor="w", padx=28, pady=(14, 0))
-        self.msg.config(text="正在取练习文本…", fg=GRAY)
-
-        def done(got, err):
-            if err:
-                return self.msg.config(text=err, fg=RED)
-            self.msg.pack_forget()
-            self.passage = str(got or "")
-            self.text_view.config(state="normal")
-            self.text_view.delete("1.0", "end")
-            self.text_view.insert("end", self.passage or "（这个模式还没有练习文本）")
-            self.text_view.config(state="disabled")
-            self.entry.delete("1.0", "end")
-            self.started = None
-            self.live.config(text="还没开始", fg=GRAY)
+    def fetch(self, fresh: bool = False):
+        """取练习文本。fresh=True 是点了「换一段」，一定去要新的；别的时候取过就用取过的。"""
         # **Tk 变量要在主线程读好再传进去。** 写成
         # `lambda: api.typing_passage(..., self.mode.get())` 的话，那个 .get()
         # 是在工作线程里执行的 —— 那是从非主线程碰 Tcl，直接报
         # "main thread is not in main loop"，而且错误被吞在回调里，界面只会
         # 一直停在"正在加载"。踩过。
         mode, level = self.mode.get(), self.level.get()
+        kept = self.app.typing_cache.get((mode, level))
+        if kept and not fresh:
+            return self.show(kept)
+
+        self.msg.pack(anchor="w", padx=28, pady=(14, 0))
+        self.msg.config(text="正在取练习文本…", fg=GRAY)
+        self.swap_btn.config(state="disabled")
+
+        def done(got, err):
+            if err:
+                if not fresh:
+                    # 切了模式却没取到：不能还摆着上一个模式的文本，交上去就对不上了
+                    self.show("", "（没取到练习文本，过一会儿点「换一段」再试）")
+                self.msg.pack(anchor="w", padx=28, pady=(14, 0))
+                self.msg.config(text=err, fg=RED)
+                return self.hold_swap(getattr(err, "wait", 0))
+            text = str(got or "")
+            if text:
+                self.app.typing_cache[(mode, level)] = text
+            self.show(text)
+            self.hold_swap(0)
         in_thread(self, lambda: api.typing_passage(self.app.server, mode, level), done)
+
+    def show(self, text: str, empty: str = "（这个模式还没有练习文本）"):
+        self.msg.pack_forget()
+        self.passage = text
+        self.text_view.config(state="normal")
+        self.text_view.delete("1.0", "end")
+        self.text_view.insert("end", text or empty)
+        self.text_view.config(state="disabled")
+        if not self.frozen:
+            self.entry.delete("1.0", "end")
+            self.started = None
+            self.live.config(text="还没开始", fg=GRAY)
+
+    def hold_swap(self, wait: int):
+        """「换一段」被服务端挡了（每分钟最多三次）就在按钮上倒数，到点再放开。"""
+        if wait <= 0:
+            return self.swap_btn.config(state="normal", text="换一段")
+        self.swap_btn.config(state="disabled", text=f"{wait} 秒后可换")
+        self.later(1000, lambda: self.hold_swap(wait - 1))
 
     def on_key(self, _event=None):
         # 第一下敲键才开始计时 —— 从取到文本就计时的话，学生看题的时间也算进去了
@@ -770,13 +839,40 @@ class TypingPage(Page):
                               f"用时 {int(used)} 秒", fg=GRAY)
 
     def submit(self):
+        if self.frozen:
+            return
         typed = self.entry.get("1.0", "end-1c")
         if self.started is None or not typed.strip():
             return self.live.config(text="先敲几个字再交", fg=AMBER)
+        if not self.passage:
+            return self.live.config(text="还没取到练习文本", fg=AMBER)
+        need = math.ceil(len(self.passage) * self.ratio) if self.ratio > 0 else 0
+        if len(typed) < need:
+            return self.live.config(
+                text=f"还没打完 {round(self.ratio * 100)}%：这段 {len(self.passage)} 字，"
+                     f"已敲 {len(typed)} 字，至少要 {need} 字才能交", fg=AMBER)
         right = sum(1 for a, b in zip(typed, self.passage) if a == b)
         used = max(0.001, time.time() - self.started)
+        # 同上：Tk 变量在主线程里读好
+        self.send((self.mode.get(), self.level.get(), len(typed), right, used,
+                   len(self.passage)))
+
+    def send(self, got_now: tuple):
+        mode, level, typed, right, used, target = got_now
+        self.submit_btn.config(state="disabled")
 
         def done(got, err):
+            wait = getattr(err, "wait", 0) if err else 0
+            if wait:
+                # 同一台电脑每分钟只能交一次：这次的成绩扣着、停表（等的这几十秒不算用时），
+                # 输入框先锁上，倒数完自动再交
+                self.frozen = got_now
+                self.started = None
+                self.entry.config(state="disabled")
+                return self.wait_then_send(wait)
+            self.frozen = None
+            self.entry.config(state="normal")
+            self.submit_btn.config(state="normal")
             if err:
                 return self.live.config(text=err, fg=RED)
             got = got or {}
@@ -785,10 +881,16 @@ class TypingPage(Page):
                      f"{got.get('accuracy', 0)}%　{'★' * int(got.get('stars', 0) or 0)}",
                 fg=GREEN)
             self.started = None
-        mode, level = self.mode.get(), self.level.get()      # 同上：主线程里读
         in_thread(self, lambda: api.typing_submit(
             self.app.server, self.app.student, mode, level,
-            len(typed), right, used, token=self.app.token), done)
+            typed, right, used, token=self.app.token, target=target), done)
+
+    def wait_then_send(self, wait: int):
+        if wait <= 0:
+            return self.send(self.frozen)
+        self.live.config(text=f"同一台电脑每分钟只能交一次成绩。这次的成绩已经留好，"
+                              f"{wait} 秒后自动交，不用重敲，先别离开这一页", fg=AMBER)
+        self.later(1000, lambda: self.wait_then_send(wait - 1))
 
 
 # ================================================================ 应用
@@ -803,6 +905,9 @@ class ExamApp:
         self.root.minsize(900, 620)
         self.root.configure(bg=BG)
         self.package: package.ExamPackage | None = None
+        # 打字练习取过的文本 {(模式, 难度): 正文}：服务端每台电脑每分钟只给换三次，
+        # 刷新、切页都重新取的话几下就用完了。见 TypingPage
+        self.typing_cache: dict = {}
         self.pictures: dict = {}          # 题目配图：{包里的文件名: 本地路径}
         self.student: dict = {}
         self.token = ""

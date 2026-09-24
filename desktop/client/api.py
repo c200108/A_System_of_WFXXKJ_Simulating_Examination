@@ -33,13 +33,16 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import http.client
 import json
+import platform
 import socket
 import threading
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 
 TIMEOUT = 15
@@ -118,7 +121,26 @@ class ApiError(Exception):
     """服务器明确拒绝了（口令不对、名单里没这个人、考试关了……）。
 
     message 是可以**原样显示给学生**的一句话 —— 后端的 detail 都是中文写好的。
+    retry_after：服务器说「过几秒再来」（429，打字交得太快、换文本太勤）时的秒数，别的是 0。
     """
+
+    def __init__(self, message: str = "", retry_after: int = 0):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def _device_id() -> str:
+    """这台电脑的设备号，放在 X-Device-Id 里：打字「同一台电脑每分钟只能交一次、
+    最多换三次文本」服务端按它认电脑。
+
+    按机器名 + 网卡地址算，**不存文件** —— 机房的还原卡一重启文件就没了，换一版 exe
+    也还是同一个号。不用 IP：线上服务器那边整个机房一个出口 IP，认 IP 就成了全机房一起限。
+    """
+    raw = f"{platform.node()}|{uuid.getnode():012x}"
+    return "pc-" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:24]
+
+
+DEVICE_ID = _device_id()
 
 
 def norm(server: str) -> str:
@@ -160,7 +182,8 @@ def _request(url: str, body: dict | None = None, timeout: int = TIMEOUT,
                # **主动要压缩。** 不发这个头，服务器就把 JSON 原样发过来 ——
                # nginx 明明配了 gzip 却用不上。实测 16 KB 的响应压完只剩 6 KB
                "Accept-Encoding": "gzip",
-               "Connection": "keep-alive"}
+               "Connection": "keep-alive",
+               "X-Device-Id": DEVICE_ID}
     if data is not None:
         headers["Content-Type"] = "application/json; charset=utf-8"
     if token:
@@ -196,7 +219,11 @@ def _request(url: str, body: dict | None = None, timeout: int = TIMEOUT,
             detail = json.loads(raw.decode("utf-8", "replace")).get("detail")
         except Exception:                                   # noqa: BLE001
             detail = ""
-        raise ApiError(str(detail or f"服务器拒绝了（{resp.status}）"))
+        try:
+            wait = int(resp.headers.get("Retry-After") or 0) if resp.status == 429 else 0
+        except ValueError:
+            wait = 0
+        raise ApiError(str(detail or f"服务器拒绝了（{resp.status}）"), retry_after=wait)
 
     global _last_etag
     _last_etag = (resp.headers.get("ETag") or "").strip('"')
@@ -368,7 +395,8 @@ def typing_passage(server: str, module: str, difficulty: str) -> str:
 
 
 def typing_submit(server: str, student: dict, module: str, difficulty: str,
-                  typed: int, correct: int, seconds: float, token: str = "") -> dict:
+                  typed: int, correct: int, seconds: float, token: str = "",
+                  target: int = 0) -> dict:
     """交一次打字成绩。**速度、正确率、星级都由后端算** —— 客户端只报原始量，
     和网页端一个口径，免得两边算法飘开。
 
@@ -379,6 +407,9 @@ def typing_submit(server: str, student: dict, module: str, difficulty: str,
 
     两样都带是有意的：令牌是正经凭据，但它会过期（默认 12 小时）；练了一下午
     再交的时候令牌可能已经失效，这时服务端按学号认领，和交卷那条路一个写法。
+
+    target 是这段文本有多长：服务端要打完一半（min_done_ratio）才收，靠它判。
+    exe 不限时，time_limit 固定报 0。
     """
     return _json(f"{norm(server)}/api/typing/records", {
         "student_name": student.get("name", ""),
@@ -387,4 +418,5 @@ def typing_submit(server: str, student: dict, module: str, difficulty: str,
         "module": module, "difficulty": difficulty,
         "typed_chars": int(typed), "correct_chars": int(correct),
         "duration": float(seconds),
+        "target_chars": int(target), "time_limit": 0,
     }, token=token)

@@ -53,7 +53,7 @@ from tools import uploads_archive
 
 # 这张表不导：它记的是"目标库的表结构升到第几版了"，属于目标库自己的状态。
 # 导过去会让目标库以为自己退回了旧版本，正是上面说的那个坑。
-SKIP_TABLES = {"alembic_version", "app_meta"}
+SKIP_TABLES = {"alembic_version", "app_meta", "rate_hits"}
 
 
 def encode(value):

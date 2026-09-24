@@ -24,9 +24,33 @@ function pickToken(url) {
   return localStorage.getItem(onTeacherSide ? 'token' : 'studentToken')
 }
 
+/**
+ * 这台电脑的设备号：打字「每分钟只能交一次、最多换三次文本」按它认电脑（2.11.0）。
+ *
+ * 不用 IP —— 线上服务器那边，整个机房走一个出口 IP，认 IP 就成了全机房每分钟只能交一次。
+ * 存在浏览器里，第一次用的时候随手生成。crypto.randomUUID 只在 https 下有，
+ * 机房是 http，所以用 getRandomValues 自己拼。localStorage 用不了（隐私模式）就每次现生成，
+ * 大不了这台电脑少受点限制。
+ */
+function deviceId() {
+  try {
+    let id = localStorage.getItem('deviceId')
+    if (!/^[A-Za-z0-9_-]{8,64}$/.test(id || '')) {
+      const bytes = crypto.getRandomValues(new Uint8Array(16))
+      id = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
+      localStorage.setItem('deviceId', id)
+    }
+    return id
+  } catch {
+    return ''
+  }
+}
+
 http.interceptors.request.use(config => {
   const token = pickToken(config.url)
   if (token) config.headers.Authorization = `Bearer ${token}`
+  const dev = deviceId()
+  if (dev) config.headers['X-Device-Id'] = dev
   return config
 })
 

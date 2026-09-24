@@ -179,6 +179,21 @@ def open_in_system(path: Path) -> str:
         return f"打不开：{exc}"
 
 
+class Why(str):
+    """in_thread 交给回调的出错原因：就是一句中文，照旧当字符串用。
+
+    多带一个 wait：服务器说「过 N 秒再来」（429）时的秒数，别的是 0。
+    """
+
+    wait = 0
+
+
+def _why(text: str, wait: int = 0) -> Why:
+    got = Why(text)
+    got.wait = wait
+    return got
+
+
 def in_thread(widget, work, then, every: int = 60):
     """把慢活儿丢到后台线程，结果回主线程处理。
 
@@ -196,9 +211,9 @@ def in_thread(widget, work, then, every: int = 60):
         try:
             box.put((work(), ""))
         except api.ApiError as exc:
-            box.put((None, str(exc)))
+            box.put((None, _why(str(exc), getattr(exc, "retry_after", 0))))
         except Exception as exc:                            # noqa: BLE001
-            box.put((None, f"出错了：{exc}"))
+            box.put((None, _why(f"出错了：{exc}")))
 
     def poll():
         try:

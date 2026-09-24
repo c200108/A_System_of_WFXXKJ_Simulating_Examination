@@ -488,6 +488,22 @@ class SimTask(Base):
     )
 
 
+class RateHit(Base):
+    """「这台电脑」做过的一次限频动作（打字交成绩、换文本），见 services/throttle.py。
+
+    后端开了好几个工作进程，计数放内存里各算各的等于没限，所以落库。
+    只留最近一小时，**不跟着数据导出导入**。
+    """
+
+    __tablename__ = "rate_hits"
+    __table_args__ = (Index("ix_rate_hits_lookup", "action", "who", "at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    action: Mapped[str] = mapped_column(String(16))
+    who: Mapped[str] = mapped_column(String(80))
+    at: Mapped[datetime] = mapped_column(DateTime)
+
+
 class AppMeta(Base):
     """这台机器自己的几项状态（键值对）。**不跟着数据导出导入**（见 tools/export_data.py）。
 
