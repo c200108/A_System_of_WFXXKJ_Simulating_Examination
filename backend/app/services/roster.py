@@ -211,11 +211,15 @@ THROTTLE = 0.25
 
 
 def ingest(db: Session, rows: list[Row], me_id: int, fallback: SchoolClass | None,
-           *, make_password, hash_it) -> dict:
+           *, make_password, hash_it, allowed: dict | None = None) -> dict:
     """把解析好的行灌进库。上传表格和粘贴名单共用这一段。
 
     make_password / hash_it 由调用方传进来，纯粹为了让这个模块不依赖
     security 和业务常量，测试时也能塞个快的假实现进来。
+
+    allowed：老师管得着的班 {id: 班级}，None 表示不限（管理员）。给了的话，
+    名单里写的是别人的班、或者一个班都没写（又没选默认班）的行都导不进来 ——
+    老师建的学生必须落在自己的班里，不然建完他自己就看不到了。
     """
     import time
 
@@ -224,7 +228,9 @@ def ingest(db: Session, rows: list[Row], me_id: int, fallback: SchoolClass | Non
     # 猜来猜去反而会把学生塞进错的班。
     all_classes = list(db.scalars(select(SchoolClass)))
     by_name = {c.display.replace(" ", ""): c for c in all_classes}
-    valid_hint = "、".join(c.display for c in all_classes[:6]) or "（还没有建班级）"
+    shown = list(allowed.values()) if allowed is not None else all_classes
+    valid_hint = "、".join(c.display for c in shown[:6]) or "（还没有建班级）"
+    others: set[str] = set()
 
     existing = set(db.scalars(select(Student.student_no)))
     added = skipped = pending = 0
@@ -270,6 +276,16 @@ def ingest(db: Session, rows: list[Row], me_id: int, fallback: SchoolClass | Non
         else:
             cls = fallback
 
+        if allowed is not None:
+            if cls is None:
+                bad.append(f"{at}「{clip(no)}」：没写班级（也没选默认的班）")
+                others.add("")
+                continue
+            if cls.id not in allowed:
+                bad.append(f"{at}：「{clip(cls.display)}」不是你带的班")
+                others.add(cls.display)
+                continue
+
         if no in existing:
             skipped += 1
             continue
@@ -309,6 +325,12 @@ def ingest(db: Session, rows: list[Row], me_id: int, fallback: SchoolClass | Non
             f"表里这些班级名系统里没有：{wrong}。"
             f"班级名要和「班级」页面完全一致，例如：{valid_hint}。"
             "模板第三页「可用班级」里有现成的，照抄就不会错。"
+        )
+    if others:
+        tips.append(
+            "老师只能往自己带的班里导学生" + (f"（你的班：{valid_hint}）" if allowed else "") +
+            "。别的班的学生请让那个班的老师导，或者请管理员导；没写班级的行，"
+            "导入时在上面选一个默认的班就行。"
         )
     if bad_gender:
         spots = "、".join(bad_gender[:8]) + ("…" if len(bad_gender) > 8 else "")
