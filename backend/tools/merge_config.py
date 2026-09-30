@@ -201,7 +201,7 @@ def main(argv: list) -> int:
         print(f"[合并 config.yaml] {exc}", file=sys.stderr)
         return 1
     if len(argv) == 3:
-        Path(argv[2]).write_text(text, encoding="utf-8", newline="\n")
+        Path(argv[2]).write_bytes(text.encode("utf-8"))   # 机房版是 3.8：write_text 还没有 newline 参数
     else:
         sys.stdout.buffer.write(text.encode("utf-8"))
     print("[合并 config.yaml] " + (f"补进新版本的 {len(added)} 项：" + "、".join(added) if added
