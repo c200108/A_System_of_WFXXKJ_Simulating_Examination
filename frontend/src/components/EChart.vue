@@ -7,7 +7,7 @@
  */
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import * as echarts from 'echarts/core'
-import { BarChart, BoxplotChart, ScatterChart } from 'echarts/charts'
+import { BarChart, BoxplotChart, LineChart, ScatterChart } from 'echarts/charts'
 import {
   GridComponent,
   LegendComponent,
@@ -17,7 +17,7 @@ import {
 import { CanvasRenderer } from 'echarts/renderers'
 
 echarts.use([
-  BarChart, BoxplotChart, ScatterChart,
+  BarChart, BoxplotChart, LineChart, ScatterChart,
   GridComponent, LegendComponent, MarkLineComponent, TooltipComponent,
   CanvasRenderer
 ])

@@ -92,6 +92,12 @@ const routes = [
     component: () => import('./views/ExamAnalysis.vue'),
     meta: { title: '成绩分析' }
   },
+  // 打字学情分析：从「打字成绩」页新开标签页，同上
+  {
+    path: '/js/typing-analysis',
+    component: () => import('./views/TypingAnalysis.vue'),
+    meta: { title: '打字学情分析' }
+  },
 
   teacherRoutes,
   studentRoutes,
