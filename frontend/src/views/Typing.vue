@@ -35,6 +35,8 @@ const LS_KEY = 'typingStudent'
 const conf = ref(null)
 const mode = ref('keyboard') // keyboard | english | chinese | free
 const me = reactive({ student_name: '', student_class: '', difficulty: '简单', limit: 3 })
+// 班级从名单里选（2.12.0）：手敲的「七(3)班」「7.3班」对不上名单，练完交不上
+const rosterClasses = ref([])
 
 const MODE_TABS = [
   { k: 'keyboard', t: '认识键盘' },
@@ -204,6 +206,13 @@ async function start() {
   if (!me.student_class.trim() || !me.student_name.trim()) {
     return ElMessage.warning('请先填写班级和姓名')
   }
+  // 开练之前先对名单：班级姓名对不上的，练完也交不上，别让学生白练
+  try {
+    const chk = await api.typingCheckStudent(me.student_class.trim(), me.student_name.trim())
+    if (!chk.ok) return ElMessageBox.alert(chk.tip, '名单里没有你', { type: 'warning' })
+  } catch {
+    return
+  }
   localStorage.setItem(LS_KEY, JSON.stringify({ n: me.student_name, c: me.student_class }))
 
   if (mode.value === 'keyboard') {
@@ -333,6 +342,11 @@ onMounted(async () => {
     return
   }
   try {
+    rosterClasses.value = await api.typingRosterClasses()
+  } catch {
+    /* 取不到就是空下拉，点开始时后端会说清楚 */
+  }
+  try {
     const saved = JSON.parse(localStorage.getItem(LS_KEY) || 'null')
     if (saved) {
       me.student_name = saved.n || ''
@@ -362,7 +376,15 @@ onUnmounted(() => {
       <div class="setrow">
         <div class="field">
           <label>班级 <i>*</i></label>
-          <el-input v-model="me.student_class" placeholder="如 七(3)班" style="width: 150px" />
+          <el-select
+            v-model="me.student_class"
+            filterable
+            placeholder="选择班级"
+            no-match-text="没有这个班，请找老师"
+            style="width: 150px"
+          >
+            <el-option v-for="c in rosterClasses" :key="c" :label="c" :value="c" />
+          </el-select>
         </div>
         <div class="field">
           <label>姓名 <i>*</i></label>
@@ -398,7 +420,7 @@ onUnmounted(() => {
       <p v-if="isFree" class="note">
         自由打字<b>不限时、不计分、也不会提交成绩</b>，随便敲，敲到的键会在下面的键盘上亮起来。
       </p>
-      <p v-else class="note">班级、姓名必填。完成后成绩<b>自动提交给老师</b>，不用另外交。</p>
+      <p v-else class="note">班级、姓名必填，要和老师的学生名单一致（名单里没有的交不了成绩）。完成后成绩<b>自动提交给老师</b>，不用另外交。</p>
     </div>
 
     <!-- 实时状态条 -->

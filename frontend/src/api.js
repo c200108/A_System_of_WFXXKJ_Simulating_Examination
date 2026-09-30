@@ -261,6 +261,9 @@ export const api = {
   typingRecords: params => http.get('/typing/records', { params }),
   typingStats: () => http.get('/typing/stats'),
   typingClasses: () => http.get('/typing/classes'),
+  typingRosterClasses: () => http.get('/typing/roster-classes'),
+  typingCheckStudent: (student_class, student_name) =>
+    http.get('/typing/check-student', { params: { student_class, student_name } }),
   typingExport: () => http.get('/typing/export.xlsx', { responseType: 'blob' }),
   typingDelete: id => http.delete(`/typing/records/${id}`),
   typingClear: student_class =>

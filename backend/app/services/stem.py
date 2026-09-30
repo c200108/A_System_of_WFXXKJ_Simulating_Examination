@@ -1166,3 +1166,65 @@ def auto_sim(stem_text: str, scope: str = "") -> dict | None:
             a["path"] = f"{ROOT}/{a['path']}"
         out_checks.append({**c, "assert": a})
     return {"kind": got["kind"], "env": env, "checks": out_checks}
+
+
+# ================================================================ 学生看到的题干（2.12.0）
+EXAM_DIR = "C:\\EXAM"
+
+# 「本题工作目录:D:\EXAM\windows操作」—— 冒号后面到行尾是一个路径（题库里还有
+# 「D:\EXAM windows操作02」这种少了斜杠的写法，照样整段换掉）
+_HEAD = re.compile(r"(本题工作目录\s*[:：]\s*)[A-Za-z]\s*[:：][^\n，。；;]*")
+# 「请打开本题工作目录（C：\EXAM\Win操作）按照要求……」
+_PAREN = re.compile(r"(工作目录\s*[（(]\s*)[A-Za-z]\s*[:：][^）)\n]*([）)])")
+_OPENER = re.compile(r"打开本题工作目录\s*[下中]的[^，。\n]{0,24}?文件夹")
+
+
+def workdir_of(stem: str, kind: str, env: dict | None = None) -> str:
+    r"""这道题在考场里的工作目录（Windows 写法）。说不上来返回空串。
+
+    - Windows 题：题干说「打开本题工作目录下的 X 文件夹」的，工作目录就是 C:\EXAM，
+      学生从那儿进 X；只给了完整路径的，是 C:\EXAM\<那个文件夹>；
+    - WPS 题：文档铺在考试文件夹根上，C:\EXAM。
+    """
+    if kind == "win":
+        if _OPENER.search(stem or ""):
+            return EXAM_DIR
+        tops = {str(k)[len(ROOT) + 1:].split("/")[0]
+                for k in ((env or {}).get("fs") or {}) if str(k).startswith(ROOT + "/")}
+        tops.discard("")
+        top = next(iter(tops)) if len(tops) == 1 else _base_dir(stem).split("/")[0]
+        return EXAM_DIR + ("\\" + top if top else "")
+    if kind == "wps":
+        return EXAM_DIR
+    return ""
+
+
+def student_stem(stem: str, kind: str, env: dict | None = None) -> str:
+    r"""学生看到的题干：**工作目录、文件名按考场里实际的位置和名字写**。
+
+    题库里的题干是原卷照抄的，写的是 `D:\EXAM\windows操作02`、`C：\EXAM\WPS文字`、
+    「外卖小哥夺冠.wps」，而考场一律铺在 C:\EXAM 下，文档一律是 .docx。学生照着题干找，
+    盘符、文件夹、扩展名三样都对不上（2.12.0 报上来的）。
+
+    库里的原题干不动 —— 改了它，下次导库就认不出这道题，环境和检查点也是按原题干算的。
+    AI 题不铺文件，那句工作目录只会让人去找一个不存在的文件夹，直接去掉。
+    """
+    text = str(stem or "")
+    if kind == "ai":
+        return re.sub(r"^[ \t]*本题工作目录\s*[:：][^\n]*\n?", "", text, flags=re.M)
+    where = workdir_of(text, kind, env)
+    if where:
+        text = _HEAD.sub(lambda m: m.group(1) + where, text)
+        text = _PAREN.sub(lambda m: m.group(1) + where + m.group(2), text)
+    if kind == "wps" and env:
+        from .docx_io import docx_name      # 文档真正的名字；局部导入免得和 docx_io 绕成环
+        real = docx_name(env)
+        text = re.sub(re.escape(real[:-len(".docx")]) + r"\.(?:wps|doc)(?![xX])", real, text)
+    return text
+
+
+def rename_workdir(stem: str, old: str, new: str) -> str:
+    """一张卷子上两道题的工作目录同名、后一道改了名时，题干跟着改。"""
+    text = re.sub(r"(打开本题工作目录\s*[下中]的\s*" + Q + r"?)" + re.escape(old)
+                  + r"(" + Q + r"?\s*文件夹)", lambda m: m.group(1) + new + m.group(2), stem, count=1)
+    return text.replace(EXAM_DIR + "\\" + old, EXAM_DIR + "\\" + new)

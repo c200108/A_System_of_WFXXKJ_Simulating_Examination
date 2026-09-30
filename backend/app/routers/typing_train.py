@@ -12,6 +12,7 @@
 
 import io
 import math
+import re
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
@@ -21,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..deps import get_current_user, get_optional_student, require_delete_permission
-from ..models import Student, TypingRecord, TypingText, User
+from ..models import SchoolClass, Student, TypingRecord, TypingText, User
 from ..schemas import (
     TypingConfigOut,
     TypingTextBulkIn,
@@ -78,6 +79,36 @@ def get_config():
     )
 
 
+def _norm_class(name: str) -> str:
+    """班级名比对前统一一下：去空格、全角括号换半角 —— 「七（3）班」和「七(3)班」是同一个班。"""
+    return re.sub(r"\s+", "", name or "").replace("（", "(").replace("）", ")")
+
+
+def _on_roster(db: Session, student_class: str, student_name: str) -> Student | None:
+    """免登录页手填的班级 + 姓名，在学生名单里找这个人。找不到返回 None。
+
+    班级两样都认：学生记录上存的班级名，和他所在班级的当前名字（班级改过名也对得上）。
+    """
+    name = (student_name or "").strip()
+    want = _norm_class(student_class)
+    if not name or not want:
+        return None
+    for st in db.scalars(select(Student).where(Student.name == name, Student.is_active.is_(True))):
+        names = {_norm_class(st.student_class)}
+        if st.class_id:
+            cls = db.get(SchoolClass, st.class_id)
+            if cls:
+                names.add(_norm_class(cls.display))
+        if want in names:
+            return st
+    return None
+
+
+def _roster_tip(student_class: str, student_name: str) -> str:
+    return (f"学生名单里没有「{student_class.strip()} {student_name.strip()}」："
+            "请按老师给的名单选班级、填姓名（姓名不要带空格）；确实不在名单里的请找老师添加")
+
+
 def _not_done(body: TypingRecordIn) -> str:
     """中文英文没打完「一半」（min_done_ratio）就不收，返回原因；够了返回空串。
 
@@ -129,6 +160,35 @@ def get_passage(
     return {"text": text}
 
 
+@router.get("/roster-classes", response_model=list[str], summary="名单里的班级，供免登录页下拉（公开）")
+def roster_classes(db: Session = Depends(get_db)):
+    """免登录打字页的班级下拉：只有班级名，不带任何学生信息。"""
+    _enabled()
+    names = {c.display for c in db.scalars(select(SchoolClass).where(SchoolClass.is_active.is_(True)))}
+    names |= {r[0] for r in db.execute(
+        select(Student.student_class).where(Student.is_active.is_(True)).distinct()) if r[0]}
+    return sorted(names)
+
+
+@router.get("/check-student", summary="手填的班级姓名在不在名单里（公开）")
+def check_student(
+    request: Request,
+    student_class: str = Query("", max_length=64),
+    student_name: str = Query("", max_length=64),
+    db: Session = Depends(get_db),
+):
+    """免登录页点「开始」前先问一声，别等练完了才告诉学生交不上。只回对不对，不回任何学生信息。"""
+    _enabled()
+    if not site.typing.require_roster:
+        return {"ok": True}
+    # 一分钟最多问 30 次：防的是拿名字一个个去试
+    throttle.check(db, "roster", throttle.device_of(request), 30, 60, "查询太频繁了")
+    throttle.hit(db, "roster", throttle.device_of(request))
+    db.commit()
+    ok = _on_roster(db, student_class, student_name) is not None
+    return {"ok": ok, "tip": "" if ok else _roster_tip(student_class, student_name)}
+
+
 @router.post("/records", response_model=TypingResultOut, summary="学生交成绩（公开）")
 def submit_record(
     body: TypingRecordIn,
@@ -146,6 +206,14 @@ def submit_record(
     if not me and body.student_no.strip():
         me = db.scalar(select(Student).where(
             Student.student_no == body.student_no.strip(), Student.is_active.is_(True)))
+
+    # 免登录页手填的：班级 + 姓名必须在学生名单里（config.yaml 的 typing.require_roster）。
+    # 对上了就挂到那个学生账号上 —— 他自己的首页也能看到这次练习
+    if (not me and site.typing.require_roster
+            and body.student_class.strip() and body.student_name.strip()):
+        me = _on_roster(db, body.student_class, body.student_name)
+        if not me:
+            raise HTTPException(status_code=400, detail=_roster_tip(body.student_class, body.student_name))
 
     # 带着账号来的，班级姓名一律以账号为准，前端填什么都不算数，
     # 免得改个输入框就把成绩记到别人头上。公开页面来的还是手填。

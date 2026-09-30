@@ -127,7 +127,71 @@ def _item_from_row(item: PaperItem, q: Question) -> dict:
                 out["stem"] = auto["stem"]
             if auto["kind"] == "drag":
                 out["image_url"] = None
+    # 题干里的工作目录、文件名换成考场里**实际**的（见 stem.student_stem）
+    got_sim = out.get("sim") or {}
+    if got_sim.get("kind") in ("win", "wps", "ai"):
+        shown = stem_rules.student_stem(out["stem"], got_sim["kind"], got_sim.get("env"))
+        if got_sim.get("title") and got_sim["title"] == (q.stem or "")[:60]:
+            got_sim["title"] = shown[:60]
+        out["stem"] = shown
     return out
+
+
+def _move_workdir(item: dict, old: str, new: str) -> None:
+    """把一道 Windows 题的工作目录从 C:/EXAM/old 挪到 C:/EXAM/new：环境、检查点、题干一起改。"""
+    a, b = f"{stem_rules.ROOT}/{old}", f"{stem_rules.ROOT}/{new}"
+
+    def mv(path):
+        path = str(path)
+        return b + path[len(a):] if path == a or path.startswith(a + "/") else path
+
+    got = item["sim"]
+    env = dict(got.get("env") or {})
+    env["fs"] = {mv(k): v for k, v in (env.get("fs") or {}).items()}
+    item["sim"] = {**got, "env": env}
+    checks = []
+    for c in item.get("sim_checks") or []:
+        a_ = c.get("assert") or {}
+        checks.append({**c, "assert": {**a_, "path": mv(a_["path"])}} if "path" in a_ else c)
+    item["sim_checks"] = checks
+    item["stem"] = stem_rules.rename_workdir(item["stem"], old, new)
+    if item["sim"].get("title"):
+        item["sim"]["title"] = item["stem"][:60]
+
+
+def separate_workdirs(items: list[dict]) -> list[dict]:
+    """一张卷子上几道 Windows 操作题的工作目录**同名**时，后面的依次改成「名字2」「名字3」。
+
+    题库里 6 道题都是「请打开本题工作目录下的系统基本操作文件夹」，放进同一张卷子，
+    考场里就只有一个「系统基本操作」，六道题的素材挤在一起、互相打架。
+
+    按卷面顺序改，出包、判分、网页答题走的都是 load_items，改出来的名字处处一致。
+    """
+    prefix = stem_rules.ROOT + "/"
+
+    def tops(it):
+        fs = ((it.get("sim") or {}).get("env") or {}).get("fs") or {}
+        got = {str(k)[len(prefix):].split("/")[0] for k in fs if str(k).startswith(prefix)}
+        got.discard("")
+        return got
+
+    wins = [it for it in items if (it.get("sim") or {}).get("kind") == "win"]
+    taken = set().union(*(tops(it) for it in wins)) if wins else set()
+    used: set = set()
+    for it in wins:
+        mine = tops(it)
+        if len(mine) == 1:
+            top = next(iter(mine))
+            if top in used:
+                n = 2
+                while f"{top}{n}" in taken or f"{top}{n}" in used:
+                    n += 1
+                _move_workdir(it, top, f"{top}{n}")
+                top = f"{top}{n}"
+            used.add(top)
+        else:
+            used |= mine
+    return items
 
 
 def load_items(db: Session, paper: Paper) -> list[dict]:
@@ -137,7 +201,7 @@ def load_items(db: Session, paper: Paper) -> list[dict]:
         q = db.get(Question, it.question_id)
         if q:
             out.append(_item_from_row(it, q))
-    return out
+    return separate_workdirs(out)
 
 
 def group_items(items: list[dict]) -> list[dict]:
