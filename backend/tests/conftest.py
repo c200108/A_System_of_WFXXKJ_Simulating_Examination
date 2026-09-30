@@ -90,3 +90,5 @@ def _typing_limits_off(monkeypatch):
 
     for key in ("min_done_ratio", "submit_interval_sec", "passage_per_minute"):
         monkeypatch.setattr(site.typing, key, 0)
+    # 免登录页的名单比对（2.12.0）也默认关：别的测试随手编的班级姓名不在名单里
+    monkeypatch.setattr(site.typing, "require_roster", False)

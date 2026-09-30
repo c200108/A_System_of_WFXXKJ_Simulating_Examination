@@ -203,6 +203,7 @@ typing:
   min_done_ratio: 0.5 # 中文英文至少打完这么多（0.5 = 一半）才能交；限时练习练满这么多时间也算
   submit_interval_sec: 60 # 同一台电脑两次交成绩至少隔多少秒
   passage_per_minute: 3 # 同一台电脑每分钟最多换几次练习文本（exe 的「换一段」、网页的「开始」都算）
+  require_roster: true # 免登录的打字页（/dazi）填的班级、姓名必须和学生名单对得上才能交成绩
   star_thresholds: # 正确率达到 base 给两星，base+12 给三星
     简单: 68
     中等: 80

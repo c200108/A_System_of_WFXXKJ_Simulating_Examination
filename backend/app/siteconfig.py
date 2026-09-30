@@ -235,6 +235,8 @@ class TypingConf(_Base):
     min_done_ratio: float = Field(default=0.5, ge=0, le=1)  # 中文英文至少打完这么多才能交
     submit_interval_sec: int = Field(default=60, ge=0)       # 同一台电脑两次交成绩至少隔多少秒
     passage_per_minute: int = Field(default=3, ge=0)         # 同一台电脑每分钟最多换几次文本
+    # 公开打字页（/dazi）手填的班级姓名必须在学生名单里才能交（2.12.0）
+    require_roster: bool = True
     # 文本库：{难度: [段落, ...]}，改这里不用重新构建，restart backend 即可
     english: dict[str, list[str]] = Field(default_factory=dict)
     chinese: dict[str, list[str]] = Field(default_factory=dict)
