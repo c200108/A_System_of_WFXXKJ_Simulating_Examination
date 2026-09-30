@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from .. import clock
 from ..database import get_db
 from ..deps import get_current_user
-from ..models import Exam, ExamSubmission, Paper, SchoolClass, User
+from ..models import Exam, ExamSubmission, Paper, SchoolClass, Student, User
 from ..routers.classes import owned_class_ids
 from ..schemas import ExamCreate, ExamOut, ExamUpdate, IdsIn, ManualGradeIn, SubmissionOut
 from ..services.analysis import analyze
@@ -242,7 +242,36 @@ def delete_exam(exam_id: int, user: User = Depends(get_current_user), db: Sessio
     return {"ok": True}
 
 
-def _sub_out(db: Session, sub: ExamSubmission) -> SubmissionOut:
+class GradeScope:
+    """这位老师批得了哪些答卷：**只批自己带的班**，别的班只能看（2.12.1）。
+
+    管理员不设限。答卷认班级两样都看：交卷的学生现在在哪个班（学生调过班也跟着走），
+    和答卷上记的班级名（学生账号删了、或者是老数据没挂账号的）。
+    一场考试要判断几十份答卷，班级只查一次。
+    """
+
+    def __init__(self, db: Session, user: User):
+        from .classes import owned_class_ids
+
+        self.db = db
+        self.ids = owned_class_ids(db, user)
+        self.names = set()
+        if self.ids:
+            self.names = {c.display for c in db.scalars(select(SchoolClass).where(SchoolClass.id.in_(self.ids)))}
+
+    def allows(self, sub: ExamSubmission) -> bool:
+        if self.ids is None:
+            return True
+        if (sub.student_class or "") in self.names:
+            return True
+        st = self.db.get(Student, sub.student_id) if sub.student_id else None
+        return bool(st and st.class_id in self.ids)
+
+
+NOT_MY_CLASS = "这份答卷是「{cls}」的，不是你带的班，只能查看；请该班老师批改"
+
+
+def _sub_out(db: Session, sub: ExamSubmission, grade: "GradeScope | None" = None) -> SubmissionOut:
     item = SubmissionOut.model_validate(sub)
     item.full_score = sub.objective_total + sub.subjective_total
     detail = json.loads(sub.detail_json or "[]")
@@ -254,6 +283,7 @@ def _sub_out(db: Session, sub: ExamSubmission) -> SubmissionOut:
     if sub.graded_by:
         grader = db.get(User, sub.graded_by)
         item.graded_by_name = (grader.name or grader.username) if grader else ""
+    item.can_grade = grade.allows(sub) if grade else True
     return item
 
 
@@ -263,7 +293,8 @@ def list_submissions(
 ):
     exam = _get(db, exam_id, user)
     rows = sorted(exam.submissions, key=lambda s: (-s.score, s.student_no))
-    return [_sub_out(db, s) for s in rows]
+    grade = GradeScope(db, user)
+    return [_sub_out(db, s, grade) for s in rows]
 
 
 @router.get("/{exam_id}/submissions/{sub_id}", summary="某个学生的答卷明细")
@@ -303,6 +334,8 @@ def submission_detail(
         "pending_manual": sum(1 for d in detail if d.get("manual") and not d.get("graded"))
         if sub.subjective_total > 0 else 0,
         "graded_by_name": (grader.name or grader.username) if grader else "",
+        # 别的班的答卷：看得到，批不了（界面上打分框变只读）
+        "can_grade": GradeScope(db, user).allows(sub),
         "graded_at": sub.graded_at,
         "submitted_at": sub.submitted_at,
         "detail": detail,
@@ -325,11 +358,15 @@ def grade_manual(
     **这里只要"看得到"的权限，不要求"改得动"**：管理员发的全校统考，
     操作题得由各班任课老师自己批 —— 要求改卷权的话这活儿就只能管理员一个人干。
     改的是成绩不是试卷设置，而且每次都记下是谁批的（graded_by），有据可查。
+
+    但**只批自己带的班**（2.12.1）：别的班的答卷看得到、批不了，免得一个老师把全年级的分都改了。
     """
     exam = _get(db, exam_id, user)
     sub = db.get(ExamSubmission, sub_id)
     if not sub or sub.exam_id != exam_id:
         raise HTTPException(status_code=404, detail="答卷不存在")
+    if not GradeScope(db, user).allows(sub):
+        raise HTTPException(status_code=403, detail=NOT_MY_CLASS.format(cls=sub.student_class or "未填班级"))
     if sub.subjective_total <= 0:
         raise HTTPException(
             status_code=400,
