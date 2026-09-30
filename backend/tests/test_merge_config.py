@@ -81,6 +81,14 @@ def test_合出来通不过校验就不输出(tmp_path):
     assert not out.exists()
 
 
+def test_命令行_写到输出文件(tmp_path):
+    out = tmp_path / "merged.yaml"
+    assert M.main([str(HERE / "fixtures" / "config_2_8_backup.yaml"),
+                   str(BACKEND.parent / "config.yaml"), str(out)]) == 0
+    assert yaml.safe_load(out.read_text(encoding="utf-8"))["time"] == {"offset_hours": 0}
+    assert b"\r\n" not in out.read_bytes()
+
+
 def test_命令行_旧的从标准输入读():
     got = subprocess.run([sys.executable, "-m", "tools.merge_config", "-", str(BACKEND.parent / "config.yaml")],
                          input=OLD.encode("utf-8"), capture_output=True, cwd=BACKEND,
