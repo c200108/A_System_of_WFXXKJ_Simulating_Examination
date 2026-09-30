@@ -1,0 +1,277 @@
+# ============================================================================
+# 信息技术组卷台 —— 集中配置
+#
+# 这个文件管"系统怎么用"：卷头默认值、默认题量、及格线、导入时怎么认题型……
+# 改完重启后端生效（双击 一键停止.bat 再双击 一键启动.bat）。
+#
+# 【不在这里的两类东西，别往这儿搬】
+#   1. 密码和密钥（数据库密码、JWT 密钥、管理员初始密码）→ 在 backend/.env
+#      因为本文件要提交进 Git，密钥写进来等于公开。
+#   2. 知识范围、题型的日常增删 → 在系统界面里改（存数据库，即时生效）
+#      本文件的 bank.scopes 只在"第一次建库"时用作初始值。
+#
+# 【改错了会怎样】
+#   拼错键名或类型不对，后端启动时会直接报错并指出是哪一项，不会静默失效。
+# ============================================================================
+
+site:
+  # 平台名称。改完 docker compose restart backend，刷新页面即生效，不用重新构建。
+  title: "昌邑市实验中学信息科技教学平台" # 浏览器标签页、登录页大标题
+  brand: "信息科技教学平台" # 顶栏左上角，短一点更好看
+  footer: "" # 页脚备注，留空则不显示
+  # 学生实践平台（网站根路径 /）的名称。教师后台在 /js。
+  student_title: "昌邑市实验中学信息科技学生实践平台"
+  student_brand: "学生实践平台" # 侧边栏顶部，长标题在那儿排不开
+  # 浏览器标签页图标（校徽）。留空用内置的默认图标。
+  # 换成校徽：把图片文件放进 data/uploads/（比如 data/uploads/校徽.png），
+  # 这里填 "/uploads/校徽.png"，然后 docker compose restart backend 即可，
+  # 不用重新构建前端。png / jpg / svg / ico 都行，建议正方形、不小于 64×64。
+  favicon: "/uploads/校徽.png"
+
+school:
+  # 印在卷头上的学校名，也是组卷页"学校"一栏的默认值
+  name: "昌邑市实验中学"
+
+paper:
+  default_title: "2026年信息技术模拟测试（A卷）"
+  default_duration: "40" # 考试时长（分钟），填空字符串表示不印
+  # 组卷页每种题型的默认数量。这里写的题型要和 bank.types 对得上
+  default_counts:
+    选择题: 20
+    判断题: 10
+    操作题: 3
+  shuffle_options: true # 默认打乱选择题选项（答案自动跟随）
+  require_answer: true # 默认跳过原卷未给答案的题
+  use_pinned: true # 默认让必出题优先入选
+  section_numerals: ["一", "二", "三", "四", "五", "六"] # 大题序号
+  code_prefix: "NO." # 卷号前缀，生成形如 NO.20263
+
+  # 题干多少字算"长题目"（下面 prefer: long_or_image 用它判断；带图的题一律算）
+  long_stem_chars: 60
+
+  # ======================= 卷面结构 =======================
+  # 组卷按这里的先后顺序出大题，卷面总分 = 各大题 score 之和（现在正好 100）。
+  #
+  # 一个大题由若干组（slots）拼成，每组说清楚"从哪些知识范围抽几道什么题型"——
+  # 因为大题不等于题型："物联网实践与探索"里既有操作题又有选择题。
+  #   type    题型，要和 bank.types 对得上
+  #   count   抽几道（组卷页上还能临时改）
+  #   scopes  限定知识范围，留空 = 不限。名字要和 bank.scopes 完全一致
+  #   prefer  long_or_image = 优先挑长题干或带图的题（不够时用普通题补齐，不会空着）
+  #   label   组卷页上这一组的说明文字
+  #
+  # score 怎么摊到每道题：weight_by_difficulty: true 按题目难度（1~5）分，
+  # 并保证**操作题的分高于同一大题里任何一道客观题**；false 则平均分，
+  # 除不尽的零头给难度高的题。两种都用最大余数法，大题的分精确对得上。
+  #
+  # 改完 docker compose restart backend 即生效，前端不用重新构建。
+  sections:
+    - name: "选择题"
+      score: 30
+      weight_by_difficulty: false # 30 题 30 分，一题一分，不按难度拉开
+      slots:
+        - { type: "选择题", count: 30 }
+
+    - name: "判断题"
+      score: 20
+      weight_by_difficulty: false # 10 题 20 分，一题两分
+      slots:
+        - { type: "判断题", count: 10 }
+
+    - name: "操作题"
+      score: 20
+      slots: # 三道题的顺序钉死：Windows → WPS 文字 → 人工智能
+        - { type: "操作题", count: 1, scopes: ["Windows系统操作"], label: "Windows 操作" }
+        - { type: "操作题", count: 1, scopes: ["WPS文字操作"], label: "WPS 文字" }
+        - { type: "操作题", count: 1, scopes: ["人工智能"], label: "人工智能" }
+
+    - name: "算法与程序设计"
+      score: 10
+      slots:
+        - {
+            type: "选择题",
+            count: 3,
+            scopes: ["Python编程基础"],
+            prefer: "long_or_image",
+            label: "长题干或带图的选择题",
+          }
+
+    - name: "互联网原理与创新"
+      score: 10
+      slots:
+        - {
+            type: "选择题",
+            count: 3,
+            scopes: ["计算机网络基础"],
+            prefer: "long_or_image",
+            label: "长题干或带图的选择题",
+          }
+        - {
+            type: "操作题",
+            count: 3,
+            scopes: ["计算机网络基础"],
+            label: "计算机网络基础操作题",
+          }
+
+    - name: "物联网实践与探索"
+      score: 10
+      slots:
+        - { type: "操作题", count: 2, scopes: ["物联网"], label: "物联网操作题" }
+        - { type: "选择题", count: 3, scopes: ["物联网"] }
+
+exam:
+  pass_score: 60 # 及格线，成绩表里低于它标红
+  token_length: 9 # 学生链接口令的随机字节数，越大越难猜（9 约等于 12 个字符）
+  # 发布考试对话框里四个开关的默认状态
+  defaults:
+    is_open: true
+    show_score: true # 交卷后给学生看分数
+    show_answer: false # 交卷后给学生看答案（正式考试务必保持 false）
+    allow_retake: false # 同一学号能否重考
+  # 机器判不了、要老师在成绩页逐题给分的题型。学生交完卷先拿到客观题得分，
+  # 老师批完总分自动补上。填空题这类有标准答案的不要放进来 —— 它们能自动判。
+  manual_types: ["操作题"]
+
+bank:
+  # false = 下面的 scopes/types 只在第一次建库时灌进数据库，之后以界面上的修改为准
+  # true  = 每次启动都以本文件为准同步（界面上加的知识范围会被停用，慎用）
+  sync_on_start: false
+  scopes:
+    - "信息基础与信息技术"
+    - "计算机硬件"
+    - "计算机软件"
+    - "Windows系统操作"
+    - "WPS文字操作"
+    - "信息安全与网络道德"
+    - "计算机网络基础"
+    - "Python编程基础"
+    - "人工智能"
+    - "物联网"
+  types: ["选择题", "判断题", "操作题", "填空题"]
+  default_source: "自定义" # 新增/导入的题目，来源栏默认填什么
+
+import:
+  # 上传模板必须有这几列（顺序可以不同）。
+  # 「难度」是选填的：这里没写也会自动加到模板末尾，导入时留空则按题型自动估。
+  headers: ["题型", "题干", "可选项", "答案", "知识范围", "图片", "难度"]
+  # 导出题库/试卷 Excel 的表头
+  export_headers: ["题型", "题干", "可选项", "答案", "知识范围", "难度", "来源", "编号"]
+  export_widths: [8, 60, 34, 26, 16, 8, 10, 9] # 上面各列的宽度
+  # 题型识别：题型这一栏只要含有关键词之一，就算这种题型
+  type_keywords:
+    选择题: ["选择"]
+    判断题: ["判断"]
+    操作题: ["操作"]
+    填空题: ["填空"]
+  # 判断题答案归一：左边是入库后的标准写法，右边是老师可能填的各种写法
+  judge_answers:
+    正确: ["√", "对", "T", "true", "正确", "是"]
+    错误: ["×", "x", "错", "F", "false", "错误", "否"]
+  judge_options: [["A", "正确"], ["B", "错误"]] # 判断题自动补的两个选项
+  option_separators: ".．、,，:：" # "A.内容" 里 A 和内容之间允许的分隔符
+  max_options: 4 # 一道题最多认几个选项
+
+upload:
+  max_mb: 20 # 单个文件大小上限（图片和 Excel 都按这个）
+  image_extensions: [".png", ".jpg", ".jpeg", ".gif", ".webp"]
+
+typing:
+  # 打字训练（学生页 /dazi，免登录；教师端在「打字」菜单看成绩）
+  enabled: true
+  difficulties: ["简单", "中等", "困难"]
+  time_limits: [1, 2, 3, 5, 10] # 单位分钟，必须都大于 0（自由打字模块不限时，不走这里）
+  default_difficulty: "简单"
+  default_limit: 3
+  passages_per_round: [7, 9] # 每次从文本库随机抽这么多段拼成长文
+  three_star_min_speed: 18 # 简单难度之外，三星还要求速度达到这个值
+  star_thresholds: # 正确率达到 base 给两星，base+12 给三星
+    简单: 68
+    中等: 80
+    困难: 88
+
+  # 文本库。改完 docker compose restart backend 即可生效，不用重新构建。
+  english:
+    简单:
+      - "the quick brown fox jumps over the lazy dog."
+      - "we learn typing every day and practice makes perfect."
+      - "a good habit is to sit up straight and look at the screen."
+      - "keep your fingers on the home row and type slowly at first."
+      - "practice a little each day and your speed will slowly grow."
+      - "the cat sat on the mat and watched the little red ball roll away."
+      - "my hand rests on the home row and my eyes stay on the screen."
+      - "type slowly at first, then let your speed grow on its own."
+      - "a short rest for the eyes keeps the mind clear and calm."
+      - "she opened the file, saved her work, and closed the laptop."
+      - "we write, we read, we share, and we learn something new."
+      - "the small brown bird sang a simple song by the open window."
+    中等:
+      - "information technology helps us learn and create. typing fast and correctly is a useful skill for students."
+      - "practice a little every day. soon your fingers will know where each key is without looking at the keyboard."
+      - "the computer is a powerful tool. we should use it wisely and keep our eyes safe from too much screen time."
+      - "learning to type well takes time. be patient, keep your hands in the right place, and do not look down."
+      - "a clean desk and a calm mind help you focus on the screen and type with steady, even rhythm."
+      - "when you finish a task, save your file and rest your eyes by looking far away for a short while."
+      - "good posture matters as much as finger placement. sit up, relax your shoulders, and let your wrists float above the keys."
+      - "save your work often. a sudden power cut should never cost you an hour of careful writing."
+      - "reading the sentence before you type it helps your fingers move in smooth groups instead of one slow letter at a time."
+      - "a file name that describes the content will save you minutes every time you search for it later."
+      - "when the screen feels tiring, look at something far away for twenty seconds and let your eyes reset."
+      - "the keyboard is a tool for thinking out loud, so keep your ideas clear and your typing will follow."
+    困难:
+      - "the rapid development of artificial intelligence challenges us to think critically, type efficiently, and communicate clearly across digital platforms worldwide."
+      - "mastering keyboard shortcuts, proper finger placement, and consistent practice will significantly improve both your typing speed and overall accuracy over time."
+      - "in the information age, data, algorithms, and networks form the base of the digital world. learning to process information with computers is a key skill for everyone."
+      - "from word processing to presentations, from spreadsheets to simple coding, technology helps us turn ideas into works we can share with others."
+      - "good digital citizens respect others online, protect their own privacy, and think carefully before they post or send any message."
+      - "every key you press leaves a mark in the digital world, so type with care, write with kindness, and learn with an open mind."
+
+      - "digital literacy is no longer optional; it shapes how students gather evidence, evaluate sources, and present arguments in nearly every subject they study."
+      - "an algorithm is simply a sequence of clear steps, yet the discipline of writing one teaches precision that carries far beyond the computer lab."
+      - "before sharing a file, consider who can open it, whether it contains personal information, and how long it should remain available online."
+      - "network protocols agree on a common language so that machines built by different companies in different decades can still exchange information reliably."
+      - "the difference between memorising shortcuts and understanding a program is the difference between following a map and knowing the city."
+      - "responsible technology use means asking not only whether something can be built, but also whether it should be, and who might be affected."
+  chinese:
+    简单:
+      - "信息技术课真有趣。我们学会了用电脑打字。"
+      - "每天练习一点点，进步就会很大。"
+      - "键盘上的字母排列有规律，认真练就能记住。"
+      - "眼睛看屏幕，手指凭感觉找键，慢慢就快了。"
+      - "打字时坐姿要端正，手指自然放在基本键上。"
+      - "电脑是学习的好帮手，我们要好好使用它。"
+      - "先把正确的指法练熟，速度自然会慢慢提上来。"
+      - "课间休息时，记得远眺，让眼睛放松一下更好。"
+      - "上课认真听讲，课后动手练习，进步就在其中。"
+      - "先看清屏幕上的字，再从容地敲下去，不必着急。"
+      - "手指放在基本键上，眼睛不用往下看，慢慢就熟练了。"
+      - "文件要及时保存，起个好名字，下次才找得到。"
+      - "同学之间互相帮助，学习会变得轻松很多。"
+      - "写完一段文字，读一遍再改一改，会更通顺。"
+    中等:
+      - "打字是一项基础的信息素养。正确的指法和持续的练习，能让我们既快又准地完成文字输入任务。"
+      - "在信息技术课堂上，我们既要学会操作计算机，也要学会用文字清晰地表达自己的想法。"
+      - "规范的键盘指法把十个手指分配到不同区域，这样可以不必看键盘也能准确敲击。"
+      - "网络让我们看到更广阔的世界，但也要注意保护视力，合理安排用电脑的时间。"
+      - "一份好的电子小报，离不开清晰的文字、合理的排版和认真的输入。"
+      - "遇到不认识的汉字，可以用输入法的手写功能，也能查字典弄懂它的读音和意思。"
+      - "把每天练打字的成果记下来，过一段时间回头看，你会发现自己进步了很多。"
+      - "打字和写作可以一起练，先想清楚要说什么，再从容地把字打在屏幕上。"
+      - "指法练熟之后，注意力就能从「键在哪里」转到「我要写什么」，这才是打字真正的意义。"
+      - "整理素材、组织语言、检查错别字，是完成一篇电子文稿必经的三步。"
+      - "遇到不会打的字，可以用拼音的前几个字母试试，多数输入法都能猜出你要的词。"
+      - "保存文件时选一个有意义的名字，加上日期，过一个月你也能一眼认出它。"
+      - "在网上查资料要留意来源是否可靠，不能看到什么就信什么。"
+      - "键盘敲得快不等于表达得好，把话说清楚永远排在速度前面。"
+    困难:
+      - "随着人工智能的发展，信息科技课程越来越重要。熟练的键盘操作和准确的文字录入，是新时代学生必备的基本能力之一。"
+      - "良好的打字习惯包括坐姿端正、手指分工明确、眼睛看屏幕而非键盘。坚持每天十分钟，速度自然会提升。"
+      - "信息社会里，数据、算法与网络共同构成了数字世界的基础。学会用计算机处理信息，是现代公民的必修课。"
+      - "从文字处理到演示文稿，从电子表格到简单编程，信息技术帮助我们把想法变成可以分享的作品。"
+      - "做合格的网络小公民，要尊重他人、保护隐私，在发消息或留言之前先认真想一想。"
+      - "你敲下的每一个字符都在数字世界里留下痕迹，所以要认真输入、友善表达、带着开放的心态去学习。"
+      - "信息技术课不只是学会操作软件，更重要的是培养用技术解决问题的思路，以及面对新工具时自己摸索的能力。"
+      - "算法是一组清晰有序的步骤。把一件事拆解成计算机能执行的步骤，这个过程本身就是很好的思维训练。"
+      - "在社交平台上发言前，先想一想这段话会被谁看到、会不会伤害到别人，这是数字时代的基本素养。"
+      - "云存储让文件随处可取，但也意味着数据离开了自己的电脑。了解服务商如何保管这些数据，是每个使用者应有的警觉。"
+      - "人工智能能生成流畅的文字，却不能替你判断内容是否正确。学会核实，比学会提问更重要。"
+      - "从收集信息、处理信息到呈现信息，每一步都需要判断力。技术负责效率，判断力决定方向。"

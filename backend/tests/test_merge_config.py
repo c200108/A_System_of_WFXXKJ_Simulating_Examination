@@ -1,6 +1,6 @@
 """还原备份时合并 config.yaml：旧的值全留着，新版本多出来的配置项补进去（2.12.1）。
 
-tests/data/config_2_8_backup.yaml 是 2.8.x 那一版的 config.yaml（早期备份里就是它），
+tests/fixtures/config_2_8_backup.yaml 是 2.8.x 那一版的 config.yaml（早期备份里就是它），
 校徽改成配过的样子 —— 和报上来的那份备份一致。
 """
 
@@ -16,7 +16,7 @@ from tools import merge_config as M
 
 HERE = Path(__file__).resolve().parent
 BACKEND = HERE.parent
-OLD = (HERE / "data" / "config_2_8_backup.yaml").read_text(encoding="utf-8")
+OLD = (HERE / "fixtures" / "config_2_8_backup.yaml").read_text(encoding="utf-8")
 NEW = (BACKEND.parent / "config.yaml").read_text(encoding="utf-8")
 
 
