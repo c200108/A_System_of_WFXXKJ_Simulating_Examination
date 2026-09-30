@@ -1,81 +1,133 @@
 <script setup>
+/**
+ * 打字成绩（教师端）。
+ *
+ * - 筛选：班级、模块、难度、姓名、日期；排序点表头（在服务端排，翻页也不乱）；
+ * - 批量：勾选删除，或者「删除筛选出的全部」—— 删掉的正是表里看到的那些；
+ * - 导出 Excel 也按当前筛选；
+ * - 图表和结论在「学情分析」页（新标签页打开），这里只管看数和管数据。
+ */
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download } from '../api'
 import { loadPublicBase, studentLink } from '../publicUrl'
 
+const router = useRouter()
 const rows = ref([])
+const total = ref(0)
 const stats = ref(null)
 const classes = ref([])
 const loading = ref(false)
+const picked = ref([])
+const table = ref(null)
 
-const query = reactive({ student_class: '', module: '', keyword: '', order: 'speed' })
+const query = reactive({
+  student_class: '', module: '', difficulty: '', keyword: '', dates: [],
+  sort: 'time', order: 'desc', page: 1, page_size: 50
+})
+
+/** 发给后端的筛选条件（不含分页排序）。导出、按条件删除都用它 */
+function filters() {
+  const f = {}
+  for (const k of ['student_class', 'module', 'difficulty', 'keyword']) {
+    if (query[k]) f[k] = query[k]
+  }
+  if (query.dates?.length === 2) {
+    f.date_from = query.dates[0]
+    f.date_to = query.dates[1]
+  }
+  return f
+}
+const filtered = computed(() => Object.keys(filters()).length > 0)
 
 async function load() {
   loading.value = true
   try {
-    const params = { ...query }
-    Object.keys(params).forEach(k => params[k] === '' && delete params[k])
-    rows.value = await api.typingRecords(params)
-    stats.value = await api.typingStats()
-    classes.value = await api.typingClasses()
+    const got = await api.typingSearch({
+      ...filters(), sort: query.sort, order: query.order, page: query.page, page_size: query.page_size
+    })
+    rows.value = got.items
+    total.value = got.total
   } finally {
     loading.value = false
   }
 }
+async function loadSide() {
+  stats.value = await api.typingStats()
+  classes.value = await api.typingClasses()
+}
+function search() {
+  query.page = 1
+  load()
+}
+function reset() {
+  Object.assign(query, { student_class: '', module: '', difficulty: '', keyword: '', dates: [], page: 1 })
+  load()
+}
+async function refresh() {
+  await Promise.all([load(), loadSide()])
+}
+
 onMounted(async () => {
   await loadPublicBase()
   studentUrl.value = studentLink('/dazi')
-  await load()
+  await refresh()
 })
 
-/** 正确率分布：四档柱状图，高度按最大值归一 */
-const buckets = computed(() => {
-  const b = stats.value?.accuracy_buckets || {}
-  const max = Math.max(1, ...Object.values(b))
-  const colors = {
-    '≥90': 'var(--el-color-success)',
-    '80-89': 'var(--el-color-primary)',
-    '70-79': 'var(--el-color-warning)',
-    '<70': 'var(--el-color-danger)'
-  }
-  return Object.entries(b).map(([label, n]) => ({
-    label,
-    n,
-    h: Math.max(3, Math.round((n / max) * 80)),
-    color: colors[label]
-  }))
-})
+// 表头排序：交给服务端排，翻页才不会只排了这一页
+const SORT_KEY = { speed: 'speed', accuracy: 'accuracy', duration: 'duration', stars: 'stars',
+  created_at: 'time', student_name: 'name', student_class: 'class' }
+function onSort({ prop, order }) {
+  query.sort = order ? SORT_KEY[prop] || 'time' : 'time'
+  query.order = order === 'ascending' ? 'asc' : 'desc'
+  query.page = 1
+  load()
+}
+
+// ---------------------------------------------------------------- 删除
+async function afterDelete(n) {
+  ElMessage.success(`已删除 ${n} 条`)
+  table.value?.clearSelection()
+  if (query.page > 1 && rows.value.length === picked.value.length) query.page -= 1
+  await refresh()
+}
+async function removeOne(row) {
+  await ElMessageBox.confirm(`删除「${row.student_name}」这条 ${row.module} 成绩？`, '提示', { type: 'warning' })
+  await api.typingDelete(row.id)
+  await afterDelete(1)
+}
+async function removePicked() {
+  const n = picked.value.length
+  await ElMessageBox.confirm(`删除勾选的 ${n} 条成绩？删除后无法恢复。`, '批量删除', {
+    type: 'warning', confirmButtonText: `删除 ${n} 条`
+  })
+  const res = await api.typingDeleteMany(picked.value.map(r => r.id))
+  await afterDelete(res.deleted)
+}
+async function removeFiltered() {
+  const scope = filtered.value ? `筛选出的全部 ${total.value} 条` : `全部 ${total.value} 条`
+  await ElMessageBox.confirm(`将删除${scope}打字成绩（不只是这一页），且无法恢复。确定吗？`, '删除确认', {
+    type: 'warning', confirmButtonText: '确认删除'
+  })
+  const res = await api.typingClear(filters())
+  await afterDelete(res.deleted)
+}
 
 async function exportXlsx() {
-  await download(api.typingExport(), '打字训练成绩.xlsx')
+  await download(api.typingExport(filters()), '打字训练成绩.xlsx')
   ElMessage.success('已下载')
 }
 
-async function removeOne(row) {
-  await ElMessageBox.confirm(`删除「${row.student_name}」这条 ${row.module} 成绩？`, '提示', {
-    type: 'warning'
-  })
-  await api.typingDelete(row.id)
-  await load()
-  ElMessage.success('已删除')
-}
-
-async function clearClass() {
-  const scope = query.student_class || '全部班级'
-  await ElMessageBox.confirm(
-    `将清空 ${scope} 的打字成绩，且无法恢复。确定吗？`,
-    '清空确认',
-    { type: 'warning', confirmButtonText: '确认清空' }
-  )
-  const res = await api.typingClear(query.student_class || undefined)
-  await load()
-  ElMessage.success(`已删除 ${res.deleted} 条`)
+function openAnalysis() {
+  const q = {}
+  if (query.module) q.module = query.module
+  if (query.student_class) q.classes = query.student_class
+  window.open(router.resolve({ path: '/js/typing-analysis', query: q }).href, '_blank')
 }
 
 // 学生练习页地址。默认跟着浏览器当前地址走；后端配了 PUBLIC_BASE_URL 就以它为准
 const studentUrl = ref(studentLink('/dazi'))
-
 async function copyUrl() {
   try {
     await navigator.clipboard.writeText(studentUrl.value)
@@ -86,25 +138,25 @@ async function copyUrl() {
   }
 }
 
-const medal = i => (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1)
 const fmt = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+const when = t => String(t || '').replace('T', ' ').slice(0, 16)
 </script>
 
 <template>
   <el-card shadow="never" class="page-card">
     <template #header>
       <div class="head">
-        <span>打字训练学情</span>
+        <span>打字训练成绩</span>
         <div>
-          <el-button size="small" @click="load">刷新</el-button>
-          <el-button size="small" type="primary" @click="exportXlsx">导出 Excel</el-button>
-          <el-button size="small" type="danger" plain @click="clearClass">清空</el-button>
+          <el-button size="small" type="primary" @click="openAnalysis">学情分析</el-button>
+          <el-button size="small" @click="exportXlsx">导出 Excel</el-button>
+          <el-button size="small" @click="refresh">刷新</el-button>
         </div>
       </div>
     </template>
 
     <el-alert type="info" :closable="false" class="hint">
-      学生打开 <b>{{ studentUrl }}</b> 即可练习，<b>不需要账号</b>，完成后成绩自动进入这里。
+      学生打开 <b>{{ studentUrl }}</b> 即可练习（班级姓名要和学生名单一致），完成后成绩自动进入这里。
       <el-button link type="primary" @click="copyUrl">复制链接</el-button>
     </el-alert>
 
@@ -112,108 +164,103 @@ const fmt = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60
       <div class="k"><span>练习人次</span><b>{{ stats.total }}</b></div>
       <div class="k"><span>参与人数</span><b>{{ stats.students }}</b></div>
       <div class="k"><span>平均正确率</span><b>{{ stats.avg_accuracy }}%</b></div>
-      <div class="k"><span>平均速度</span><b>{{ stats.avg_speed }}</b><i>字/分</i></div>
       <div class="k"><span>平均用时</span><b>{{ fmt(stats.avg_duration) }}</b></div>
+      <div v-for="(n, m) in stats.by_module" :key="m" class="k"><span>{{ m }}</span><b>{{ n }}</b><i>次</i></div>
     </div>
 
     <div class="bar">
-      <el-select v-model="query.student_class" placeholder="全部班级" clearable style="width: 150px">
+      <el-select v-model="query.student_class" placeholder="全部班级" clearable filterable style="width: 150px" @change="search">
         <el-option v-for="c in classes" :key="c" :label="c" :value="c" />
       </el-select>
-      <el-select v-model="query.module" placeholder="全部模块" clearable style="width: 130px">
-        <el-option label="键盘" value="键盘" />
-        <el-option label="英文" value="英文" />
-        <el-option label="中文" value="中文" />
+      <el-select v-model="query.module" placeholder="全部模块" clearable style="width: 120px" @change="search">
+        <el-option v-for="m in ['中文', '英文', '键盘']" :key="m" :label="m" :value="m" />
       </el-select>
-      <el-input v-model="query.keyword" placeholder="搜姓名" clearable style="width: 150px" />
-      <el-select v-model="query.order" style="width: 130px">
-        <el-option label="按速度 ↓" value="speed" />
-        <el-option label="按正确率 ↓" value="accuracy" />
-        <el-option label="按时间 ↓" value="time" />
+      <el-select v-model="query.difficulty" placeholder="全部难度" clearable style="width: 120px" @change="search">
+        <el-option v-for="d in ['简单', '中等', '困难']" :key="d" :label="d" :value="d" />
       </el-select>
-      <el-button type="primary" @click="load">查询</el-button>
+      <el-input v-model="query.keyword" placeholder="搜姓名" clearable style="width: 140px" @keyup.enter="search" @clear="search" />
+      <el-date-picker
+        v-model="query.dates"
+        type="daterange"
+        value-format="YYYY-MM-DD"
+        range-separator="至"
+        start-placeholder="开始日期"
+        end-placeholder="结束日期"
+        style="width: 250px"
+        @change="search"
+      />
+      <el-button type="primary" @click="search">查询</el-button>
+      <el-button @click="reset">重置</el-button>
     </div>
   </el-card>
 
-  <el-row :gutter="16">
-    <el-col :span="15">
-      <el-card shadow="never">
-        <template #header>成绩排名</template>
-        <el-empty v-if="!rows.length && !loading" description="还没有学生练习" :image-size="70" />
-        <el-table v-else :data="rows" v-loading="loading" border size="small" max-height="560">
-          <el-table-column label="名次" width="62">
-            <template #default="{ $index }">{{ medal($index) }}</template>
-          </el-table-column>
-          <el-table-column prop="student_name" label="姓名" width="90" />
-          <el-table-column prop="student_class" label="班级" width="110" show-overflow-tooltip />
-          <el-table-column prop="module" label="模块" width="66" />
-          <el-table-column prop="difficulty" label="难度" width="66" />
-          <el-table-column label="速度" width="76">
-            <template #default="{ row }">{{ row.speed || '—' }}</template>
-          </el-table-column>
-          <el-table-column label="正确率" width="80">
-            <template #default="{ row }">
-              <b :class="row.accuracy >= 80 ? 'ok' : row.accuracy >= 60 ? '' : 'no'">
-                {{ row.accuracy }}%
-              </b>
-            </template>
-          </el-table-column>
-          <el-table-column label="评价" width="76">
-            <template #default="{ row }">
-              <span class="stars">{{ '★'.repeat(row.stars) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="时间" min-width="120">
-            <template #default="{ row }">
-              {{ String(row.created_at).replace('T', ' ').slice(5, 16) }}
-            </template>
-          </el-table-column>
-          <el-table-column label="" width="56" fixed="right">
-            <template #default="{ row }">
-              <el-button link type="danger" @click="removeOne(row)">删</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-      </el-card>
-    </el-col>
+  <el-card shadow="never">
+    <div class="tools">
+      <span class="count">共 <b>{{ total }}</b> 条{{ filtered ? '（已筛选）' : '' }}</span>
+      <span v-if="picked.length" class="count">已勾选 <b>{{ picked.length }}</b> 条</span>
+      <div class="grow" />
+      <el-button size="small" type="danger" plain :disabled="!picked.length" @click="removePicked">
+        删除勾选{{ picked.length ? `（${picked.length}）` : '' }}
+      </el-button>
+      <el-button size="small" type="danger" plain :disabled="!total" @click="removeFiltered">
+        {{ filtered ? `删除筛选出的全部（${total}）` : `清空全部（${total}）` }}
+      </el-button>
+    </div>
 
-    <el-col :span="9">
-      <el-card shadow="never" class="page-card">
-        <template #header>正确率分布</template>
-        <el-empty v-if="!stats || !stats.total" description="暂无数据" :image-size="50" />
-        <div v-else class="dist">
-          <div v-for="b in buckets" :key="b.label" class="col">
-            <div class="n">{{ b.n }}</div>
-            <div class="pillar" :style="{ height: b.h + 'px', background: b.color }" />
-            <div class="lb">{{ b.label }}</div>
-          </div>
-        </div>
-      </el-card>
+    <el-empty v-if="!rows.length && !loading" description="没有符合条件的成绩" :image-size="70" />
+    <el-table
+      v-else
+      ref="table"
+      :data="rows"
+      v-loading="loading"
+      border
+      size="small"
+      row-key="id"
+      :default-sort="{ prop: 'created_at', order: 'descending' }"
+      @selection-change="v => (picked = v)"
+      @sort-change="onSort"
+    >
+      <el-table-column type="selection" width="42" />
+      <el-table-column prop="student_name" label="姓名" width="100" sortable="custom" />
+      <el-table-column prop="student_class" label="班级" min-width="110" sortable="custom" show-overflow-tooltip />
+      <el-table-column prop="module" label="模块" width="70" />
+      <el-table-column prop="difficulty" label="难度" width="70" />
+      <el-table-column prop="speed" label="速度" width="84" sortable="custom">
+        <template #default="{ row }">{{ row.module === '键盘' ? '—' : row.speed }}</template>
+      </el-table-column>
+      <el-table-column prop="accuracy" label="正确率" width="90" sortable="custom">
+        <template #default="{ row }">
+          <b :class="row.accuracy >= 80 ? 'ok' : row.accuracy >= 60 ? '' : 'no'">{{ row.accuracy }}%</b>
+        </template>
+      </el-table-column>
+      <el-table-column prop="duration" label="用时" width="80" sortable="custom">
+        <template #default="{ row }">{{ fmt(row.duration) }}</template>
+      </el-table-column>
+      <el-table-column prop="stars" label="评价" width="84" sortable="custom">
+        <template #default="{ row }"><span class="stars">{{ '★'.repeat(row.stars) || '—' }}</span></template>
+      </el-table-column>
+      <el-table-column prop="created_at" label="时间" width="140" sortable="custom">
+        <template #default="{ row }">{{ when(row.created_at) }}</template>
+      </el-table-column>
+      <el-table-column label="" width="56" fixed="right">
+        <template #default="{ row }">
+          <el-button link type="danger" @click="removeOne(row)">删</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
 
-      <el-card shadow="never" class="page-card">
-        <template #header>各模块练习量</template>
-        <el-empty v-if="!stats || !stats.total" description="暂无数据" :image-size="50" />
-        <div v-else class="mods">
-          <div v-for="(n, m) in stats.by_module" :key="m" class="mod">
-            <span>{{ m }}</span><b>{{ n }}</b>
-          </div>
-        </div>
-      </el-card>
-
-      <el-card shadow="never">
-        <template #header>各班平均</template>
-        <el-empty v-if="!stats || !stats.by_class.length" description="暂无数据" :image-size="50" />
-        <el-table v-else :data="stats.by_class" border size="small">
-          <el-table-column prop="student_class" label="班级" show-overflow-tooltip />
-          <el-table-column prop="count" label="人次" width="62" />
-          <el-table-column label="正确率" width="76">
-            <template #default="{ row }">{{ row.avg_accuracy }}%</template>
-          </el-table-column>
-          <el-table-column prop="avg_speed" label="速度" width="62" />
-        </el-table>
-      </el-card>
-    </el-col>
-  </el-row>
+    <el-pagination
+      v-if="total > query.page_size"
+      v-model:current-page="query.page"
+      v-model:page-size="query.page_size"
+      class="pager"
+      :total="total"
+      :page-sizes="[20, 50, 100, 200]"
+      layout="total, sizes, prev, pager, next, jumper"
+      @current-change="load"
+      @size-change="search"
+    />
+  </el-card>
 </template>
 
 <style scoped>
@@ -246,10 +293,22 @@ const fmt = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60
   color: var(--el-text-color-secondary);
   margin-left: 3px;
 }
-.bar {
+.bar,
+.tools {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+  align-items: center;
+}
+.tools {
+  margin-bottom: 10px;
+}
+.grow {
+  flex: 1;
+}
+.count {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
 }
 .ok {
   color: var(--el-color-success);
@@ -260,44 +319,8 @@ const fmt = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60
 .stars {
   color: #e6a23c;
 }
-.dist {
-  display: flex;
-  align-items: flex-end;
-  gap: 12px;
-  height: 130px;
-  padding: 6px 4px;
-}
-.col {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 5px;
+.pager {
+  margin-top: 12px;
   justify-content: flex-end;
-}
-.n {
-  font-size: 12px;
-  font-weight: 600;
-}
-.pillar {
-  width: 62%;
-  border-radius: 5px 5px 0 0;
-}
-.lb {
-  font-size: 11px;
-  color: var(--el-text-color-secondary);
-}
-.mods {
-  display: flex;
-  gap: 24px;
-}
-.mod span {
-  display: block;
-  font-size: 11.5px;
-  color: var(--el-text-color-secondary);
-}
-.mod b {
-  font-size: 20px;
-  font-family: ui-monospace, Consolas, monospace;
 }
 </style>

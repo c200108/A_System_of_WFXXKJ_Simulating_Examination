@@ -13,6 +13,7 @@
 import io
 import math
 import re
+from datetime import date, datetime, time, timedelta
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
@@ -20,10 +21,13 @@ from openpyxl import Workbook
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from .. import clock
 from ..database import get_db
 from ..deps import get_current_user, get_optional_student, require_delete_permission
 from ..models import SchoolClass, Student, TypingRecord, TypingText, User
 from ..schemas import (
+    IdsIn,
+    TypingRecordPage,
     TypingConfigOut,
     TypingTextBulkIn,
     TypingTextIn,
@@ -34,7 +38,7 @@ from ..schemas import (
     TypingResultOut,
     TypingStatsOut,
 )
-from ..services import throttle
+from ..services import throttle, typing_analysis
 from ..services.typing_texts import add_texts, build_passage, parse_txt, text_hash
 from ..siteconfig import site
 
@@ -265,6 +269,131 @@ def submit_record(
 
 
 # ---------------------------------------------------------------- 教师端（要登录）
+class RecordFilter:
+    """成绩页的筛选条件。分页查询、导出、按条件删除用的是同一份，删掉的正是看到的。"""
+
+    def __init__(
+        self,
+        student_class: str = "",
+        module: str = "",
+        difficulty: str = "",
+        keyword: str = Query("", max_length=64),
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ):
+        self.student_class, self.module, self.difficulty = student_class, module, difficulty
+        self.keyword = keyword.strip()
+        self.date_from, self.date_to = date_from, date_to
+
+    def apply(self, stmt):
+        if self.student_class:
+            stmt = stmt.where(TypingRecord.student_class == self.student_class)
+        if self.module:
+            stmt = stmt.where(TypingRecord.module == self.module)
+        if self.difficulty:
+            stmt = stmt.where(TypingRecord.difficulty == self.difficulty)
+        if self.keyword:
+            stmt = stmt.where(TypingRecord.student_name.like(f"%{self.keyword}%"))
+        if self.date_from:
+            stmt = stmt.where(TypingRecord.created_at >= datetime.combine(self.date_from, time.min))
+        if self.date_to:
+            stmt = stmt.where(TypingRecord.created_at < datetime.combine(self.date_to + timedelta(days=1), time.min))
+        return stmt
+
+    @property
+    def empty(self) -> bool:
+        return not any((self.student_class, self.module, self.difficulty, self.keyword,
+                        self.date_from, self.date_to))
+
+
+SORTS = {
+    "speed": TypingRecord.speed, "accuracy": TypingRecord.accuracy, "duration": TypingRecord.duration,
+    "stars": TypingRecord.stars, "time": TypingRecord.created_at, "name": TypingRecord.student_name,
+    "class": TypingRecord.student_class,
+}
+
+
+@router.get("/records/search", response_model=TypingRecordPage, summary="成绩：筛选 + 排序 + 分页")
+def search_records(
+    f: RecordFilter = Depends(),
+    sort: str = Query("time", pattern="^(" + "|".join(SORTS) + ")$"),
+    order: str = Query("desc", pattern="^(asc|desc)$"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    total = db.scalar(f.apply(select(func.count()).select_from(TypingRecord))) or 0
+    col = SORTS[sort]
+    stmt = f.apply(select(TypingRecord)).order_by(
+        col.desc() if order == "desc" else col.asc(), TypingRecord.id.desc())
+    items = db.scalars(stmt.offset((page - 1) * page_size).limit(page_size)).all()
+    return TypingRecordPage(total=total, items=list(items))
+
+
+@router.post("/records/delete", summary="批量删除勾选的成绩（需要删除权）")
+def delete_records(
+    body: IdsIn,
+    _: User = Depends(require_delete_permission),
+    db: Session = Depends(get_db),
+):
+    ids = list(dict.fromkeys(body.ids))
+    if not ids:
+        raise HTTPException(status_code=400, detail="没有勾选任何成绩")
+    n = db.execute(delete(TypingRecord).where(TypingRecord.id.in_(ids))).rowcount
+    db.commit()
+    return {"deleted": n}
+
+
+@router.get("/analysis", summary="打字学情分析（可视化页用）")
+def analysis(
+    module: str = Query("", pattern="^(|中文|英文|键盘)$"),
+    days: int = Query(30, ge=0, le=3650),
+    classes: list[str] = Query([]),
+    students: list[str] = Query([]),
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """module：只看一个模块（速度只在中文 / 英文里比）；days：最近几天，0 = 全部；
+    classes：只看这几个班；students：几个学生对比（「班级|姓名」）。都不给就是全体。"""
+    stmt = select(TypingRecord)
+    if module:
+        stmt = stmt.where(TypingRecord.module == module)
+    today = clock.today()
+    if days:
+        stmt = stmt.where(TypingRecord.created_at >= datetime.combine(today - timedelta(days=days - 1), time.min))
+    everyone = list(db.scalars(stmt))
+
+    want_students = {s for s in students if s.strip()}
+    want_classes = {c.strip() for c in classes if c.strip()}
+    if want_students:
+        rows, scope = [r for r in everyone if typing_analysis.key_of(r) in want_students], {"kind": "students"}
+    elif want_classes:
+        rows = [r for r in everyone if (r.student_class or "未填班级") in want_classes]
+        scope = {"kind": "classes", "classes": sorted(want_classes)}
+    else:
+        rows, scope = everyone, {"kind": "all"}
+
+    roster = dict(db.execute(
+        select(Student.student_class, func.count()).where(Student.is_active.is_(True))
+        .group_by(Student.student_class)).all())
+    result = typing_analysis.analyze(rows, module, scope, roster, today, days)
+
+    by_key: dict = {}
+    for r in everyone:
+        k = typing_analysis.key_of(r)
+        o = by_key.setdefault(k, {"key": k, "name": r.student_name,
+                                  "class": r.student_class or "未填班级", "count": 0})
+        o["count"] += 1
+    result["options"] = {
+        "classes": sorted({r.student_class or "未填班级" for r in everyone}),
+        "students": sorted(by_key.values(), key=lambda o: (o["class"], o["name"])),
+    }
+    result["days"] = days
+    result["updated_at"] = clock.now().isoformat(sep=" ", timespec="seconds")
+    return result
+
+
 @router.get("/records", response_model=list[TypingRecordOut], summary="成绩列表")
 def list_records(
     student_class: str | None = None,
@@ -366,8 +495,13 @@ def classes(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
 
 
 @router.get("/export.xlsx", summary="导出成绩 Excel")
-def export_xlsx(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    rows = db.scalars(select(TypingRecord).order_by(TypingRecord.created_at.desc())).all()
+def export_xlsx(
+    f: RecordFilter = Depends(),
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """导出的是成绩页上**当前筛选**出来的那些（没筛就是全部）。"""
+    rows = db.scalars(f.apply(select(TypingRecord)).order_by(TypingRecord.created_at.desc())).all()
 
     wb = Workbook()
     ws = wb.active
@@ -407,16 +541,15 @@ def delete_record(
     return {"ok": True}
 
 
-@router.delete("/records", summary="清空成绩（需要删除权）")
+@router.delete("/records", summary="按筛选条件删除成绩，不带条件就是清空（需要删除权）")
 def clear_records(
-    student_class: str | None = None,
+    f: RecordFilter = Depends(),
     _: User = Depends(require_delete_permission),
     db: Session = Depends(get_db),
 ):
-    stmt = delete(TypingRecord)
-    if student_class:
-        stmt = stmt.where(TypingRecord.student_class == student_class)
-    n = db.execute(stmt).rowcount
+    """条件和成绩页的筛选一样 —— 页面上「删除筛选出的 N 条」删掉的正是看到的那 N 条。"""
+    ids = select(TypingRecord.id)
+    n = db.execute(delete(TypingRecord).where(TypingRecord.id.in_(f.apply(ids)))).rowcount
     db.commit()
     return {"ok": True, "deleted": n}
 

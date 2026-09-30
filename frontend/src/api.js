@@ -264,10 +264,14 @@ export const api = {
   typingRosterClasses: () => http.get('/typing/roster-classes'),
   typingCheckStudent: (student_class, student_name) =>
     http.get('/typing/check-student', { params: { student_class, student_name } }),
-  typingExport: () => http.get('/typing/export.xlsx', { responseType: 'blob' }),
+  // 数组参数要写成 classes=a&classes=b（后端认这种），axios 默认会写成 classes[]=a
+  typingExport: (params = {}) => http.get('/typing/export.xlsx', { params, responseType: 'blob' }),
   typingDelete: id => http.delete(`/typing/records/${id}`),
-  typingClear: student_class =>
-    http.delete('/typing/records', { params: { student_class } }),
+  typingClear: (params = {}) => http.delete('/typing/records', { params }),
+  typingSearch: params => http.get('/typing/records/search', { params }),
+  typingDeleteMany: ids => http.post('/typing/records/delete', { ids }),
+  typingAnalysis: params =>
+    http.get('/typing/analysis', { params, paramsSerializer: { indexes: null } }),
 
   // 打字文本库
   typingTexts: params => http.get('/typing/texts', { params }),

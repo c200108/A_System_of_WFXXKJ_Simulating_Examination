@@ -604,6 +604,13 @@ class TypingRecordOut(ORMModel):
     created_at: datetime | None = None
 
 
+class TypingRecordPage(BaseModel):
+    """成绩页一页：总条数（筛选后）+ 这一页的行。"""
+
+    total: int = 0
+    items: list[TypingRecordOut] = []
+
+
 class TypingStatsOut(BaseModel):
     total: int = 0
     students: int = 0
