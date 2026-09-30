@@ -24,7 +24,7 @@
 #   2. 先把本机现有数据导一份到「回滚点」，万一导错了能退回去
 #   3. 试算：列出每张表要导多少行、有哪些版本差异
 #   4. 让你确认，然后真导
-#   5. 还原配图（合并：本机原有的一个不删）和 config.yaml
+#   5. 还原配图（合并：本机原有的一个不删）和 config.yaml（合并：新版本多的配置项补进去）
 #   6. 重启后端，逐表核对行数
 
 set -uo pipefail
@@ -141,8 +141,20 @@ fi
 
 if [ -s "$SRC/config.yaml" ]; then
     cp "$ROOT/config.yaml" "$ROOT/config.yaml.bak-$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
-    cp "$SRC/config.yaml" "$ROOT/config.yaml" || warn "复制 config.yaml 失败"
-    ok "config.yaml 已还原（原件备份为 config.yaml.bak-*）"
+    # 不能拿备份整个盖：早期备份没有新版本加的配置项（time、打字防刷……），盖上去就全丢了。
+    # 合并：备份里的值和注释全留着，新版本多出来的项连说明一起补进去（tools/merge_config.py）。
+    # 合不成（校验不过、容器里还是旧程序）就保留新版本那份，备份那份留着手工对照。
+    MERGED="$(mktemp)"; MLOG="$(mktemp)"
+    if docker compose exec -T backend python -m tools.merge_config - /app/config.yaml             < "$SRC/config.yaml" > "$MERGED" 2> "$MLOG" && [ -s "$MERGED" ]; then
+        # 写回原文件而不是 mv：config.yaml 是单文件挂进容器的，换了 inode 容器里就看不见了
+        cat "$MERGED" > "$ROOT/config.yaml" || warn "写回 config.yaml 失败"
+        ok "config.yaml 已还原：备份里的配置全部保留（原件备份为 config.yaml.bak-*）"
+        ok "$(tail -n 1 "$MLOG")"
+    else
+        warn "config.yaml 没合并成功，先保留新版本那份：$(tail -n 1 "$MLOG")"
+        warn "  备份里的在 $SRC/config.yaml，需要的话手工对照着改"
+    fi
+    rm -f "$MERGED" "$MLOG"
 fi
 
 # settings.env 里是端口和对外地址，不含口令。要不要套用由你决定 ——

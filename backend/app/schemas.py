@@ -478,6 +478,7 @@ class SubmissionOut(ORMModel):
     full_score: int = 0                   # 客观 + 主观满分，0 = 老卷子（百分制）
     pending_manual: int = 0               # 还有几道主观题没批
     graded_by_name: str = ""              # 谁批的
+    can_grade: bool = True                # 当前这位老师批不批得了（只批自己带的班）
     graded_at: datetime | None = None
     submitted_at: datetime | None = None
 

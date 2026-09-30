@@ -457,8 +457,9 @@ const hardest = computed(() => {
           </el-table-column>
           <el-table-column label="" :width="current.can_edit ? 132 : 86">
             <template #default="{ row }">
-              <el-button link :type="row.pending_manual ? 'warning' : 'primary'" @click="openDetail(row)">
-                {{ row.pending_manual ? '阅卷 ' + row.pending_manual : '答卷' }}
+              <!-- 别的班的答卷只能看，不显示「阅卷」 -->
+              <el-button link :type="row.pending_manual && row.can_grade ? 'warning' : 'primary'" @click="openDetail(row)">
+                {{ !row.can_grade ? '查看' : row.pending_manual ? '阅卷 ' + row.pending_manual : '答卷' }}
               </el-button>
               <el-button v-if="current.can_edit" link type="danger" @click="removeSub(row)">删除</el-button>
             </template>
@@ -592,7 +593,10 @@ const hardest = computed(() => {
         <span v-if="detail.graded_by_name" class="of">　{{ detail.graded_by_name }} 已评阅</span>
       </p>
 
-      <el-alert v-if="manualItems.length" type="warning" :closable="false" class="hint">
+      <el-alert v-if="manualItems.length && !detail.can_grade" type="info" :closable="false" class="hint">
+        这份答卷是「{{ detail.student_class || '未填班级' }}」的，不是你带的班，<b>只能查看，不能评分</b>；请该班老师批改。
+      </el-alert>
+      <el-alert v-else-if="manualItems.length" type="warning" :closable="false" class="hint">
         下面带输入框的是<b>操作题</b>。按检查点判过的：<b>全部通过的已经给了满分、全部没过的给了 0 分</b>，
         不用再管；部分通过的按比例预填了分数，看一眼没问题就保存（觉得不对可以改）。
         没挂仿真的机器判不了，要你看着作答给分。
@@ -638,13 +642,16 @@ const hardest = computed(() => {
             v-model="manual[d.id]"
             :min="0"
             :max="d.score"
+            :disabled="!detail.can_grade"
             size="small"
             controls-position="right"
             style="width: 96px"
           />
           <span class="of">/ {{ d.score }} 分</span>
-          <el-button link size="small" @click="manual[d.id] = d.score">给满分</el-button>
-          <el-button link size="small" @click="manual[d.id] = 0">给 0 分</el-button>
+          <template v-if="detail.can_grade">
+            <el-button link size="small" @click="manual[d.id] = d.score">给满分</el-button>
+            <el-button link size="small" @click="manual[d.id] = 0">给 0 分</el-button>
+          </template>
         </div>
       </div>
     </template>
@@ -654,7 +661,7 @@ const hardest = computed(() => {
       </span>
       <el-button @click="detailDlg = false">关闭</el-button>
       <el-button
-        v-if="manualItems.length"
+        v-if="manualItems.length && detail.can_grade"
         type="primary"
         :loading="saving"
         @click="saveManual"

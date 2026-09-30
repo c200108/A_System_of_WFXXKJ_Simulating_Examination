@@ -56,8 +56,8 @@ if [ -d "$TARGET" ]; then
         ok "已备份 data/uploads → $BACKUP_DIR/uploads-$STAMP.tar.gz"
     fi
 
-    # config.yaml 只备份、不还原：新版本常会加字段（比如 site、typing.time_limits），
-    # 把旧文件盖回去反而会缺键或触发启动校验。留一份是为了让你能 diff 出自己改过什么。
+    # config.yaml 不整个盖回去：新版本常会加字段（比如 time、typing 的防刷），盖回去就缺了。
+    # 等新版本起来以后合并 —— 你改过的值全留着，新版本多的项补进去（见最后一步）。
     if [ -f "$TARGET/config.yaml" ]; then
         cp "$TARGET/config.yaml" "$BACKUP_DIR/config-$STAMP.yaml"
         ok "已备份 config.yaml → $BACKUP_DIR/config-$STAMP.yaml"
@@ -129,13 +129,7 @@ if [ "$HAS_OLD" = 1 ]; then
         ok "题目配图与导入原件已还原（$(find "$TARGET/data/uploads" -type f | wc -l) 个文件）"
     fi
 
-    # config.yaml 用的是新版本那份。如果你在服务器上改过它（平台名称、
-    # 知识范围、打字文本……），这里把差异指出来，别让改动无声无息地没掉。
-    if ! diff -q "$BACKUP_DIR/config-$STAMP.yaml" "$TARGET/config.yaml" >/dev/null 2>&1; then
-        warn "config.yaml 和你原来那份不一样，已改用新版本的。"
-        warn "  想看差在哪：diff $BACKUP_DIR/config-$STAMP.yaml $TARGET/config.yaml"
-        warn "  确认后把自己的改动手工挪回去，然后 docker compose restart backend"
-    fi
+    # config.yaml 先用新版本那份把服务起起来，最后一步再把你原来的值合回去
 else
     warn "首次部署：稍后 deploy.sh 会引导你生成 .env"
 fi
@@ -145,6 +139,25 @@ step "[5/5] 重新构建并启动..."
 cd "$TARGET" || die "进不去 $TARGET"
 chmod +x deploy.sh scripts/*.sh backup/*.sh 2>/dev/null || true
 bash deploy.sh
+
+# ---------------------------------------------------------------- 合回原来的 config.yaml
+# 你在服务器上改过的值（平台名称、校徽、卷面结构、打字文本……）全留着，新版本多出来的
+# 配置项连说明一起补进去（tools/merge_config.py，要在新版本的容器里跑）。
+if [ "$HAS_OLD" = 1 ] && [ -f "$BACKUP_DIR/config-$STAMP.yaml" ]         && ! cmp -s "$BACKUP_DIR/config-$STAMP.yaml" "$TARGET/config.yaml"; then
+    MERGED="$(mktemp)"; MLOG="$(mktemp)"
+    if docker compose exec -T backend python -m tools.merge_config - /app/config.yaml             < "$BACKUP_DIR/config-$STAMP.yaml" > "$MERGED" 2> "$MLOG" && [ -s "$MERGED" ]; then
+        if ! cmp -s "$MERGED" "$TARGET/config.yaml"; then
+            # 写回原文件而不是 mv：config.yaml 是单文件挂进容器的，换了 inode 容器里就看不见了
+            cat "$MERGED" > "$TARGET/config.yaml"
+            docker compose restart backend >/dev/null 2>&1
+        fi
+        ok "config.yaml：你原来的配置全部保留。$(tail -n 1 "$MLOG")"
+    else
+        warn "config.yaml 没合并成功，先用的新版本那份：$(tail -n 1 "$MLOG")"
+        warn "  原来那份在 $BACKUP_DIR/config-$STAMP.yaml，diff 一下手工挪回去，再 docker compose restart backend"
+    fi
+    rm -f "$MERGED" "$MLOG"
+fi
 
 echo
 echo "=================================================="
