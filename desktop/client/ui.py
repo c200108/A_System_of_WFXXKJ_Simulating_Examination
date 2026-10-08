@@ -18,6 +18,9 @@
 初始密码就是学号，和网页端一致。早先桌面端用的是"考号 + 姓名"，那样没法做
 改密码 —— 没有密码可改。
 
+**姓名登录版**（`build.py --name-login`）换成中文姓名 + 密码，初始密码统一
+123456；同名的同学在这一栏改填学号。账号还是那一个，改过的密码两版通用。
+
 ## 答题不在这儿
 
 点「开始考试」之后整页沉浸，没有侧边栏（考试中途点走太容易误操作），那一段在
@@ -35,8 +38,9 @@ from tkinter import filedialog, messagebox, ttk
 from . import api, cleanup, package, snapshot, states, store
 from .exam_ui import DoneFrame, ExamFrame
 from .shell import (AMBER, APP_NAME, BG, BLUE, CARD, CLIENT_VER, FONT, GRAY,
-                    GREEN, LINE, RED, baked_server, build_stamp, in_thread,
-                    server_from_name, set_window_icon)
+                    GREEN, LINE, NAME_LOGIN_PASSWORD, RED, baked_name_login,
+                    baked_server, build_stamp, in_thread, server_from_name,
+                    set_window_icon)
 
 
 def default_server() -> str:
@@ -59,7 +63,11 @@ SIDE_ON = "#2c6fd1"
 
 # ================================================================ 登录
 class LoginFrame(ttk.Frame):
-    """教师端地址 + 学号 + 密码。"""
+    """教师端地址 + 学号 + 密码（姓名登录版：姓名 + 密码）。
+
+    姓名登录版里第二栏填的是姓名，但变量名仍叫 "no" —— 重名时那一栏也填学号，
+    两版共用一套界面代码。
+    """
 
     def __init__(self, app):
         super().__init__(app.root, padding=0)
@@ -76,7 +84,9 @@ class LoginFrame(ttk.Frame):
         head.pack_propagate(False)
         tk.Label(head, text=APP_NAME, bg=BLUE, fg="white",
                  font=(FONT, 20, "bold")).pack(pady=(22, 0))
-        tk.Label(head, text="用学号和密码登录　·　初始密码就是学号", bg=BLUE,
+        by_name = self.app.name_login
+        tk.Label(head, text=(f"用姓名和密码登录　·　初始密码 {NAME_LOGIN_PASSWORD}" if by_name
+                             else "用学号和密码登录　·　初始密码就是学号"), bg=BLUE,
                  fg="#d8e6ff", font=(FONT, 10)).pack()
 
         card = tk.Frame(wrap, bg=CARD, highlightbackground=LINE, highlightthickness=1)
@@ -84,8 +94,10 @@ class LoginFrame(ttk.Frame):
 
         self.vars = {}
         rows = [("server", "教师端地址", "如 192.168.1.8:8080"),
+                ("no", "姓　　名", "重名的同学填学号") if by_name else
                 ("no", "学　　号", "如 26070101"),
-                ("password", "密　　码", "初始密码=学号")]
+                ("password", "密　　码",
+                 f"初始密码 {NAME_LOGIN_PASSWORD}" if by_name else "初始密码=学号")]
         for i, (key, label, hint) in enumerate(rows):
             y = 26 + i * 46
             tk.Label(card, text=label, bg=CARD, font=(FONT, 10)).place(x=30, y=y + 4)
@@ -123,7 +135,8 @@ class LoginFrame(ttk.Frame):
                   bg=CARD, fg=GRAY, cursor="hand2", command=self.offline
                   ).place(x=30, y=268, width=410, height=20)
 
-        tk.Label(wrap, text=f"客户端 {CLIENT_VER}　构建 {build_stamp()}　"
+        tk.Label(wrap, text=f"客户端 {CLIENT_VER}{'（姓名登录版）' if by_name else ''}"
+                            f"　构建 {build_stamp()}　"
                             "操作题在真实系统中完成",
                  bg=BG, fg=GRAY, font=(FONT, 8)).pack(side="bottom", pady=6)
 
@@ -173,7 +186,8 @@ class LoginFrame(ttk.Frame):
             self.msg.config(text="请先填教师端地址，问监考老师")
             return
         if not no or not pwd:
-            self.msg.config(text="学号和密码都要填（初始密码就是学号）")
+            self.msg.config(text=f"姓名和密码都要填（初始密码 {NAME_LOGIN_PASSWORD}）"
+                            if self.app.name_login else "学号和密码都要填（初始密码就是学号）")
             return
 
         self.busy = True
@@ -191,7 +205,8 @@ class LoginFrame(ttk.Frame):
             self.app.token = got.get("access_token", "")
             self.app.student = student_of(got.get("student") or {})
             self.app.enter_shell()
-        in_thread(self, lambda: api.login(server, no, pwd), done)
+        sign_in = api.login_by_name if self.app.name_login else api.login
+        in_thread(self, lambda: sign_in(server, no, pwd), done)
 
     # ---------------- 离线后路 ----------------
     def offline(self):
@@ -203,7 +218,7 @@ class LoginFrame(ttk.Frame):
             return
         no = self.vars["no"].get().strip()
         if not no:
-            self.msg.config(text="离线开考也要先填学号")
+            self.msg.config(text="离线开考也要先填" + ("姓名" if self.app.name_login else "学号"))
             return
         try:
             pack = package.ExamPackage(Path(got))
@@ -213,8 +228,17 @@ class LoginFrame(ttk.Frame):
 
         # 离线时服务器认不了人，只能靠包里的名单
         hit = next((r for r in pack.roster() if str(r.get("no")) == no), None)
+        if not hit and self.app.name_login:
+            same = [r for r in pack.roster() if str(r.get("name", "")).strip() == no]
+            if len(same) > 1:
+                self.msg.config(text=f"名单里有 {len(same)} 位同学叫「{no}」，请改填学号")
+                return
+            hit = same[0] if same else None
+            if hit:
+                no = str(hit.get("no", ""))
         if pack.roster() and not hit:
-            self.msg.config(text="名单里没有这个学号，请找监考老师")
+            self.msg.config(text="名单里没有这个" + ("姓名" if self.app.name_login else "学号")
+                            + "，请找监考老师")
             return
         self.app.student = {"no": no, "name": (hit or {}).get("name", no),
                             "cls": (hit or {}).get("cls", "")}
@@ -443,7 +467,9 @@ class HomePage(Page):
 
     def _password_card(self):
         c = self.card("修改密码")
-        tk.Label(c, text="初始密码就是学号，建议第一次登录后改掉。", bg=CARD, fg=GRAY,
+        first = (f"初始密码是 {NAME_LOGIN_PASSWORD}" if self.app.name_login
+                 else "初始密码就是学号")
+        tk.Label(c, text=f"{first}，建议第一次登录后改掉。", bg=CARD, fg=GRAY,
                  font=(FONT, 9), anchor="w").pack(fill="x", padx=16)
         self.pwd = {}
         for key, label in (("old", "原密码"), ("new", "新密码"), ("again", "再输一遍")):
@@ -895,7 +921,8 @@ class TypingPage(Page):
 
 # ================================================================ 应用
 class ExamApp:
-    def __init__(self, exam_root: Path, out_dir: Path, server: str = "", root=None):
+    def __init__(self, exam_root: Path, out_dir: Path, server: str = "", root=None,
+                 name_login: bool | None = None):
         # root 留给自检用：一个进程里反复 Tk() 会把 Tcl 弄坏（报错里的文件名
         # 每次都不一样，一看就是内存被踩了）。正式跑的时候它就是 None。
         self.root = root or tk.Tk()
@@ -914,6 +941,8 @@ class ExamApp:
         self.exam_root = Path(exam_root)
         self.out_dir = Path(out_dir)
         self.server = api.norm(server)
+        # 姓名登录版：打包时烤进去的，命令行 --name-login 也能临时打开
+        self.name_login = baked_name_login() if name_login is None else name_login
         self.frame: ttk.Frame | None = None
         self.swap(LoginFrame(self))
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)

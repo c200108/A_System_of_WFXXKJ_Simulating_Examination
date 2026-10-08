@@ -160,6 +160,32 @@ def initial_password(student_no: str) -> str:
     return student_no if len(student_no) >= PASSWORD_MIN else (student_no + "123456")[:6]
 
 
+# 「姓名登录版」学生端（desktop `build.py --name-login`）的初始密码。
+# 学号登录那条路不变（初始密码仍是学号）；两边认的是同一个账号，
+# 学生改过密码之后，两种登录都只认新密码。
+NAME_LOGIN_PASSWORD = "123456"
+
+
+def still_initial(row: Student) -> bool:
+    """这个账号还没改过密码（仍是建号 / 重置时给的那个学号初始密码）。"""
+    return verify_password(initial_password(row.student_no), row.password_hash)
+
+
+def name_login_ok(row: Student, pwd: str) -> bool:
+    """姓名登录的密码对不对：没改过密码的账号**只认 123456**（不认学号那个初始密码，
+    学号是同学之间都知道的）；改过的认新密码。"""
+    if still_initial(row):
+        return pwd == NAME_LOGIN_PASSWORD
+    return verify_password(pwd, row.password_hash)
+
+
+def _student_token(row: Student) -> StudentTokenOut:
+    return StudentTokenOut(
+        access_token=create_access_token(row.id, "student", typ=TOKEN_STUDENT),
+        student=StudentOut.model_validate(row),
+    )
+
+
 # ================================================================ 学生端
 @student_api.post("/login", response_model=StudentTokenOut, summary="学生登录（学号 + 密码）")
 def student_login(
@@ -172,10 +198,36 @@ def student_login(
         raise HTTPException(status_code=400, detail="学号或密码不正确")
     if not row.is_active:
         raise HTTPException(status_code=403, detail="账号已停用，请找老师")
-    return StudentTokenOut(
-        access_token=create_access_token(row.id, "student", typ=TOKEN_STUDENT),
-        student=StudentOut.model_validate(row),
-    )
+    return _student_token(row)
+
+
+@student_api.post("/login-by-name", response_model=StudentTokenOut,
+                  summary="学生登录（中文姓名 + 密码，初始密码 123456）")
+def student_login_by_name(
+    name: str = Query(..., description="中文姓名；有重名的同学也可以填学号"),
+    password: str = Query(..., description="密码"),
+    db: Session = Depends(get_db),
+):
+    """给「姓名登录版」学生端用。账号就是学号登录的那个账号，只是换个认人的办法。
+
+    **重名**：同名的几位里，谁的密码对上就是谁；都还用着 123456（对得上不止一位）时
+    分不出是谁，提示改填学号 —— 这个框同时认学号。
+    """
+    who = (name or "").strip()
+    if not who:
+        raise HTTPException(status_code=400, detail="请填写姓名")
+    rows = db.scalars(select(Student).where(Student.student_no == who)).all() or \
+        db.scalars(select(Student).where(Student.name == who).order_by(Student.id)).all()
+    hits = [r for r in rows if name_login_ok(r, password)]
+    if not hits:
+        raise HTTPException(status_code=400, detail="姓名或密码不正确")
+    active = [r for r in hits if r.is_active]
+    if not active:
+        raise HTTPException(status_code=403, detail="账号已停用，请找老师")
+    if len(active) > 1:
+        raise HTTPException(status_code=409,
+                            detail=f"有 {len(active)} 位同学叫「{who}」，请在姓名那一栏改填学号登录")
+    return _student_token(active[0])
 
 
 @student_api.get("/me", response_model=StudentOut, summary="当前登录的学生")
@@ -190,9 +242,13 @@ def student_change_password(
     db: Session = Depends(get_db),
 ):
     """学号和姓名不给改 —— 那是学校给的身份，改了老师就对不上人了。"""
-    if not verify_password(body.old_password, me.password_hash):
+    # 姓名登录版的学生只知道 123456 —— 没改过密码时它也算原密码（学号照样认）
+    if not (verify_password(body.old_password, me.password_hash)
+            or (body.old_password == NAME_LOGIN_PASSWORD and still_initial(me))):
         raise HTTPException(status_code=400, detail="原密码不正确")
     pwd = check_student_password(body.new_password)
+    if pwd == NAME_LOGIN_PASSWORD:
+        raise HTTPException(status_code=400, detail="123456 是大家都知道的初始密码，换一个吧")
     # 初始密码就是学号，所以「别用学号」要放在「和原密码一样」前面判，
     # 否则改密码时永远只看得到后一句，提示不到点子上
     if pwd == me.student_no:
