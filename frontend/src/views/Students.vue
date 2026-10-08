@@ -296,7 +296,7 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
     </div>
 
     <el-empty v-if="!rows.length && !loading" description="还没有学生账号，先用「按班级批量建号」导一批" :image-size="80" />
-    <el-table
+    <el-table v-mtable
       v-else
       :data="paged"
       v-loading="loading"

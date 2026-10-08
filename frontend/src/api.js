@@ -2,6 +2,7 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import router from './router'
 import { clearAuth, clearStudentAuth } from './auth'
+import { appAuthExpired, appSaveBlob, inApp } from './appBridge'
 
 const http = axios.create({ baseURL: '/api', timeout: 60000 })
 
@@ -122,6 +123,12 @@ http.interceptors.response.use(
   err => {
     if (err.response?.status === 401) {
       // 在哪一侧就清哪一侧的登录状态，别把另一边的人也踢下线
+      if (inApp) {
+        // APP 里不跳网页登录页：交给外壳用保存的账号密码重新登录，登上了自动刷新本页
+        appAuthExpired()
+        ElMessage.warning('登录已过期，正在重新登录…')
+        return Promise.reject(err)
+      }
       if (window.location.pathname.startsWith('/js')) {
         clearAuth()
         router.push('/js/login')
@@ -140,6 +147,15 @@ http.interceptors.response.use(
 /** 触发浏览器下载。后端返回的是二进制流，文件名在前端拼，省得解析响应头。 */
 export async function download(blobPromise, filename) {
   const blob = await blobPromise
+  // APP 里 WebView 不认 blob 链接下载，交给外壳存进手机的「下载」目录
+  if (inApp) {
+    try {
+      if (await appSaveBlob(blob, filename)) return
+    } catch {
+      ElMessage.error('保存文件失败，请检查手机存储空间')
+      return
+    }
+  }
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url

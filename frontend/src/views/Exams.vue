@@ -279,7 +279,7 @@ const hardest = computed(() => {
     </el-alert>
 
     <el-empty v-if="!exams.length && !loading" description="还没有发布过考试" />
-    <el-table v-else :data="exams" v-loading="loading" border size="small">
+    <el-table v-mtable v-else :data="exams" v-loading="loading" border size="small">
       <el-table-column prop="title" label="考试" min-width="160" show-overflow-tooltip />
       <el-table-column label="发布人" width="110" show-overflow-tooltip>
         <template #default="{ row }">
@@ -416,7 +416,7 @@ const hardest = computed(() => {
             @click="removeSelected"
           >删除选中的 {{ selected.length }} 份</el-button>
         </div>
-        <el-table
+        <el-table v-mtable
           :data="shownSubs"
           border
           size="small"

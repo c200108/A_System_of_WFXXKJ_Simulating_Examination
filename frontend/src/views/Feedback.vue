@@ -562,6 +562,26 @@ h1 {
 .grow {
   flex: 1;
 }
+/* 手机上工具按钮一行、说明一行、提交按钮占满一行 */
+@media (max-width: 768px) {
+  .acts {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .acts .tip {
+    flex: 0 0 100%;
+    order: 1;
+  }
+  .acts .grow {
+    display: none;
+  }
+  .acts > .el-button--primary {
+    flex: 0 0 100%;
+    order: 2;
+    margin: 0;
+    height: 40px;
+  }
+}
 
 /* 表情面板 */
 .emoji-grid {

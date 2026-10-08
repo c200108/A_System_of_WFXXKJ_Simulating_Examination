@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { currentUser } from './auth'
+import { appLogout, inApp } from './appBridge'
 
 /**
  * 两套平台共用一个单页应用，靠路径前缀分开：
@@ -52,6 +53,8 @@ const teacherRoutes = {
       redirect: { path: '/js/exams', query: { panel: 'typing-texts' } }
     },
     { path: 'profile', component: () => import('./views/Profile.vue'), meta: { title: '我的账号' } },
+    // 手机布局底部标签栏的「我的」（5.0.0）：反馈、更新日志、账号、深色模式、退出登录都在这
+    { path: 'me', component: () => import('./views/MobileMe.vue'), meta: { title: '我的' } },
     { path: 'users', component: () => import('./views/Users.vue'), meta: { title: '账号', admin: true } },
     // 反馈公开可看，登录的老师多出管理操作
     {
@@ -112,6 +115,11 @@ router.beforeEach(to => {
   const isTeacherSide = to.path === '/js' || to.path.startsWith('/js/')
 
   if (isTeacherSide) {
+    // APP 里登录页是原生的：走到网页登录页就是要重新登录，交回给外壳
+    if (inApp && to.path === '/js/login') {
+      appLogout()
+      return false
+    }
     if (to.meta.public) return true
     if (!localStorage.getItem('token')) return '/js/login'
     // meta.admin 的页面以前只靠菜单 v-if 藏着，手敲地址照样进得去

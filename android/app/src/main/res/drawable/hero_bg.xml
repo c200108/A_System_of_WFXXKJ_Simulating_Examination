@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 登录页顶部：蓝色渐变，右上和左下各压一个半透明的圆，不至于一整块平板 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="315"
+                android:endColor="#3A52C9"
+                android:startColor="#5B7CFA" />
+        </shape>
+    </item>
+    <item
+        android:width="260dp"
+        android:height="260dp"
+        android:gravity="top|end"
+        android:right="-90dp"
+        android:top="-110dp">
+        <shape android:shape="oval">
+            <solid android:color="#14FFFFFF" />
+        </shape>
+    </item>
+    <item
+        android:width="180dp"
+        android:height="180dp"
+        android:bottom="-70dp"
+        android:gravity="bottom|start"
+        android:left="-60dp">
+        <shape android:shape="oval">
+            <solid android:color="#10FFFFFF" />
+        </shape>
+    </item>
+</layer-list>
