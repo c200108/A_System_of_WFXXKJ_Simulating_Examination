@@ -343,6 +343,12 @@ def login(server: str, student_no: str, password: str) -> dict:
     return _json(f"{norm(server)}/api/student/login?{query}", {}, method="POST")
 
 
+def login_by_name(server: str, name: str, password: str) -> dict:
+    """「姓名登录版」的登录：中文姓名 + 密码（初始 123456）。重名时这一栏也认学号。"""
+    query = urllib.parse.urlencode({"name": str(name).strip(), "password": password})
+    return _json(f"{norm(server)}/api/student/login-by-name?{query}", {}, method="POST")
+
+
 def me(server: str, token: str) -> dict:
     return _json(f"{norm(server)}/api/student/me", token=token)
 
