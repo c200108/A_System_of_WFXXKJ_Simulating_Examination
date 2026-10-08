@@ -93,6 +93,9 @@ def selftest(report: Path, server: str = "") -> int:
         lines.append(f"    文件名 {server_from_name() or '无'}"
                      f"　｜　本机记录 {store.remembered_server() or '无'}"
                      f"　｜　打包内置 {baked_server() or '无'}")
+        from client.shell import baked_name_login
+        lines.append("登录方式：" + ("姓名 + 密码（初始 123456）" if baked_name_login()
+                                     else "学号 + 密码（初始密码就是学号）"))
 
         lines.append("")
         lines.append("自检通过")
@@ -137,6 +140,8 @@ def main(argv=None) -> int:
     ap.add_argument("--out", default="",
                     help=r"本机备份写到哪，默认 %LOCALAPPDATA%\信息技术考试客户端\答案包")
     ap.add_argument("--server", default="", help="教师端地址，如 192.168.1.8:8000")
+    ap.add_argument("--name-login", action="store_true",
+                    help="用姓名登录（初始密码 123456）。打包时 build.py --name-login 已烤进去的不用加")
     ap.add_argument("--selftest", default="", metavar="结果文件",
                     help="自检：不开窗口，验一遍能不能跑，结果写到这个文件；"
                          "配合 --server 还会真连一次教师端（机房装机排障用）")
@@ -154,7 +159,8 @@ def main(argv=None) -> int:
     # （网络共享、被锁的桌面），还会直接写失败。
     out = Path(args.out) if args.out else data_dir() / "答案包"
     out.mkdir(parents=True, exist_ok=True)
-    ExamApp(Path(args.root), out, args.server).run()
+    ExamApp(Path(args.root), out, args.server,
+            name_login=True if args.name_login else None).run()
     return 0
 
 
