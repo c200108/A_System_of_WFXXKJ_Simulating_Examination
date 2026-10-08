@@ -264,3 +264,21 @@ def test_默认答案包目录在LOCALAPPDATA下(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     out = exam_client.data_dir() / "答案包"
     assert out.parent == tmp_path / store.APP_DIR_NAME
+
+
+def test_姓名登录版_开关烤得进去也读得回来(monkeypatch):
+    """`build.py --name-login` 写 NAME_LOGIN = True；没打包时当普通版。"""
+    import client
+
+    mod = type(sys)("client._build")
+    mod.NAME_LOGIN = True
+    monkeypatch.setitem(sys.modules, "client._build", mod)
+    monkeypatch.setattr(client, "_build", mod, raising=False)
+    assert shell.baked_name_login() is True
+    mod.NAME_LOGIN = False
+    assert shell.baked_name_login() is False
+
+
+def test_姓名登录版的文件名和普通版分得开():
+    name = build.exe_name("192.168.1.8:8080", "-姓名登录-32位")
+    assert name == "考试客户端-姓名登录-32位@192.168.1.8_8080.exe"
