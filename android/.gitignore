@@ -1,0 +1,9 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+# 签名文件和密码，绝不能进版本库
+keystore.properties
+*.jks
+*.keystore

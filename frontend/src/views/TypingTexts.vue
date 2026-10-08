@@ -219,7 +219,7 @@ async function doImport(opt) {
     </div>
 
     <el-empty v-if="!rows.length && !loading" description="这个筛选条件下还没有文本" :image-size="70" />
-    <el-table
+    <el-table v-mtable
       v-else
       ref="tableRef"
       :data="rows"

@@ -1,0 +1,55 @@
+plugins {
+    id 'com.android.application'
+}
+
+// 正式签名：在 android/ 下放一个 keystore.properties（不进 Git），内容见 README.md。
+// 没有这个文件时 release 包用调试签名，能装能用，只是以后换了签名得先卸载旧版再装。
+def keystoreFile = rootProject.file('keystore.properties')
+def keystore = new Properties()
+if (keystoreFile.exists()) keystoreFile.withInputStream { keystore.load(it) }
+
+android {
+    namespace 'cn.wfxxkj.teacher'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'cn.wfxxkj.teacher'
+        minSdk 29          // 安卓 10
+        targetSdk 35       // 安卓 15；更新的安卓照样能装
+        // 版本号跟系统的产品线走：5.x = 教师端 APP
+        versionCode 50000
+        versionName '5.0.0'
+    }
+
+    signingConfigs {
+        if (keystoreFile.exists()) {
+            release {
+                storeFile rootProject.file(keystore['storeFile'])
+                storePassword keystore['storePassword']
+                keyAlias keystore['keyAlias']
+                keyPassword keystore['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            // 压缩代码和资源：安装包只有几十 KB
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig keystoreFile.exists() ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    // 只用系统自带的组件，不依赖任何第三方库
+}

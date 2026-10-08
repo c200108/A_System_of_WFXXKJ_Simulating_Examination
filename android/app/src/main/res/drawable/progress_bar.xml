@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 页面加载进度条：细细一条品牌蓝 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@android:id/background">
+        <shape><solid android:color="#00000000" /></shape>
+    </item>
+    <item android:id="@android:id/progress">
+        <clip>
+            <shape><solid android:color="@color/primary" /></shape>
+        </clip>
+    </item>
+</layer-list>

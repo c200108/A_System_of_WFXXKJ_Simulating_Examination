@@ -208,7 +208,7 @@ const when = t => String(t || '').replace('T', ' ').slice(0, 16)
     </div>
 
     <el-empty v-if="!rows.length && !loading" description="没有符合条件的成绩" :image-size="70" />
-    <el-table
+    <el-table v-mtable
       v-else
       ref="table"
       :data="rows"

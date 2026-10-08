@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import settings
 from .siteconfig import site
 from .routers import (
+    app_mobile,
     auth,
     classes,
     community,
@@ -56,6 +57,7 @@ app.include_router(students.student_api)  # 学生平台，认学生令牌
 app.include_router(students.admin_api)  # 学生账号管理，认教师令牌
 app.include_router(typing_train.router)  # 打字训练：学生端公开，教师端要登录
 app.include_router(community.router)  # 反馈与更新日志
+app.include_router(app_mobile.router)  # 教师端安卓 APP：认服务器、心跳保持登录
 
 
 @app.get("/api/health", tags=["运维"], summary="健康检查")
