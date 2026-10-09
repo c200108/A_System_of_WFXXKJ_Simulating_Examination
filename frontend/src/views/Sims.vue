@@ -175,7 +175,7 @@ const simFor = computed(() =>
 
     <el-empty v-if="!rows.length && !loading" description="还没有仿真任务，点右上角新建" :image-size="80" />
 
-    <el-table v-mtable v-else :data="rows" size="small" style="margin-top: 12px">
+    <el-table v-else :data="rows" size="small" style="margin-top: 12px">
       <el-table-column label="题型" width="120">
         <template #default="{ row }">
           <el-tag size="small" effect="plain">{{ KIND_NAME[row.kind] || row.kind }}</el-tag>

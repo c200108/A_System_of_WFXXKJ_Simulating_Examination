@@ -359,7 +359,7 @@ function printPaper() {
       <el-card shadow="never">
         <template #header>历史试卷</template>
         <el-empty v-if="!history.length" description="勾选「把这套卷子存档」后会出现在这里" :image-size="60" />
-        <el-table v-mtable v-else :data="history" size="small" border>
+        <el-table v-else :data="history" size="small" border>
           <el-table-column prop="title" label="标题" show-overflow-tooltip />
           <el-table-column prop="code" label="卷号" width="86" />
           <el-table-column prop="question_count" label="题数" width="60" />

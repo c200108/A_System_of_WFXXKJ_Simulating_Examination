@@ -32,7 +32,6 @@ def test_info_is_public_and_identifies_the_server(client):
     # APP 靠这个字段认出是本系统，填错地址（比如别的网站）就对不上
     assert body["app"] == "wfxxkj-exam"
     assert body["protocol"] >= 1
-    assert body["teacher_path"] == "/js"
     assert body["heartbeat_seconds"] > 0
     assert body["title"]
 

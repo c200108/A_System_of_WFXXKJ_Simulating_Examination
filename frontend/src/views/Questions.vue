@@ -228,7 +228,7 @@ async function uploadImage(options) {
   </el-card>
 
   <el-card shadow="never">
-    <el-table v-mtable :data="rows" v-loading="loading" border stripe size="small">
+    <el-table :data="rows" v-loading="loading" border stripe size="small">
       <el-table-column prop="code" label="编号" width="80" />
       <el-table-column prop="type" label="题型" width="80" />
       <el-table-column prop="stem" label="题干" min-width="280" show-overflow-tooltip />

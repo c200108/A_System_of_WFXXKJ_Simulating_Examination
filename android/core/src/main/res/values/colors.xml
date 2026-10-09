@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 全 APP 的配色。深色模式在 values-night 里覆盖同名颜色，代码里一律按名字取（Palette）。 -->
+<resources>
+    <color name="wf_primary">#3F5BD8</color>
+    <color name="wf_primary_pressed">#3249B8</color>
+    <color name="wf_primary_soft">#EAEEFD</color>
+    <color name="wf_on_primary">#FFFFFF</color>
+
+    <color name="wf_page">#F4F6FB</color>
+    <color name="wf_surface">#FFFFFF</color>
+    <color name="wf_surface_alt">#F6F8FC</color>
+    <color name="wf_border">#E4E8F0</color>
+    <color name="wf_divider">#EEF1F6</color>
+    <color name="wf_ripple">#1F3F5BD8</color>
+    <color name="wf_scrim">#66000000</color>
+
+    <color name="wf_text">#1D2433</color>
+    <color name="wf_text2">#5F6779</color>
+    <color name="wf_text3">#9AA1B0</color>
+
+    <color name="wf_success">#1E9E62</color>
+    <color name="wf_success_soft">#E5F6EE</color>
+    <color name="wf_warning">#C27406</color>
+    <color name="wf_warning_soft">#FFF3E0</color>
+    <color name="wf_danger">#E5484D</color>
+    <color name="wf_danger_soft">#FDECEC</color>
+    <color name="wf_info">#2D7FF0</color>
+    <color name="wf_info_soft">#E7F1FE</color>
+    <color name="wf_violet">#8B5CF6</color>
+    <color name="wf_violet_soft">#F1EBFE</color>
+</resources>

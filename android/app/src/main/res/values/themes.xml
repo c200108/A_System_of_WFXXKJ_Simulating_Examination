@@ -1,41 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 只用系统自带的 Material 主题，不引 AppCompat / Material Components 库，安装包小一大截 -->
+<!-- APP 主题直接用 core 模块的 Wf 主题（配色、深浅色都在 core 里定义） -->
 <resources>
-    <style name="AppTheme" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:colorPrimary">@color/primary</item>
-        <item name="android:colorPrimaryDark">@color/primary</item>
-        <item name="android:colorAccent">@color/primary</item>
-        <item name="android:colorControlActivated">@color/primary</item>
-        <item name="android:windowBackground">@color/page</item>
-        <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:navigationBarColor">@android:color/transparent</item>
-        <item name="android:windowLightStatusBar">false</item>
-    </style>
-
-    <style name="AppTheme.Main">
-        <item name="android:windowBackground">@android:color/white</item>
-        <item name="android:windowLightStatusBar">true</item>
-    </style>
-
-    <style name="Label">
-        <item name="android:layout_width">wrap_content</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:layout_marginTop">16dp</item>
-        <item name="android:layout_marginBottom">7dp</item>
-        <item name="android:textColor">@color/text</item>
-        <item name="android:textSize">14sp</item>
-        <item name="android:textStyle">bold</item>
-    </style>
-
-    <style name="Input">
-        <item name="android:layout_width">match_parent</item>
-        <item name="android:layout_height">50dp</item>
-        <item name="android:background">@drawable/input_bg</item>
-        <item name="android:paddingStart">14dp</item>
-        <item name="android:paddingEnd">14dp</item>
-        <item name="android:textColor">@color/text</item>
-        <item name="android:textColorHint">@color/text_hint</item>
-        <item name="android:textSize">16sp</item>
-        <item name="android:singleLine">true</item>
-    </style>
+    <style name="AppTheme" parent="Wf" />
 </resources>

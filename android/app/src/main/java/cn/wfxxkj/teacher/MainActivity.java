@@ -1,229 +1,359 @@
 package cn.wfxxkj.teacher;
 
-import android.annotation.SuppressLint;
 import android.app.Activity;
-import android.content.ActivityNotFoundException;
 import android.content.ClipData;
-import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
-import android.graphics.Bitmap;
-import android.graphics.Color;
-import android.net.ConnectivityManager;
-import android.net.Network;
+import android.content.res.ColorStateList;
+import android.content.res.Configuration;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
-import android.print.PrintAttributes;
-import android.print.PrintManager;
 import android.text.TextUtils;
+import android.view.Gravity;
 import android.view.View;
-import android.view.WindowInsets;
-import android.webkit.CookieManager;
-import android.webkit.DownloadListener;
-import android.webkit.URLUtil;
-import android.webkit.ValueCallback;
-import android.webkit.WebChromeClient;
-import android.webkit.WebResourceError;
-import android.webkit.WebResourceRequest;
-import android.webkit.WebSettings;
-import android.webkit.WebView;
-import android.webkit.WebViewClient;
+import android.view.ViewGroup;
+import android.view.animation.DecelerateInterpolator;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.PopupMenu;
 import android.widget.ProgressBar;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import org.json.JSONObject;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import cn.wfxxkj.teacher.core.nav.Action;
+import cn.wfxxkj.teacher.core.nav.Host;
+import cn.wfxxkj.teacher.core.nav.Screen;
+import cn.wfxxkj.teacher.core.nav.TabSpec;
+import cn.wfxxkj.teacher.core.session.Session;
+import cn.wfxxkj.teacher.core.session.SessionKeeper;
+import cn.wfxxkj.teacher.core.ui.Palette;
+import cn.wfxxkj.teacher.core.ui.Themes;
+import cn.wfxxkj.teacher.core.ui.Ui;
+import cn.wfxxkj.teacher.core.ui.V;
+
 /**
- * 登录以后的主界面：一个铺满屏幕的 WebView，打开服务器上的教师端网页。
+ * 主界面：装所有页面的容器。
  *
- * 网页有的功能这里全都有，而且网页以后加了功能，APP 不用重新发版。
- * 外壳只补网页在 WebView 里做不到、或者做得不好的事：
- * 保持登录（{@link SessionKeeper}）、断网提示和自动重连、存文件、复制、打印、
- * 选文件上传、返回键、系统栏配色。
+ * <ul>
+ *   <li>手机竖屏：顶栏 + 内容 + 底部五个标签；</li>
+ *   <li>宽屏（≥600dp：大屏手机横屏、折叠屏、平板）：左侧导航栏 + 顶栏 + 内容；</li>
+ *   <li>每个标签各自一个页面栈，切标签不丢进度；再点一次当前标签回到它的首页；</li>
+ *   <li>转屏、分屏改变大小时不重建页面，只把外框换成适合新宽度的样子。</li>
+ * </ul>
  */
-public class MainActivity extends Activity implements SessionKeeper.Listener {
-    private static final int REQ_FILE = 11;
+public class MainActivity extends Activity implements Host, Session.Listener {
+    private static final int REQ_PICK = 41;
 
-    private Prefs prefs;
+    private List<TabSpec> tabs;
+    private final Map<String, ArrayList<Screen>> stacks = new HashMap<>();
+    private String current;
+
+    private FrameLayout root;
+    private FrameLayout content;
+    private AppBar appBar;
+    private NavBar navBar;
+    private TextView offline;
+    private ImageView fab;
+    private TextView snackBar;
+    private FrameLayout busy;
+    private TextView busyText;
     private SessionKeeper keeper;
-    private FileSaver saver;
-    private WebView web;
-    private View root;
-    private ProgressBar progress;
-    private TextView offlineBar;
-    private View errorView;
-    private TextView errorText;
-    private View splash;
-    private View saved;
-    private TextView savedText;
-
-    private final Handler main = new Handler(Looper.getMainLooper());
-    private ConnectivityManager.NetworkCallback netCallback;
-    private ValueCallback<Uri[]> fileCallback;
-    private String server;
-    private volatile String currentHost = "";
-    private boolean reloadAfterRelogin;
-    private boolean pageFailed;
+    private Host.FilesPicked pendingPick;
+    private int[] insets = {0, 0, 0, 0};
     private long lastBack;
-    private Uri savedUri;
-    private String savedMime;
 
-    private final Runnable hideSaved = new Runnable() {
-        @Override
-        public void run() {
-            saved.setVisibility(View.GONE);
-        }
-    };
+    @Override
+    protected void attachBaseContext(Context base) {
+        super.attachBaseContext(Themes.wrap(base));
+    }
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
-        prefs = new Prefs(this);
-        server = prefs.server();
-        if (!prefs.loggedIn()) {
+        Session.init(this);
+        if (!Session.get().loggedIn()) {
             toLogin(null);
             return;
         }
-        setContentView(R.layout.activity_main);
-        Ui.edgeToEdge(this, true);
-
-        root = findViewById(R.id.root);
-        web = findViewById(R.id.web);
-        progress = findViewById(R.id.progress);
-        offlineBar = findViewById(R.id.offline);
-        errorView = findViewById(R.id.error);
-        errorText = findViewById(R.id.error_text);
-        splash = findViewById(R.id.splash);
-        saved = findViewById(R.id.saved);
-        savedText = findViewById(R.id.saved_text);
-        ((TextView) findViewById(R.id.splash_title)).setText(
-                TextUtils.isEmpty(prefs.brand()) ? getString(R.string.app_name) : prefs.brand());
-
-        final View content = findViewById(R.id.content);
-        root.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
-            @Override
-            public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
-                int[] in = Ui.insets(insets);
-                content.setPadding(in[2], in[0], in[3], in[1]);
-                return insets;
-            }
-        });
-
-        findViewById(R.id.retry).setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                errorView.setVisibility(View.GONE);
-                pageFailed = false;
-                web.reload();
-                keeper.kick();
-            }
-        });
-        findViewById(R.id.switch_server).setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                startActivity(new Intent(MainActivity.this, LoginActivity.class)
-                        .putExtra(LoginActivity.EXTRA_EDIT, true));
-            }
-        });
-        findViewById(R.id.saved_open).setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                openSaved();
-            }
-        });
-
-        saver = new FileSaver(this);
-        keeper = new SessionKeeper(prefs, this);
-        setupWebView();
-        watchNetwork();
-
-        if (state != null) web.restoreState(state);
-        else web.loadUrl(server + "/js");
+        Ui.edgeToEdge(this);
+        tabs = Features.tabs();
+        keeper = new SessionKeeper(this);
+        Session.get().addListener(this);
+        buildShell();
+        switchTab(tabs.get(0).key);
     }
-
-    @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
-    private void setupWebView() {
-        WebSettings s = web.getSettings();
-        s.setJavaScriptEnabled(true);
-        s.setDomStorageEnabled(true);
-        s.setDatabaseEnabled(true);
-        s.setLoadWithOverviewMode(true);
-        s.setUseWideViewPort(true);
-        s.setSupportZoom(false);
-        s.setBuiltInZoomControls(false);
-        s.setTextZoom(100); // 系统字体调大时页面不变形；页面自己的字号已经按手机排过
-        s.setAllowFileAccess(false);
-        s.setAllowContentAccess(true);
-        s.setMediaPlaybackRequiresUserGesture(true);
-        s.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
-        s.setUserAgentString(s.getUserAgentString() + " WfxxTeacherApp/" + BuildConfig.VERSION_NAME);
-        CookieManager.getInstance().setAcceptCookie(true);
-
-        web.addJavascriptInterface(new AppBridge(this, prefs, saver), "WfxxApp");
-        web.setWebViewClient(new Client());
-        web.setWebChromeClient(new Chrome());
-        web.setDownloadListener(new DownloadListener() {
-            @Override
-            public void onDownloadStart(String url, String ua, String disposition, String mime, long len) {
-                downloadUrl(url, disposition, mime);
-            }
-        });
-    }
-
-    // ------------------------------------------------------------ 生命周期
 
     @Override
-    protected void onResume() {
-        super.onResume();
+    protected void onStart() {
+        super.onStart();
         if (keeper != null) keeper.start();
-        if (web != null) web.onResume();
     }
 
     @Override
-    protected void onPause() {
-        // 退到后台：心跳停掉，页面里的定时器（成绩页自动刷新这些）也停，不耗电不耗流量
+    protected void onStop() {
         if (keeper != null) keeper.stop();
-        if (web != null) web.onPause();
-        super.onPause();
-    }
-
-    @Override
-    protected void onSaveInstanceState(Bundle out) {
-        super.onSaveInstanceState(out);
-        if (web != null) web.saveState(out);
+        super.onStop();
     }
 
     @Override
     protected void onDestroy() {
-        if (netCallback != null) {
-            try {
-                ((ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE))
-                        .unregisterNetworkCallback(netCallback);
-            } catch (Exception ignored) {
-                // 没注册上就算了
+        Session.get().removeListener(this);
+        if (keeper != null) keeper.shutdown();
+        for (List<Screen> st : stacks.values()) for (Screen s : st) s.dispatchDestroy();
+        super.onDestroy();
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        // 宽窄变了：外框在底部标签栏和左侧导航栏之间切换，页面本身原样保留
+        if (root != null) {
+            View page = top().view();
+            if (page != null && page.getParent() != null) ((ViewGroup) page.getParent()).removeView(page);
+            buildShell();
+            showTop(false);
+        }
+    }
+
+    // ---------- 外框 ----------
+
+    private void buildShell() {
+        Palette p = Palette.of(this);
+        boolean wide = Ui.wide(this);
+        root = new FrameLayout(this);
+        root.setBackgroundColor(p.page);
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        navBar = new NavBar(this, tabs, wide, this::onTabClicked);
+        if (wide) row.addView(navBar, new LinearLayout.LayoutParams(Ui.dp(this, 88), V.MATCH));
+
+        LinearLayout col = V.vbox(this);
+        appBar = new AppBar(this);
+        col.addView(appBar, V.matchWrap());
+        offline = V.text(this, "", V.BODY2);
+        offline.setTextColor(p.warning);
+        offline.setBackgroundColor(p.warningSoft);
+        offline.setGravity(Gravity.CENTER);
+        V.pad(offline, 16, 8, 16, 8);
+        offline.setVisibility(Session.get().isOnline() ? View.GONE : View.VISIBLE);
+        offline.setOnClickListener(v -> keeper.kick());
+        col.addView(offline, V.matchWrap());
+        content = new FrameLayout(this);
+        col.addView(content, new LinearLayout.LayoutParams(V.MATCH, 0, 1f));
+        if (!wide) col.addView(navBar, V.matchWrap());
+        row.addView(col, new LinearLayout.LayoutParams(0, V.MATCH, 1f));
+        root.addView(row, new FrameLayout.LayoutParams(V.MATCH, V.MATCH));
+
+        // 浮动按钮
+        fab = new ImageView(this);
+        fab.setScaleType(ImageView.ScaleType.CENTER);
+        fab.setImageTintList(ColorStateList.valueOf(p.onPrimary));
+        fab.setBackground(V.ripple(this, V.round(this, p.primary, 18), 18));
+        fab.setElevation(Ui.dpf(this, 6));
+        fab.setVisibility(View.GONE);
+        root.addView(fab, new FrameLayout.LayoutParams(Ui.dp(this, 58), Ui.dp(this, 58), Gravity.BOTTOM | Gravity.END));
+
+        // 底部提示条
+        snackBar = V.text(this, "", V.BODY);
+        snackBar.setTextColor(0xFFFFFFFF);
+        snackBar.setBackground(V.round(this, 0xF0262B36, 14));
+        snackBar.setElevation(Ui.dpf(this, 8));
+        V.pad(snackBar, 16, 13, 16, 13);
+        snackBar.setVisibility(View.GONE);
+        FrameLayout.LayoutParams slp = new FrameLayout.LayoutParams(V.MATCH, V.WRAP, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        root.addView(snackBar, slp);
+
+        // 「正在处理…」遮罩
+        busy = new FrameLayout(this);
+        busy.setBackgroundColor(p.scrim);
+        busy.setClickable(true);
+        LinearLayout box = V.hbox(this);
+        box.setBackground(V.round(this, p.surface, 16));
+        V.pad(box, 20, 16, 24, 16);
+        ProgressBar pb = new ProgressBar(this);
+        pb.setIndeterminateTintList(ColorStateList.valueOf(p.primary));
+        box.addView(pb, new LinearLayout.LayoutParams(Ui.dp(this, 28), Ui.dp(this, 28)));
+        busyText = V.text(this, "", V.BODY);
+        V.addStart(box, busyText, 14);
+        busy.addView(box, new FrameLayout.LayoutParams(V.WRAP, V.WRAP, Gravity.CENTER));
+        busy.setVisibility(View.GONE);
+        root.addView(busy, new FrameLayout.LayoutParams(V.MATCH, V.MATCH));
+
+        root.setOnApplyWindowInsetsListener((v, in) -> {
+            insets = Ui.insets(in);
+            applyInsets();
+            return in;
+        });
+        setContentView(root);
+        if (current != null) navBar.select(current);
+    }
+
+    private void applyInsets() {
+        boolean wide = Ui.wide(this);
+        int top = insets[0], bottom = insets[1], left = insets[2], right = insets[3];
+        appBar.setInsets(top, wide ? 0 : left, right);
+        if (wide) {
+            navBar.setPadding(left, top, 0, bottom);
+            content.setPadding(0, 0, right, bottom);
+        } else {
+            navBar.setPadding(left, 0, right, bottom);
+            content.setPadding(left, 0, right, 0);
+        }
+        int navH = wide ? 0 : navBar.getMeasuredHeight();
+        if (!wide && navH == 0) navH = Ui.dp(this, 64) + bottom;
+        FrameLayout.LayoutParams flp = (FrameLayout.LayoutParams) fab.getLayoutParams();
+        flp.bottomMargin = (wide ? bottom : navH) + Ui.dp(this, 18);
+        flp.rightMargin = right + Ui.dp(this, 18);
+        fab.setLayoutParams(flp);
+        FrameLayout.LayoutParams slp = (FrameLayout.LayoutParams) snackBar.getLayoutParams();
+        int side = Ui.dp(this, 16);
+        slp.leftMargin = (wide ? Ui.dp(this, 88) + left : left) + side;
+        slp.rightMargin = right + side;
+        slp.bottomMargin = (wide ? bottom : navH) + Ui.dp(this, 12);
+        if (wide && Ui.widthDp(this) > 760) {
+            slp.width = Ui.dp(this, 520);
+            slp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+        }
+        snackBar.setLayoutParams(slp);
+    }
+
+    // ---------- 标签与页面栈 ----------
+
+    private void onTabClicked(String key) {
+        if (key.equals(current)) {
+            // 再点当前标签：回到这个标签的首页
+            ArrayList<Screen> st = stacks.get(key);
+            if (st != null && st.size() > 1) {
+                while (st.size() > 1) {
+                    Screen s = st.remove(st.size() - 1);
+                    s.dispatchHide();
+                    s.dispatchDestroy();
+                }
+                showTop(false);
+            }
+            return;
+        }
+        switchTab(key);
+    }
+
+    private ArrayList<Screen> stack() {
+        ArrayList<Screen> st = stacks.get(current);
+        if (st == null) {
+            st = new ArrayList<>();
+            for (TabSpec t : tabs) {
+                if (t.key.equals(current)) st.add(t.root.create());
+            }
+            stacks.put(current, st);
+        }
+        return st;
+    }
+
+    private Screen top() {
+        ArrayList<Screen> st = stack();
+        return st.get(st.size() - 1);
+    }
+
+    @Override
+    public void switchTab(String key) {
+        boolean known = false;
+        for (TabSpec t : tabs) if (t.key.equals(key)) known = true;
+        if (!known) return;
+        if (current != null && stacks.get(current) != null) top().dispatchHide();
+        current = key;
+        navBar.select(key);
+        showTop(false);
+    }
+
+    /** 把当前标签栈顶的页面放进内容区 */
+    private void showTop(boolean animate) {
+        Screen s = top();
+        View v = s.attach(this, this);
+        if (v.getParent() != null) ((ViewGroup) v.getParent()).removeView(v);
+        content.removeAllViews();
+        content.addView(v, new FrameLayout.LayoutParams(V.MATCH, V.MATCH));
+        if (animate) {
+            v.setAlpha(0f);
+            v.setTranslationX(Ui.dp(this, 24));
+            v.animate().alpha(1f).translationX(0).setDuration(200)
+                    .setInterpolator(new DecelerateInterpolator(1.5f)).start();
+        }
+        renderChrome();
+        s.dispatchShow();
+    }
+
+    @Override
+    public void push(Screen screen) {
+        Ui.hideKeyboard(content);
+        top().dispatchHide();
+        stack().add(screen);
+        showTop(true);
+    }
+
+    @Override
+    public void pop(Screen screen) {
+        for (Map.Entry<String, ArrayList<Screen>> e : stacks.entrySet()) {
+            ArrayList<Screen> st = e.getValue();
+            int idx = st.indexOf(screen);
+            if (idx <= 0) continue; // 栈底（标签首页）不能关
+            boolean wasTop = idx == st.size() - 1 && e.getKey().equals(current);
+            Ui.hideKeyboard(content);
+            st.remove(idx);
+            screen.dispatchHide();
+            screen.dispatchDestroy();
+            if (wasTop) showTop(false);
+            return;
+        }
+    }
+
+    @Override
+    public void invalidateChrome(Screen screen) {
+        if (screen == top()) renderChrome();
+    }
+
+    private void renderChrome() {
+        Screen s = top();
+        boolean canBack = stack().size() > 1 && s.showBack();
+        appBar.render(s.title(), s.subtitle(), canBack ? () -> onBackPressed() : null, s.actions());
+        Action f = s.fab();
+        if (f == null) {
+            fab.setVisibility(View.GONE);
+        } else {
+            fab.setImageResource(f.icon != 0 ? f.icon : cn.wfxxkj.teacher.core.R.drawable.ic_add);
+            fab.setContentDescription(f.label);
+            fab.setOnClickListener(f.listener());
+            if (fab.getVisibility() != View.VISIBLE) {
+                fab.setVisibility(View.VISIBLE);
+                fab.setScaleX(0.6f);
+                fab.setScaleY(0.6f);
+                fab.animate().scaleX(1f).scaleY(1f).setDuration(160).start();
             }
         }
-        if (keeper != null) keeper.shutdown();
-        if (web != null) {
-            web.removeJavascriptInterface("WfxxApp");
-            web.destroy();
-        }
-        super.onDestroy();
     }
 
     @Override
     @SuppressWarnings("deprecation")
     public void onBackPressed() {
-        if (errorView.getVisibility() == View.VISIBLE) {
+        if (busy != null && busy.getVisibility() == View.VISIBLE) return;
+        if (root == null) {
             super.onBackPressed();
             return;
         }
-        if (web.canGoBack()) {
-            web.goBack();
+        Screen s = top();
+        if (s.onBack()) return;
+        if (stack().size() > 1) {
+            pop(s);
+            return;
+        }
+        if (!current.equals(tabs.get(0).key)) {
+            switchTab(tabs.get(0).key);
             return;
         }
         long now = System.currentTimeMillis();
@@ -231,331 +361,136 @@ public class MainActivity extends Activity implements SessionKeeper.Listener {
             super.onBackPressed();
         } else {
             lastBack = now;
-            Toast.makeText(this, "再按一次退出", Toast.LENGTH_SHORT).show();
+            toast("再按一次退出");
         }
     }
 
-    // ------------------------------------------------------------ 网络
+    // ---------- Host 其余 ----------
 
-    private void watchNetwork() {
-        ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
-        netCallback = new ConnectivityManager.NetworkCallback() {
-            @Override
-            public void onAvailable(Network network) {
-                main.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        keeper.kick();
-                        if (pageFailed) {
-                            pageFailed = false;
-                            errorView.setVisibility(View.GONE);
-                            web.reload();
-                        }
-                    }
-                });
-            }
-        };
+    @Override
+    public Activity activity() {
+        return this;
+    }
+
+    @Override
+    public void pickFiles(String[] mimeTypes, boolean multiple, FilesPicked callback) {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType(mimeTypes.length == 1 ? mimeTypes[0] : "*/*");
+        if (mimeTypes.length > 1) i.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
+        i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, multiple);
+        pendingPick = callback;
         try {
-            cm.registerDefaultNetworkCallback(netCallback);
+            startActivityForResult(i, REQ_PICK);
         } catch (Exception e) {
-            netCallback = null;
-        }
-    }
-
-    @Override
-    public void onOnlineChanged(boolean online, String message) {
-        if (online) {
-            offlineBar.setVisibility(View.GONE);
-        } else {
-            offlineBar.setText("连接已断开，正在自动重连…  " + (message == null ? "" : message));
-            offlineBar.setVisibility(View.VISIBLE);
-        }
-    }
-
-    @Override
-    public void onTokenRefreshed(String token, String userJson) {
-        String js = "window.__wfxxSetToken && window.__wfxxSetToken("
-                + JSONObject.quote(token) + "," + JSONObject.quote(userJson == null ? "" : userJson) + ")";
-        web.evaluateJavascript(js, null);
-        if (reloadAfterRelogin) {
-            reloadAfterRelogin = false;
-            web.reload();
-        }
-    }
-
-    @Override
-    public void onSessionLost(String message) {
-        logout(message);
-    }
-
-    // ------------------------------------------------------------ 给 AppBridge 用（后台线程调进来）
-
-    boolean isOnOwnServer() {
-        return !TextUtils.isEmpty(currentHost) && currentHost.equalsIgnoreCase(hostOf(server));
-    }
-
-    void onAuthExpired() {
-        main.post(new Runnable() {
-            @Override
-            public void run() {
-                reloadAfterRelogin = true;
-                keeper.forceRelogin();
-            }
-        });
-    }
-
-    void logout(final String message) {
-        main.post(new Runnable() {
-            @Override
-            public void run() {
-                prefs.logout();
-                CookieManager.getInstance().removeAllCookies(null);
-                // 网页那边的 localStorage 里也有令牌，一起清掉
-                web.evaluateJavascript("try{localStorage.removeItem('token');localStorage.removeItem('user')}catch(e){}", null);
-                toLogin(message);
-            }
-        });
-    }
-
-    void copyText(final String text) {
-        main.post(new Runnable() {
-            @Override
-            public void run() {
-                ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                cm.setPrimaryClip(ClipData.newPlainText("链接", text));
-                // 安卓 13 起系统自己会弹「已复制」，再弹一个就重复了
-                if (Build.VERSION.SDK_INT < 33) {
-                    Toast.makeText(MainActivity.this, "已复制", Toast.LENGTH_SHORT).show();
-                }
-            }
-        });
-    }
-
-    void printPage(final String title) {
-        main.post(new Runnable() {
-            @Override
-            public void run() {
-                PrintManager pm = (PrintManager) getSystemService(Context.PRINT_SERVICE);
-                String name = TextUtils.isEmpty(title) ? getString(R.string.app_name) : title;
-                pm.print(name, web.createPrintDocumentAdapter(name),
-                        new PrintAttributes.Builder().setMediaSize(PrintAttributes.MediaSize.ISO_A4).build());
-            }
-        });
-    }
-
-    void setDarkMode(final boolean value) {
-        main.post(new Runnable() {
-            @Override
-            public void run() {
-                // 系统栏底色跟网页的顶栏、底部标签栏一个颜色（Element Plus 的 --el-bg-color）
-                root.setBackgroundColor(value ? Color.parseColor("#141414") : Color.WHITE);
-                Ui.setLightBars(MainActivity.this, !value);
-            }
-        });
-    }
-
-    void onFileSaved(final Uri uri) {
-        main.post(new Runnable() {
-            @Override
-            public void run() {
-                if (uri == null) {
-                    Toast.makeText(MainActivity.this, "保存失败，请检查手机存储空间", Toast.LENGTH_LONG).show();
-                    return;
-                }
-                savedUri = uri;
-                savedMime = getContentResolver().getType(uri);
-                String name = saver.displayName(uri, "文件");
-                savedText.setText("已保存到「下载/教学平台」\n" + name);
-                saved.setVisibility(View.VISIBLE);
-                main.removeCallbacks(hideSaved);
-                main.postDelayed(hideSaved, 6000);
-            }
-        });
-    }
-
-    // ------------------------------------------------------------ 文件
-
-    private void openSaved() {
-        if (savedUri == null) return;
-        saved.setVisibility(View.GONE);
-        Intent i = new Intent(Intent.ACTION_VIEW)
-                .setDataAndType(savedUri, TextUtils.isEmpty(savedMime) ? "*/*" : savedMime)
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
-        try {
-            startActivity(Intent.createChooser(i, "用什么打开"));
-        } catch (ActivityNotFoundException e) {
-            Toast.makeText(this, "手机上没有能打开这种文件的应用", Toast.LENGTH_LONG).show();
-        }
-    }
-
-    /** 网页里普通的下载链接（题目配图之类）：交给系统下载管理器，带上登录令牌 */
-    private void downloadUrl(String url, String disposition, String mime) {
-        try {
-            android.app.DownloadManager.Request r = new android.app.DownloadManager.Request(Uri.parse(url));
-            String name = URLUtil.guessFileName(url, disposition, mime);
-            r.setMimeType(mime);
-            if (sameHost(url)) r.addRequestHeader("Authorization", "Bearer " + prefs.token());
-            String cookie = CookieManager.getInstance().getCookie(url);
-            if (cookie != null) r.addRequestHeader("Cookie", cookie);
-            r.setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-            r.setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, "教学平台/" + name);
-            ((android.app.DownloadManager) getSystemService(DOWNLOAD_SERVICE)).enqueue(r);
-            Toast.makeText(this, "开始下载：" + name, Toast.LENGTH_SHORT).show();
-        } catch (Exception e) {
-            openExternal(url);
-        }
-    }
-
-    private void openExternal(String url) {
-        try {
-            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
-        } catch (ActivityNotFoundException e) {
-            Toast.makeText(this, "没有可以打开这个链接的浏览器", Toast.LENGTH_SHORT).show();
+            pendingPick = null;
+            toast("手机上没有可用的文件管理器");
         }
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == REQ_FILE && fileCallback != null) {
-            Uri[] picked = null;
-            if (resultCode == RESULT_OK && data != null) {
-                ClipData clip = data.getClipData(); // 一次选了多个
-                if (clip != null && clip.getItemCount() > 0) {
-                    picked = new Uri[clip.getItemCount()];
-                    for (int k = 0; k < picked.length; k++) picked[k] = clip.getItemAt(k).getUri();
-                } else if (data.getData() != null) {
-                    picked = new Uri[]{data.getData()};
-                }
-            }
-            fileCallback.onReceiveValue(picked);
-            fileCallback = null;
-            return;
-        }
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_PICK) return;
+        FilesPicked cb = pendingPick;
+        pendingPick = null;
+        if (cb == null || resultCode != RESULT_OK || data == null) return;
+        List<Uri> out = new ArrayList<>();
+        ClipData clip = data.getClipData();
+        if (clip != null) {
+            for (int i = 0; i < clip.getItemCount(); i++) out.add(clip.getItemAt(i).getUri());
+        } else if (data.getData() != null) {
+            out.add(data.getData());
+        }
+        if (!out.isEmpty()) cb.onPicked(out);
     }
 
-    // ------------------------------------------------------------ 杂项
+    @Override
+    public void toast(CharSequence message) {
+        snack(message, null, null);
+    }
+
+    private final Runnable hideSnack = () -> snackBar.animate().alpha(0f).setDuration(180)
+            .withEndAction(() -> snackBar.setVisibility(View.GONE)).start();
+
+    @Override
+    public void snack(CharSequence message, String action, Runnable onAction) {
+        if (snackBar == null || TextUtils.isEmpty(message)) return;
+        snackBar.removeCallbacks(hideSnack);
+        if (action != null) {
+            android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder(message);
+            sb.append("    ");
+            int start = sb.length();
+            sb.append(action);
+            sb.setSpan(new android.text.style.ForegroundColorSpan(0xFF9DB0FF), start, sb.length(), 0);
+            sb.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD), start, sb.length(), 0);
+            snackBar.setText(sb);
+            snackBar.setOnClickListener(v -> {
+                hideSnack.run();
+                if (onAction != null) onAction.run();
+            });
+        } else {
+            snackBar.setText(message);
+            snackBar.setOnClickListener(v -> hideSnack.run());
+        }
+        snackBar.setVisibility(View.VISIBLE);
+        snackBar.setAlpha(0f);
+        snackBar.setTranslationY(Ui.dp(this, 12));
+        snackBar.animate().alpha(1f).translationY(0).setDuration(180).start();
+        snackBar.postDelayed(hideSnack, action != null ? 6000 : 2600);
+    }
+
+    @Override
+    public void showBusy(CharSequence message) {
+        busyText.setText(message);
+        busy.setVisibility(View.VISIBLE);
+        Ui.hideKeyboard(content);
+    }
+
+    @Override
+    public void hideBusy() {
+        busy.setVisibility(View.GONE);
+    }
+
+    @Override
+    public void logout(String message) {
+        Session.get().logout();
+        toLogin(message);
+    }
 
     private void toLogin(String message) {
         Intent i = new Intent(this, LoginActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_NEW_TASK);
-        if (message != null) i.putExtra(LoginActivity.EXTRA_MESSAGE, message);
+        i.putExtra(LoginActivity.EXTRA_MESSAGE, message == null ? "" : message);
         startActivity(i);
         finish();
     }
 
-    private static String hostOf(String url) {
-        try {
-            Uri u = Uri.parse(url);
-            return u.getHost() + ":" + u.getPort();
-        } catch (Exception e) {
-            return "";
-        }
-    }
+    // ---------- 登录状态 ----------
 
-    private boolean sameHost(String url) {
-        return hostOf(url).equalsIgnoreCase(hostOf(server));
-    }
-
-    /**
-     * 选文件的 Intent。不用 params.createIntent()：网页写的 accept 是扩展名（.xlsx,.csv），
-     * 它直接当 MIME 类型用，很多手机上就弹「没有应用可以执行此操作」。这里把扩展名换成 MIME。
-     */
-    private static Intent chooserIntent(WebChromeClient.FileChooserParams params) {
-        java.util.LinkedHashSet<String> mimes = new java.util.LinkedHashSet<>();
-        android.webkit.MimeTypeMap map = android.webkit.MimeTypeMap.getSingleton();
-        for (String raw : params.getAcceptTypes()) {
-            for (String part : raw.split(",")) {
-                String a = part.trim().toLowerCase(java.util.Locale.ROOT);
-                if (a.isEmpty()) continue;
-                if (a.contains("/")) {
-                    mimes.add(a);
-                } else {
-                    String ext = a.startsWith(".") ? a.substring(1) : a;
-                    String m = map.getMimeTypeFromExtension(ext);
-                    if (m != null) mimes.add(m);
-                    if (ext.equals("csv")) mimes.add("text/comma-separated-values");
-                    if (ext.equals("xls") || ext.equals("xlsx")) mimes.add("application/vnd.ms-excel");
-                }
-            }
-        }
-        Intent i = new Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE);
-        if (mimes.size() == 1) {
-            i.setType(mimes.iterator().next());
+    @Override
+    public void onOnlineChanged(boolean online, String message) {
+        if (offline == null) return;
+        if (online) {
+            offline.setVisibility(View.GONE);
         } else {
-            i.setType("*/*");
-            if (!mimes.isEmpty()) i.putExtra(Intent.EXTRA_MIME_TYPES, mimes.toArray(new String[0]));
-        }
-        if (params.getMode() == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE) {
-            i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-        }
-        return Intent.createChooser(i, "选择文件");
-    }
-
-    private final class Client extends WebViewClient {
-        @Override
-        public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-            Uri u = request.getUrl();
-            String scheme = u.getScheme() == null ? "" : u.getScheme();
-            if ((scheme.equals("http") || scheme.equals("https")) && sameHost(u.toString())) {
-                return false; // 本服务器的页面就在 APP 里开
-            }
-            // 外链（更新日志里的参考网址这类）、mailto、tel 交给系统
-            openExternal(u.toString());
-            return true;
-        }
-
-        @Override
-        public void onPageStarted(WebView view, String url, Bitmap favicon) {
-            currentHost = hostOf(url);
-            progress.setVisibility(View.VISIBLE);
-        }
-
-        @Override
-        public void onPageFinished(WebView view, String url) {
-            currentHost = hostOf(url);
-            progress.setVisibility(View.GONE);
-            if (splash.getVisibility() == View.VISIBLE && !pageFailed) {
-                splash.animate().alpha(0f).setDuration(200).withEndAction(new Runnable() {
-                    @Override
-                    public void run() {
-                        splash.setVisibility(View.GONE);
-                    }
-                });
-            }
-        }
-
-        @Override
-        public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-            if (!request.isForMainFrame()) return;
-            pageFailed = true;
-            splash.setVisibility(View.GONE);
-            errorText.setText("打开 " + server + " 失败：" + error.getDescription()
-                    + "\n\n请检查网络，或确认服务器已开机。网络恢复后会自动重新加载。");
-            errorView.setVisibility(View.VISIBLE);
+            offline.setText("连接已断开：" + (message == null ? "" : message) + "（点此重试）");
+            offline.setVisibility(View.VISIBLE);
         }
     }
 
-    private final class Chrome extends WebChromeClient {
-        @Override
-        public void onProgressChanged(WebView view, int newProgress) {
-            progress.setProgress(newProgress);
-            progress.setVisibility(newProgress >= 100 ? View.GONE : View.VISIBLE);
-        }
+    @Override
+    public void onUserChanged(JSONObject user) {
+        if (root != null) renderChrome();
+    }
 
-        @Override
-        public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback,
-                                         FileChooserParams params) {
-            if (fileCallback != null) fileCallback.onReceiveValue(null);
-            fileCallback = callback;
-            try {
-                startActivityForResult(chooserIntent(params), REQ_FILE);
-                return true;
-            } catch (ActivityNotFoundException e) {
-                fileCallback = null;
-                Toast.makeText(MainActivity.this, "找不到可以选文件的应用", Toast.LENGTH_SHORT).show();
-                return false;
-            }
-        }
+    @Override
+    public void onSessionLost(String message) {
+        toLogin(message);
+    }
+
+    /** 主题切换后整页重建（深浅色的颜色都是建视图时取的） */
+    public static void restartForTheme(Activity a) {
+        a.recreate();
     }
 }

@@ -78,7 +78,7 @@ async function downloadTemplate() {
 
       <el-card shadow="never">
         <template #header>导入记录</template>
-        <el-table v-mtable :data="logs" size="small" border>
+        <el-table :data="logs" size="small" border>
           <el-table-column prop="created_at" label="时间" width="180">
             <template #default="{ row }">{{ String(row.created_at).replace('T', ' ').slice(0, 19) }}</template>
           </el-table-column>

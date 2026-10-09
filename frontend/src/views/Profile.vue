@@ -9,7 +9,6 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { currentUser, setUser } from '../auth'
-import { appPasswordChanged } from '../appBridge'
 
 const loading = ref(false)
 const savingProfile = ref(false)
@@ -67,8 +66,6 @@ async function savePassword() {
       old_password: pwd.old_password,
       new_password: pwd.new_password
     })
-    // APP 里自动重新登录用的是存着的密码，跟着换成新的
-    appPasswordChanged(pwd.new_password)
     pwd.old_password = pwd.new_password = pwd.confirm = ''
     ElMessage.success('密码已修改，下次登录请用新密码')
   } finally {
