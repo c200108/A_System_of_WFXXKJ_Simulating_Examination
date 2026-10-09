@@ -1,0 +1,19 @@
+plugins {
+    id 'com.android.library'
+}
+
+// 公共底座：网络、登录状态、页面框架、界面组件、图标配色。
+// 各功能模块（feature-*）只依赖这里，彼此之间不互相依赖。
+android {
+    namespace 'cn.wfxxkj.teacher.core'
+    compileSdk 35
+
+    defaultConfig {
+        minSdk 29
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}

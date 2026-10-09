@@ -3,7 +3,6 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
 import { currentUser, setUser } from '../auth'
-import { appPasswordChanged } from '../appBridge'
 
 const users = ref([])
 const classes = ref([])
@@ -109,7 +108,6 @@ async function toggleActive(row) {
 // ---------- 改自己的密码 ----------
 async function changePassword() {
   await api.changePassword({ ...pwd })
-  appPasswordChanged(pwd.new_password) // APP 里存的密码跟着换
   pwdDialog.value = false
   Object.assign(pwd, { old_password: '', new_password: '' })
   ElMessage.success('密码已修改')
@@ -244,7 +242,7 @@ async function bulk(action) {
       <el-button size="small" link @click="picked = []">取消选择</el-button>
     </div>
 
-    <el-table v-mtable
+    <el-table
       :data="users"
       v-loading="loading"
       border

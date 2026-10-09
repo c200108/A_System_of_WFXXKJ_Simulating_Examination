@@ -34,7 +34,7 @@ android {
 
     buildTypes {
         release {
-            // 压缩代码和资源：安装包只有几十 KB
+            // 压缩代码和资源
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
@@ -51,5 +51,15 @@ android {
         targetCompatibility JavaVersion.VERSION_1_8
     }
 
-    // 只用系统自带的组件，不依赖任何第三方库
+}
+
+// 只用系统自带的组件，不依赖任何第三方库；下面都是本项目自己的模块
+dependencies {
+    implementation project(':core')
+    implementation project(':feature-paper')
+    implementation project(':feature-bank')
+    implementation project(':feature-exam')
+    implementation project(':feature-typing')
+    implementation project(':feature-student')
+    implementation project(':feature-me')
 }

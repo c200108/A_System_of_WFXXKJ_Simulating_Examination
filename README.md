@@ -59,13 +59,13 @@ A_System_of_WFXXKJ_Simulating_Examination/
 │  ├─ build.py               打包（兼容 Win7/8/10/11，看它的开头说明）
 │  └─ tests/                 起一个真后端走完整条链路
 │
-└─ android/                  教师端安卓 APP（安卓 10 起）：原生登录 + 服务器上的教师端网页
+└─ android/                  教师端安卓 APP（安卓 10 起）：原生界面，多模块（core + 六个功能模块）
                              打包、签名、发给老师 → android/README.md
 ```
 
-> 教师端 APP 也**不是另一套界面**：登录后显示的就是服务器上的教师端网页（手机上自动换成
-> 底部标签栏、列表变卡片的手机布局），网页加了功能 APP 不用更新。APP 只多两个接口：
-> `/api/app/info` 认服务器、`/api/app/session` 前台心跳续期登录，见 `backend/app/routers/app_mobile.py`。
+> 教师端 APP 是**原生界面、同一套数据**：组卷、题库、考试等功能与教师端网页一一对应，
+> 业务走同一套 `/api`；APP 只多两个接口：`/api/app/info` 认服务器、`/api/app/session`
+> 前台心跳续期登录，见 `backend/app/routers/app_mobile.py`。
 >
 > 桌面端**不是另一套系统**：学生、试卷、考试全部来自同一个库，交卷走的还是
 > `/api/take/{token}/submit`，所以判分、成绩页、阅卷界面都没动。

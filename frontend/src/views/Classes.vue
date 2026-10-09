@@ -383,7 +383,7 @@ async function doBulkOwner() {
         <span class="muted">共 {{ detailShown.length }} 人</span>
       </div>
 
-      <el-table v-mtable v-loading="detailLoading" :data="detailShown" size="small" height="calc(100vh - 300px)">
+      <el-table v-loading="detailLoading" :data="detailShown" size="small" height="calc(100vh - 300px)">
         <el-table-column prop="student_no" label="学号" width="130" />
         <el-table-column prop="name" label="姓名" min-width="110" />
         <el-table-column prop="gender" label="性别" width="70">
@@ -538,16 +538,6 @@ async function doBulkOwner() {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 12px;
-}
-/* 手机上一行两个班，190px 的下限在手机上只排得下一个 */
-@media (max-width: 768px) {
-  .grid {
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 8px;
-  }
-  .cls {
-    padding: 10px;
-  }
 }
 .cls {
   border: 1px solid var(--el-border-color-lighter);

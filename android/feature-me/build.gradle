@@ -1,0 +1,23 @@
+plugins {
+    id 'com.android.library'
+}
+
+// 功能模块：我的（账号资料、账号管理、需求反馈、更新日志、设置）
+// 只依赖 core，不依赖别的功能模块。
+android {
+    namespace 'cn.wfxxkj.teacher.me'
+    compileSdk 35
+
+    defaultConfig {
+        minSdk 29
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    implementation project(':core')
+}
