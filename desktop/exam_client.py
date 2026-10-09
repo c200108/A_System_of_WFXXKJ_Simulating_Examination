@@ -93,6 +93,9 @@ def selftest(report: Path, server: str = "") -> int:
         lines.append(f"    文件名 {server_from_name() or '无'}"
                      f"　｜　本机记录 {store.remembered_server() or '无'}"
                      f"　｜　打包内置 {baked_server() or '无'}")
+        from client.shell import baked_name_login
+        lines.append("登录方式：" + ("姓名 + 密码（初始 123456）" if baked_name_login()
+                                     else "学号 + 密码（初始密码就是学号）"))
 
         lines.append("")
         lines.append("自检通过")
