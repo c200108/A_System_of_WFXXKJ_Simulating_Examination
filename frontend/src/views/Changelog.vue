@@ -36,22 +36,34 @@ const styleOf = t => TYPE_STYLE[t] || TYPE_STYLE.Changed
 const isTeacher = computed(() => !!currentUser.value)
 
 /**
- * 2.8.0 之后分成两条线：**仿真环境走 3.x，学生桌面端走 4.x**。
+ * 2.8.0 之后按产品线分开：**仿真环境走 3.x，学生桌面端走 4.x，教师端安卓 APP 走 5.x**。
  *
- * 两条线各改各的，版本号各自进位 —— 使用者关心的是"我用的那一头变了什么"，
- * 把两边的改动混在一条时间线里，看的人得自己分辨哪条跟自己有关。
+ * 各条线各改各的，版本号各自进位 —— 使用者关心的是"我用的那一头变了什么"，
+ * 把几边的改动混在一条时间线里，看的人得自己分辨哪条跟自己有关。
  *
  * 大版本号就是线的标记，所以这里按它分组，不用再往库里加字段。
+ * **3.x 以上每个大版本都单独成一个折叠块**：以后再开 6.x、7.x，不在 TRACKS 里
+ * 登记也会自动单列（标题用「x.x」兜底），不会因为漏写而整代从页面上消失。
  */
-const TRACKS = [
-  { key: '4', title: '学生桌面端', hint: '机房里发的那个 exe', color: 'var(--el-color-primary)' },
-  { key: '3', title: '仿真环境', hint: '网页里的操作题仿真器与判分', color: 'var(--el-color-success)' }
-]
+const TRACKS = {
+  5: { title: '教师端安卓 APP', hint: '老师手机上装的那个 APP', color: 'var(--el-color-warning)' },
+  4: { title: '学生桌面端', hint: '机房里发的那个 exe', color: 'var(--el-color-primary)' },
+  3: { title: '仿真环境', hint: '网页里的操作题仿真器与判分', color: 'var(--el-color-success)' }
+}
 const majorOf = v => String(v.version || '').split('.')[0]
-const tracks = computed(() =>
-  TRACKS.map(t => ({ ...t, items: versions.value.filter(v => majorOf(v) === t.key) }))
-    .filter(t => t.items.length)
-)
+const tracks = computed(() => {
+  const majors = [...new Set(versions.value.map(majorOf))]
+    .filter(m => Number(m) >= 3)
+    .sort((a, b) => Number(b) - Number(a))
+  return majors.map(key => ({
+    key,
+    title: `${key}.x`,
+    hint: '',
+    color: 'var(--el-color-info)',
+    ...TRACKS[key],
+    items: versions.value.filter(v => majorOf(v) === key)
+  }))
+})
 // 2.8.0 及更早是两条线共同的历史
 const trunk = computed(() => versions.value.filter(v => Number(majorOf(v)) <= 2))
 
@@ -134,14 +146,14 @@ async function removeItem(item) {
 
     <el-empty v-if="!versions.length && !loading" description="还没有更新记录" />
 
-    <!-- 两条线：仿真环境 3.x、学生桌面端 4.x。各自成组，别混在一条时间线里 -->
+    <!-- 每条产品线（3.x 及以上每个大版本）各自成一个折叠块，别混在一条时间线里 -->
     <div v-for="t in tracks" :key="t.key" class="track" :style="{ '--track': t.color }">
       <button class="thead" type="button" @click="toggle(t.key)">
         <span class="caret" :class="{ open: isOpen(t.key) }">▸</span>
         <span class="tdot" />
         <b>{{ t.title }}</b>
         <span class="thint">
-          {{ t.hint }}　·　{{ t.key }}.x　·　{{ t.items.length }} 个版本，
+          <template v-if="t.hint">{{ t.hint }}　·　</template>{{ t.key }}.x　·　{{ t.items.length }} 个版本，
           最新 {{ t.items[0].version }}
         </span>
       </button>
@@ -178,8 +190,8 @@ async function removeItem(item) {
     </div>
 
     <div v-if="tracks.length && trunk.length" class="fork">
-      从 2.8.0 起分成两条线：<b>仿真环境</b>走 3.x，<b>学生桌面端</b>走 4.x。
-      下面是分线之前的共同记录。
+      从 2.8.0 起按产品线分开：<b>仿真环境</b>走 3.x，<b>学生桌面端</b>走 4.x，
+      <b>教师端安卓 APP</b>走 5.x。下面是分线之前的共同记录。
     </div>
 
     <section v-for="(v, vi) in trunk" :key="v.version" class="ver">
