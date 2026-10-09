@@ -39,6 +39,23 @@ def baked_server() -> str:
         return ""
 
 
+def baked_name_login() -> bool:
+    """这个 exe 是不是「姓名登录版」（`build.py --name-login` 打的）。
+
+    姓名登录版：账号填**中文姓名**，初始密码统一 **123456**；普通版照旧是学号 +
+    学号。两版连的是同一个教师端、同一批学生账号，只是认人的办法不一样，
+    所以做成打包开关，而不是另抄一份客户端。
+    """
+    try:
+        from . import _build
+        return bool(getattr(_build, "NAME_LOGIN", False))
+    except Exception:                                   # noqa: BLE001
+        return False
+
+
+NAME_LOGIN_PASSWORD = "123456"     # 和后端 students.NAME_LOGIN_PASSWORD 对得上
+
+
 def server_from_name() -> str:
     """从 exe 的**文件名**里读地址。
 
