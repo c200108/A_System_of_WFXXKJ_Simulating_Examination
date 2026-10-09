@@ -765,3 +765,94 @@ def test_offline_start_works_without_the_network(app, server, exam, monkeypatch,
     f.offline()
     assert settle(app, until=on(app, exam_ui.ExamFrame)), f.msg.cget("text")
     assert (app.exam_root / "win02" / "素材" / "冬奥介绍.txt").exists()
+
+
+# ================================================================ 姓名登录版
+# `build.py --name-login` 打出来的那一版：账号填中文姓名，初始密码 123456。
+# 学生是这几条用例自己建的，不占上面那串学号。
+@pytest.fixture
+def name_app(app):
+    app.name_login = True
+    app.sign_out()                          # 按姓名登录版重画登录页
+    return app
+
+
+def _name_student(server, no, name):
+    from conftest import call, teacher_token
+    tk_ = teacher_token(server)
+    cid = next(c["id"] for c in call(server, "GET", "/api/classes", token=tk_)
+               if c["name"] == "1班")
+    call(server, "POST", "/api/students",
+         {"student_no": no, "name": name, "class_id": cid}, tk_)
+
+
+def test_姓名登录版_登录页写的是姓名和123456(name_app):
+    words = " ".join(labels_in(name_app.frame))
+    assert "姓　　名" in words and "初始密码 123456" in words
+    assert "姓名登录版" in words
+    name_app.frame.vars["server"].set("127.0.0.1:8000")
+    name_app.frame.vars["no"].set("")
+    name_app.frame.login()
+    assert "姓名和密码都要填" in name_app.frame.msg.cget("text")
+
+
+def test_姓名登录版_姓名加123456登得进去(name_app, server, exam):
+    _name_student(server, "26090131", "姓名登录甲")
+    shell = signed_in(name_app, server, "姓名登录甲", "123456")
+    assert name_app.student["no"] == "26090131"
+    assert settle(name_app, until=lambda: hasattr(shell.body, "pwd"))
+    assert "初始密码是 123456" in " ".join(labels_in(shell.body))
+
+
+def test_姓名登录版_密码不对就说(name_app, server, exam):
+    _name_student(server, "26090132", "姓名登录乙")
+    f = name_app.frame
+    f.vars["server"].set(server)
+    f.vars["no"].set("姓名登录乙")
+    f.vars["password"].set("26090132")          # 学号那套初始密码这里不认
+    f.login()
+    settle(name_app, 20, lambda: f.msg.cget("text"))
+    assert "密码" in f.msg.cget("text")
+
+
+def test_姓名登录版_重名时提示改填学号(name_app, server, exam):
+    _name_student(server, "26090133", "姓名登录重")
+    _name_student(server, "26090134", "姓名登录重")
+    f = name_app.frame
+    f.vars["server"].set(server)
+    f.vars["no"].set("姓名登录重")
+    f.vars["password"].set("123456")
+    f.login()
+    settle(name_app, 20, lambda: f.msg.cget("text"))
+    assert "学号" in f.msg.cget("text")
+    signed_in(name_app, server, "26090134", "123456")
+    assert name_app.student["no"] == "26090134"
+
+
+def test_姓名登录版_改了密码之后用新密码(name_app, server, exam):
+    _name_student(server, "26090135", "姓名登录丙")
+    shell = signed_in(name_app, server, "姓名登录丙", "123456")
+    assert settle(name_app, until=lambda: hasattr(shell.body, "pwd"))
+    page = shell.body
+    for key, value in (("old", "123456"), ("new", "Kaoshi2026"), ("again", "Kaoshi2026")):
+        page.pwd[key].set(value)
+    page.save_password()
+    assert settle(name_app, until=lambda: page.pwd_msg.cget("text"))
+    assert "已修改" in page.pwd_msg.cget("text"), page.pwd_msg.cget("text")
+    name_app.sign_out()
+    signed_in(name_app, server, "姓名登录丙", "Kaoshi2026")
+
+
+def test_姓名登录版_离线也按姓名找人(name_app, server, exam, monkeypatch, tmp_path):
+    raw = api.fetch_exam(server, exam["exam"]["token"], tmp_path / "离线.ekb")
+    monkeypatch.setattr("client.ui.filedialog.askopenfilename", lambda **k: str(raw))
+    f = name_app.frame
+    f.vars["server"].set("")
+    f.vars["no"].set("查无此人")
+    f.offline()
+    assert "名单里没有这个姓名" in f.msg.cget("text")
+    f.vars["no"].set("桌面丙")
+    f.offline()
+    assert settle(name_app, until=on(name_app, exam_ui.ExamFrame)), f.msg.cget("text")
+    assert name_app.student["no"] == "26090102", "按姓名找到人之后，交卷要带上他的学号"
+    assert name_app.student["name"] == "桌面丙"
