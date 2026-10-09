@@ -53,13 +53,20 @@ A_System_of_WFXXKJ_Simulating_Examination/
 │  └─ src/views/             Login / Paper（组卷）/ Questions（题库）/ Import（导入）
 │                            Exams（考试）/ Users（账号）/ Take（学生答题，免登录）
 │
-└─ desktop/                  机房用的学生端 exe（操作题在真实系统里做）
-   ├─ client/                api 联网 / snapshot 快照 / package 考试包 / ui 界面
-   ├─ exam_client.py         入口，打包成 exe 的就是它
-   ├─ build.py               打包（兼容 Win7/8/10/11，看它的开头说明）
-   └─ tests/                 起一个真后端走完整条链路
+├─ desktop/                  机房用的学生端 exe（操作题在真实系统里做）
+│  ├─ client/                api 联网 / snapshot 快照 / package 考试包 / ui 界面
+│  ├─ exam_client.py         入口，打包成 exe 的就是它
+│  ├─ build.py               打包（兼容 Win7/8/10/11，看它的开头说明）
+│  └─ tests/                 起一个真后端走完整条链路
+│
+└─ android/                  教师端安卓 APP（安卓 10 起）：原生界面，多模块（core + 六个功能模块）
+                             打包、签名、发给老师 → android/README.md
 ```
 
+> 教师端 APP 是**原生界面、同一套数据**：组卷、题库、考试等功能与教师端网页一一对应，
+> 业务走同一套 `/api`；APP 只多两个接口：`/api/app/info` 认服务器、`/api/app/session`
+> 前台心跳续期登录，见 `backend/app/routers/app_mobile.py`。
+>
 > 桌面端**不是另一套系统**：学生、试卷、考试全部来自同一个库，交卷走的还是
 > `/api/take/{token}/submit`，所以判分、成绩页、阅卷界面都没动。
 > 后端那一半在 `backend/app/routers/desk.py`。
@@ -281,6 +288,8 @@ python -m tools.migrate_from_html
 | GET | `/api/exams/{id}/export.xlsx` | 成绩汇总导出（三张表） |
 | GET | `/api/take/{token}` | **学生取卷，公开访问，不含答案** |
 | POST | `/api/take/{token}/submit` | **学生交卷，后端判分** |
+| GET | `/api/app/info` | 教师端 APP 认服务器（公开） |
+| POST | `/api/app/session` | 教师端 APP 前台心跳：确认在线、令牌用掉四分之一寿命时换新 |
 
 接口文档是 FastAPI 自动生成的，改了接口文档自动跟着变，不用另写一份。
 

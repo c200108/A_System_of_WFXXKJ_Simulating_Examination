@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 学校的服务器多数是局域网 http 地址（192.168.x.x:8080），安卓 9 起默认禁止 http，这里放开。
+     https 照常校验证书，自签证书不放行。 -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

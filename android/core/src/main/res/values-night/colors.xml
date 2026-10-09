@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="wf_primary">#7D93F5</color>
+    <color name="wf_primary_pressed">#94A6F7</color>
+    <color name="wf_primary_soft">#252C47</color>
+    <color name="wf_on_primary">#0E1222</color>
+
+    <color name="wf_page">#0F1115</color>
+    <color name="wf_surface">#181B22</color>
+    <color name="wf_surface_alt">#20242D</color>
+    <color name="wf_border">#2A2F3A</color>
+    <color name="wf_divider">#232731</color>
+    <color name="wf_ripple">#337D93F5</color>
+    <color name="wf_scrim">#99000000</color>
+
+    <color name="wf_text">#E8EAF0</color>
+    <color name="wf_text2">#A3AAB9</color>
+    <color name="wf_text3">#6B7282</color>
+
+    <color name="wf_success">#43C987</color>
+    <color name="wf_success_soft">#15302A</color>
+    <color name="wf_warning">#F0B45A</color>
+    <color name="wf_warning_soft">#33281A</color>
+    <color name="wf_danger">#FF6B6F</color>
+    <color name="wf_danger_soft">#3A1F22</color>
+    <color name="wf_info">#6AA6FF</color>
+    <color name="wf_info_soft">#1A2840</color>
+    <color name="wf_violet">#B39BFA</color>
+    <color name="wf_violet_soft">#2A2342</color>
+</resources>
