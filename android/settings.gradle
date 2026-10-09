@@ -1,0 +1,24 @@
+// 教师端安卓 APP（5.0.0）。用 Android Studio 打开 android/ 这个目录即可，见 README.md。
+pluginManagement {
+    repositories {
+        // 国内网络先走阿里云镜像，取不到再回 Google 官方
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = 'WfxxTeacher'
+include ':app'
+include ':core'
+include ':feature-paper', ':feature-bank', ':feature-exam', ':feature-typing', ':feature-student', ':feature-me'

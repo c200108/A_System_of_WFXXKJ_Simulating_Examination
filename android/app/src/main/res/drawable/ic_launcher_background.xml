@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 桌面图标底色：和网页校徽占位图一样的蓝色渐变 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <gradient
+        android:angle="315"
+        android:endColor="#3F5BD8"
+        android:startColor="#5B7CFA" />
+</shape>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 安卓 12 起系统统一的启动画面：页面底色 + 应用图标 -->
+<resources>
+    <style name="AppTheme" parent="Wf">
+        <item name="android:windowSplashScreenBackground">@color/wf_page</item>
+    </style>
+</resources>

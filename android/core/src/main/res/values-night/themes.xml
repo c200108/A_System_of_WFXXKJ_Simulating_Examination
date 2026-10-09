@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Wf.Base" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorPrimary">@color/wf_primary</item>
+        <item name="android:colorPrimaryDark">@color/wf_primary</item>
+        <item name="android:colorAccent">@color/wf_primary</item>
+        <item name="android:colorControlActivated">@color/wf_primary</item>
+        <item name="android:colorControlHighlight">@color/wf_ripple</item>
+        <item name="android:textColorPrimary">@color/wf_text</item>
+        <item name="android:textColorSecondary">@color/wf_text2</item>
+        <item name="android:textColorHint">@color/wf_text3</item>
+        <item name="android:windowBackground">@color/wf_page</item>
+        <item name="android:colorBackground">@color/wf_page</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:alertDialogTheme">@style/Wf.Dialog</item>
+        <item name="android:datePickerDialogTheme">@style/Wf.Dialog</item>
+        <item name="android:timePickerDialogTheme">@style/Wf.Dialog</item>
+    </style>
+
+    <style name="Wf.DialogBase" parent="android:Theme.Material.Dialog.Alert">
+        <item name="android:colorPrimary">@color/wf_primary</item>
+        <item name="android:colorAccent">@color/wf_primary</item>
+        <item name="android:colorControlActivated">@color/wf_primary</item>
+        <item name="android:textColorPrimary">@color/wf_text</item>
+        <item name="android:textColorSecondary">@color/wf_text2</item>
+        <item name="android:windowBackground">@drawable/wf_dialog_bg</item>
+    </style>
+</resources>
