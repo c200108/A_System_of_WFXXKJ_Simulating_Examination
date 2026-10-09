@@ -34,13 +34,14 @@ import cn.wfxxkj.teacher.core.ui.V;
 /**
  * 更新日志（网页 Changelog.vue，仅管理员）。遵循 Keep a Changelog：新版本在前，版内按变动类型分组。
  *
- * <p>2.8.0 之后分成两条线：仿真环境走 3.x，学生桌面端走 4.x。网页是每条线一个折叠块，
+ * <p>2.8.0 之后按产品线分开：仿真环境走 3.x，学生桌面端走 4.x，教师端安卓 APP 走 5.x。网页是每条线一个折叠块，
  * APP 用顶部一排筛选条切换「线」，默认停在最新版本所在的那条线；分线之前的记录归在「共同历史」。
  */
 public class ChangelogScreen extends Screen {
 
     /** 一条线：大版本号 → 名称、说明 */
     private static final String[][] TRACKS = {
+            {"5", "教师端安卓 APP", "老师手机上装的那个 APP"},
             {"4", "学生桌面端", "机房里发的那个 exe"},
             {"3", "仿真环境", "网页里的操作题仿真器与判分"},
     };
@@ -167,7 +168,7 @@ public class ChangelogScreen extends Screen {
         }
         List<Option> opts = new ArrayList<>();
         opts.add(new Option(ALL, "全部 " + versions.size()));
-        // 已知的两条线固定在前，其他大版本号跟在后面，共同历史放最后
+        // 已知的线固定在前，其他大版本号跟在后面，共同历史放最后
         List<String> keys = new ArrayList<>();
         for (String[] t : TRACKS) if (count.containsKey(t[0])) keys.add(t[0]);
         for (String k : count.keySet()) if (!keys.contains(k) && !TRUNK.equals(k)) keys.add(0, k);
@@ -192,9 +193,9 @@ public class ChangelogScreen extends Screen {
         if (versions.isEmpty()) {
             hint = null;
         } else if (ALL.equals(line)) {
-            hint = "按发布时间排列。从 2.8.0 起分成两条线：仿真环境走 3.x，学生桌面端走 4.x。";
+            hint = "按发布时间排列。从 2.8.0 起按产品线分开：仿真环境走 3.x，学生桌面端走 4.x，教师端安卓 APP 走 5.x。";
         } else if (TRUNK.equals(line)) {
-            hint = "从 2.8.0 起分成两条线：仿真环境走 3.x，学生桌面端走 4.x。这里是分线之前（以及 2.x 延续）的共同记录。";
+            hint = "从 2.8.0 起按产品线分开：仿真环境走 3.x，学生桌面端走 4.x，教师端安卓 APP 走 5.x。这里是分线之前（以及 2.x 延续）的共同记录。";
         } else {
             String desc = null;
             for (String[] t : TRACKS) if (t[0].equals(line)) desc = t[2];
