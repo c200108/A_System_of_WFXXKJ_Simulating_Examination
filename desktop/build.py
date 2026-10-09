@@ -396,8 +396,16 @@ def main() -> int:
            "--distpath", str(DIST),
            "--workpath", str(HERE / "build"),
            str(spec)]
-    if subprocess.run(cmd).returncode != 0:
+    packed = subprocess.run(cmd).returncode == 0
+    if args.name_login:
+        # 打完就把开关拨回去：_build.py 留在源码里，不拨回去的话之后直接跑源码、
+        # 跑测试、再打普通版之前，全都悄悄变成了姓名登录版
+        built = HERE / "client" / "_build.py"
+        built.write_text(built.read_text(encoding="utf-8").replace(
+            "NAME_LOGIN = True", "NAME_LOGIN = False"), encoding="utf-8")
+    if not packed:
         return 1
+    # （exe 里那份 _build 是打包时冻进去的，拨回源码里这份不影响它）
 
     exe = DIST / (f"{NAME}.exe" if not args.onedir else f"{NAME}/{NAME}.exe")
     if final and final != exe.name:
