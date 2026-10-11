@@ -32,6 +32,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import SchoolClass, Student
+from .pinyin import name_pinyin
 
 # 一行解析出来的东西：(来源表名, 行号, [单元格...])
 # 来源表名给多工作表用，粘贴名单时是空串。
@@ -297,6 +298,7 @@ def ingest(db: Session, rows: list[Row], me_id: int, fallback: SchoolClass | Non
                 class_id=cls.id if cls else None,
                 student_class=cls.display if cls else "",
                 gender=gender,
+                pinyin=name_pinyin(name),
                 password_hash=hash_it(make_password(no)),
                 created_by=me_id,
             )

@@ -140,6 +140,8 @@ class StudentOut(ORMModel):
     class_id: int | None = None
     student_class: str = ""
     gender: str = ""                 # 男 / 女 / 空（选填）
+    pinyin: str = ""                 # 姓名拼音全拼
+    class_role: str = ""             # 班长 / 组长 / 空
     is_active: bool
     created_at: datetime | None = None
 
@@ -160,6 +162,9 @@ class StudentUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=64)
     class_id: int | None = None
     gender: str | None = Field(default=None, max_length=8)
+    # 拼音一般跟着姓名自动生成；名字里有多音字时老师手改。传空串 = 按姓名重新生成
+    pinyin: str | None = Field(default=None, max_length=64)
+    class_role: str | None = Field(default=None, max_length=8)   # 班长 / 组长 / 空
     is_active: bool | None = None
     password: str | None = Field(default=None, max_length=64)
 

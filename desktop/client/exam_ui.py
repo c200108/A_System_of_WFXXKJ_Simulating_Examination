@@ -24,6 +24,11 @@ from .shell import (AMBER, APP_NAME, BG, BLUE, CARD, CLIENT_VER, FONT, GRAY,
 
 
 # ================================================================ 三、答题
+def submit_needs(total_questions: int, total_seconds: int) -> tuple[int, int]:
+    """至少要答几题、至少要考几秒：都是三分之二，向上取整（30 题答满 20 题，45 分钟考满 30 分钟）。"""
+    return -(-total_questions * 2 // 3), -(-total_seconds * 2 // 3)
+
+
 class ExamFrame(ttk.Frame):
     def __init__(self, app):
         super().__init__(app.root, padding=0)
@@ -484,10 +489,44 @@ class ExamFrame(ttk.Frame):
                           fg="#ffd9d6" if self.left < 300 else "white")
         if self.left % 15 == 0:
             self.save_draft()
+        # 页脚提示交卷门槛，学生不用点了「交卷」才知道还差什么
+        need_q, need_sec = submit_needs(len(self.paper), self.app.package.duration_min * 60)
+        wait = max(0, need_sec - (self.app.package.duration_min * 60 - self.left))
+        more_q = max(0, need_q - self.answered_count())
+        self.tip.config(text="" if not (wait or more_q) else
+                        f"答满 {need_q} 题、并且开考 {-(-need_sec // 60)} 分钟后才能交卷")
         self.after(1000, self.tick)
 
     # ---------------- 交卷 ----------------
+    def answered_count(self) -> int:
+        return sum(1 for q in self.paper if self.answers.get(str(q["id"])))
+
+    def gate_reason(self) -> str:
+        """交卷门槛：考试时间过了三分之二、**并且**答完三分之二的题才能交。能交返回空串。
+
+        和网页端（frontend/src/submitGate.js）是同一条规矩，改一边记得改另一边。
+        时间到自动交卷不受这个限制（do_submit(auto=True) 不经过这里）。
+        """
+        total_sec = self.app.package.duration_min * 60
+        need_q, need_sec = submit_needs(len(self.paper), total_sec)
+        more_q = max(0, need_q - self.answered_count())
+        wait = max(0, need_sec - (total_sec - self.left))
+        if not more_q and not wait:
+            return ""
+        parts = []
+        if more_q:
+            parts.append(f"还要再答 {more_q} 题")
+        if wait:
+            m, sec = divmod(wait, 60)
+            parts.append(f"还要再等 {m} 分 {sec:02d} 秒" if m else f"还要再等 {sec} 秒")
+        return (f"考试时间过了三分之二、并且答完三分之二的题（至少 {need_q} 题）才能交卷。\n\n"
+                + "，".join(parts) + "。")
+
     def confirm_submit(self):
+        why = self.gate_reason()
+        if why:
+            messagebox.showinfo("还不能交卷", why)
+            return
         blank = [i + 1 for i, q in enumerate(self.paper)
                  if not self.answers.get(str(q["id"]))]
         text = "确定交卷吗？交卷后不能再修改。"
