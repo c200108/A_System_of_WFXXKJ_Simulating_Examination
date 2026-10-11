@@ -1,5 +1,8 @@
 <script setup>
-/** 学生登录：学号 + 密码。账号由老师创建，这里不提供注册。 */
+/**
+ * 学生登录：先选班级，再填姓名拼音全拼 + 密码，初始密码 123456。账号由老师创建，
+ * 这里不提供注册。同一个班里拼音一样的同学改填学号（学号登录时老的初始密码 = 学号照样能用）。
+ */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -13,25 +16,33 @@ const title = computed(
   () => siteConfig.site?.student_title || '昌邑市实验中学信息科技学生实践平台'
 )
 
-const form = reactive({ student_no: '', password: '' })
+const form = reactive({ class_id: null, student_no: '', password: '' })
+const classes = ref([])
 const loading = ref(false)
 const noRef = ref(null)
 
 onMounted(() => {
-  // 机房里同一台电脑轮流用，记住上次的学号能省点事；密码当然不记
-  form.student_no = localStorage.getItem('lastStudentNo') || ''
+  // 机房里同一台电脑轮流用，记住上次的账号能省点事；密码当然不记
+  form.student_no = localStorage.getItem('lastStudentAccount') || ''
   noRef.value?.focus()
+  api.studentLoginClasses().then(list => {
+    classes.value = list
+    const last = Number(localStorage.getItem('lastStudentClass'))
+    if (list.some(c => c.id === last)) form.class_id = last
+  })
 })
 
 async function submit() {
-  if (!form.student_no.trim()) return ElMessage.warning('请输入学号')
+  if (!form.class_id) return ElMessage.warning('请选择班级')
+  if (!form.student_no.trim()) return ElMessage.warning('请输入姓名拼音')
   if (!form.password) return ElMessage.warning('请输入密码')
 
   loading.value = true
   try {
-    const res = await api.studentLogin(form.student_no.trim(), form.password)
+    const res = await api.studentLoginByName(form.student_no.trim(), form.password, form.class_id)
     localStorage.setItem('studentToken', res.access_token)
-    localStorage.setItem('lastStudentNo', form.student_no.trim())
+    localStorage.setItem('lastStudentAccount', form.student_no.trim())
+    localStorage.setItem('lastStudentClass', String(form.class_id))
     setStudent(res.student)
     ElMessage.success(`欢迎，${res.student.name}`)
     router.push('/home')
@@ -47,17 +58,29 @@ async function submit() {
       <div class="head">
         <BrandLogo :size="48" :radius="0.29" />
         <h1>{{ title }}</h1>
-        <p class="sub">用学号登录，做考试和打字练习</p>
+        <p class="sub">用姓名拼音登录，做考试和打字练习</p>
       </div>
 
       <form @submit.prevent="submit">
         <label class="field">
-          <span>学号</span>
+          <span>班级</span>
+          <el-select
+            v-model="form.class_id"
+            size="large"
+            filterable
+            placeholder="选择你的班级"
+            style="width: 100%"
+          >
+            <el-option v-for="c in classes" :key="c.id" :label="c.display" :value="c.id" />
+          </el-select>
+        </label>
+        <label class="field">
+          <span>姓名拼音</span>
           <el-input
             ref="noRef"
             v-model="form.student_no"
             size="large"
-            placeholder="老师发给你的学号"
+            placeholder="全拼小写，如 zhangsan"
             autocomplete="username"
           />
         </label>
@@ -68,7 +91,7 @@ async function submit() {
             type="password"
             size="large"
             show-password
-            placeholder="初始密码就是学号"
+            placeholder="初始密码 123456"
             autocomplete="current-password"
             @keyup.enter="submit"
           />
@@ -79,7 +102,9 @@ async function submit() {
       </form>
 
       <p class="tip">
-        第一次登录：<b>密码就是你的学号</b>，登录后请到「首页」改掉。<br />
+        先选<b>班级</b>，账号填<b>姓名拼音全拼</b>，如张三填 zhangsan，ü 打 v（吕 → lv）。<br />
+        班里有同学和你拼音一样的，账号改填<b>学号</b>。<br />
+        第一次登录：<b>密码是 123456</b>，登录后请到「首页」改掉。<br />
         忘记密码找任课老师重置。
       </p>
 

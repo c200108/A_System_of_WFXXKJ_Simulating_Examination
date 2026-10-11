@@ -6,7 +6,7 @@ r"""学生端发版：打齐八个 exe，发到 GitHub Releases。
     python 发版.py 4.8.0 --不打包                「发布」里已经是这一版的 exe，直接发
     python 发版.py 4.7.0 --提交 59bdac9 --发布目录 <那一版的 desktop\发布> --不打包
 
-## 每一版发四个（再加姓名登录版四个）
+## 每一版发四个（再加拼音登录版四个）
 
 | 文件 | 适用 |
 |---|---|
@@ -72,9 +72,9 @@ VARIANTS = [
     ("考试客户端-32位@", "win32", "32 位 · 不含运行库（Win8.1+，或装过 KB2999226 的 Win7）"),
     ("考试客户端-64位@", "win64", "64 位 · 不含运行库（Win8.1+，或装过 KB2999226 的 Win7）"),
 ]
-# 姓名登录版（build.py --name-login）：同样四个，账号填中文姓名、初始密码 123456
-VARIANTS += [("考试客户端-姓名登录-" + prefix.split("-", 1)[1], "name-login-" + suffix,
-              "姓名登录版 · " + label) for prefix, suffix, label in VARIANTS]
+# 拼音登录版（build.py --name-login）：同样四个，账号填姓名拼音全拼、初始密码 123456
+VARIANTS += [("考试客户端-拼音登录-" + prefix.split("-", 1)[1], "pinyin-login-" + suffix,
+              "拼音登录版 · " + label) for prefix, suffix, label in VARIANTS]
 KINDS = {"Added": "新增", "Changed": "变更", "Fixed": "修复", "Removed": "移除",
          "Security": "安全", "Deprecated": "弃用"}
 
@@ -115,9 +115,9 @@ def notes(version: str, peers: list, repo_url: str, tag: str, commit: str) -> st
               f"exe 里内置的教师端地址是 `{SERVER}`。要连别的地址：把 exe 改名成 "
               "`考试客户端@IP_端口.exe`（端口前用下划线，如 `考试客户端@192.168.1.8_8080.exe`），"
               "或者学生在登录页填。", "",
-              "**姓名登录版**（文件名带 name-login）：账号填中文姓名，初始密码统一 `123456`，"
-              "同名的同学在姓名栏改填学号；和普通版连同一个教师端、同一批学生账号，"
-              "改过的密码两版通用。", ""]
+              "**拼音登录版**（文件名带 pinyin-login）：先选班级，账号填姓名拼音全拼（如 zhangsan），"
+              "初始密码统一 `123456`；同一个班里拼音重了的改填学号。"
+              "和普通版连同一个教师端、同一批学生账号，改过的密码两版通用。", ""]
     doc = f"docs/更新日志/{version}.md"
     if subprocess.run(["git", "-C", str(ROOT), "cat-file", "-e", f"{commit}:{doc}"]).returncode == 0:
         lines.append(f"详细说明（为什么这么改、怎么验证的）：[{doc}]({repo_url}/blob/{tag}/{doc})")

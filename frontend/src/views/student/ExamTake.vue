@@ -11,6 +11,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import { currentStudent } from '../../auth'
+import { useSubmitGate } from '../../submitGate'
 import SimHost from '../../components/sim/SimHost.vue'
 
 const CN = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
@@ -49,6 +50,8 @@ const numbering = computed(() => {
 })
 
 const answered = computed(() => Object.values(answers).filter(v => String(v || '').trim()).length)
+// 交卷门槛：考试时间过三分之二、且答完三分之二的题
+const gate = useSubmitGate(`student-${examId}`, paper, answered)
 
 /** 交卷后按题号取回判分明细（老师开了「显示答案」才有） */
 const detailOf = computed(() => {
@@ -60,6 +63,7 @@ const detailOf = computed(() => {
 onMounted(async () => {
   try {
     paper.value = await api.studentPaper(examId)
+    gate.start()
   } catch (e) {
     loadError.value = e.response?.data?.detail || '打不开这场考试，回列表看看还在不在'
   } finally {
@@ -72,6 +76,10 @@ const asking = ref(false)
 async function submit() {
   // 学生紧张时容易连点，挡住重复弹窗和重复提交
   if (asking.value || submitting.value || result.value) return
+  if (!gate.canSubmit.value) {
+    ElMessage.warning(gate.reason.value)
+    return
+  }
 
   const blank = paper.value.total - answered.value
   if (blank > 0) {
@@ -92,6 +100,7 @@ async function submit() {
   submitting.value = true
   try {
     result.value = await api.studentSubmit(examId, answers)
+    gate.done()
     window.scrollTo({ top: 0, behavior: 'smooth' })
   } finally {
     submitting.value = false
@@ -222,6 +231,7 @@ function back() {
         <span class="grow" />
         <template v-if="!result">
           <span class="prog">已作答 {{ answered }} / {{ paper.total }}</span>
+          <span v-if="gate.reason.value" class="gate">{{ gate.reason.value }}</span>
           <el-button type="primary" size="large" :loading="submitting" @click="submit">
             交卷
           </el-button>
@@ -233,6 +243,13 @@ function back() {
 </template>
 
 <style scoped>
+.gate {
+  font-size: 12px;
+  color: var(--el-color-warning);
+  margin: 0 10px;
+  max-width: 420px;
+  line-height: 1.5;
+}
 .wrap {
   max-width: 880px;
   margin: 0 auto;

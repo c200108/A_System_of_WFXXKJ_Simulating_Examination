@@ -266,7 +266,7 @@ def test_默认答案包目录在LOCALAPPDATA下(tmp_path, monkeypatch):
     assert out.parent == tmp_path / store.APP_DIR_NAME
 
 
-def test_姓名登录版_开关烤得进去也读得回来(monkeypatch):
+def test_拼音登录版_开关烤得进去也读得回来(monkeypatch):
     """`build.py --name-login` 写 NAME_LOGIN = True；没打包时当普通版。"""
     import client
 
@@ -279,6 +279,6 @@ def test_姓名登录版_开关烤得进去也读得回来(monkeypatch):
     assert shell.baked_name_login() is False
 
 
-def test_姓名登录版的文件名和普通版分得开():
-    name = build.exe_name("192.168.1.8:8080", "-姓名登录-32位")
-    assert name == "考试客户端-姓名登录-32位@192.168.1.8_8080.exe"
+def test_拼音登录版的文件名和普通版分得开():
+    name = build.exe_name("192.168.1.8:8080", "-拼音登录-32位")
+    assert name == "考试客户端-拼音登录-32位@192.168.1.8_8080.exe"

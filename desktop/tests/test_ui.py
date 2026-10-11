@@ -767,71 +767,104 @@ def test_offline_start_works_without_the_network(app, server, exam, monkeypatch,
     assert (app.exam_root / "win02" / "素材" / "冬奥介绍.txt").exists()
 
 
-# ================================================================ 姓名登录版
-# `build.py --name-login` 打出来的那一版：账号填中文姓名，初始密码 123456。
+# ================================================================ 拼音登录版
+# `build.py --name-login` 打出来的那一版：账号填姓名拼音全拼，初始密码 123456。
 # 学生是这几条用例自己建的，不占上面那串学号。
 @pytest.fixture
 def name_app(app):
     app.name_login = True
-    app.sign_out()                          # 按姓名登录版重画登录页
+    app.sign_out()                          # 按拼音登录版重画登录页
     return app
 
 
-def _name_student(server, no, name):
+def _name_student(server, no, name, cls_name="1班"):
+    """建一个学生，返回他所在班级的显示名（登录页班级下拉里的那一项）。"""
     from conftest import call, teacher_token
     tk_ = teacher_token(server)
-    cid = next(c["id"] for c in call(server, "GET", "/api/classes", token=tk_)
-               if c["name"] == "1班")
+    classes = call(server, "GET", "/api/classes", token=tk_)
+    got = next((c for c in classes if c["name"] == cls_name), None)
+    if got is None:
+        got = call(server, "POST", "/api/classes", {"grade": "九年级", "name": cls_name}, tk_)
     call(server, "POST", "/api/students",
-         {"student_no": no, "name": name, "class_id": cid}, tk_)
+         {"student_no": no, "name": name, "class_id": got["id"]}, tk_)
+    return got["grade"] + got["name"]
 
 
-def test_姓名登录版_登录页写的是姓名和123456(name_app):
+def _pick_class(app, server, display):
+    """像学生那样：连上教师端、班级下拉里选自己的班。"""
+    f = app.frame
+    f.set_classes({c["display"]: c["id"] for c in api.login_classes(server)})
+    f.vars["cls"].set(display)
+
+
+def test_拼音登录版_登录页写的是拼音和123456(name_app):
     words = " ".join(labels_in(name_app.frame))
-    assert "姓　　名" in words and "初始密码 123456" in words
-    assert "姓名登录版" in words
+    assert "姓名拼音" in words and "初始密码 123456" in words
+    assert "拼音登录版" in words
+    assert "班　　级" in words, "拼音登录版要先选班级"
+    assert "0801" not in words, "不再有「拼音 + 年级班级」的账号"
+    assert set(name_app.frame.vars) == {"server", "cls", "no", "password"}
     name_app.frame.vars["server"].set("127.0.0.1:8000")
     name_app.frame.vars["no"].set("")
     name_app.frame.login()
-    assert "姓名和密码都要填" in name_app.frame.msg.cget("text")
+    assert "拼音和密码都要填" in name_app.frame.msg.cget("text")
 
 
-def test_姓名登录版_姓名加123456登得进去(name_app, server, exam):
-    _name_student(server, "26090131", "姓名登录甲")
-    shell = signed_in(name_app, server, "姓名登录甲", "123456")
+def test_拼音登录版_拼音加123456登得进去(name_app, server, exam):
+    _pick_class(name_app, server, _name_student(server, "26090131", "拼音登录甲"))
+    shell = signed_in(name_app, server, "pinyindenglujia", "123456")
     assert name_app.student["no"] == "26090131"
     assert settle(name_app, until=lambda: hasattr(shell.body, "pwd"))
     assert "初始密码是 123456" in " ".join(labels_in(shell.body))
 
 
-def test_姓名登录版_密码不对就说(name_app, server, exam):
-    _name_student(server, "26090132", "姓名登录乙")
+def test_拼音登录版_密码不对就说(name_app, server, exam):
+    _name_student(server, "26090132", "拼音登录乙")
     f = name_app.frame
     f.vars["server"].set(server)
-    f.vars["no"].set("姓名登录乙")
+    f.vars["no"].set("pinyindengluyi")
     f.vars["password"].set("26090132")          # 学号那套初始密码这里不认
     f.login()
     settle(name_app, 20, lambda: f.msg.cget("text"))
     assert "密码" in f.msg.cget("text")
 
 
-def test_姓名登录版_重名时提示改填学号(name_app, server, exam):
-    _name_student(server, "26090133", "姓名登录重")
-    _name_student(server, "26090134", "姓名登录重")
+def test_拼音登录版_要先选班级(name_app, server, exam):
+    _name_student(server, "26090137", "拼音登录戊")
+    f = name_app.frame
+    f.set_classes({c["display"]: c["id"] for c in api.login_classes(server)})
+    f.vars["server"].set(server)
+    f.vars["no"].set("pinyindengluwu")
+    f.vars["password"].set("123456")
+    f.login()
+    assert "请先选择班级" in f.msg.cget("text")
+
+
+def test_拼音登录版_重名按班级分开(name_app, server, exam):
+    one = _name_student(server, "26090133", "拼音登录重")
+    two = _name_student(server, "26090134", "拼音登录重", "7班")
+    assert one != two
+    _pick_class(name_app, server, two)
+    signed_in(name_app, server, "pinyindengluzhong", "123456")
+    assert name_app.student["no"] == "26090134"
+    name_app.sign_out()
+    # 同一个班里再来一位同拼音的：只能填学号
+    _name_student(server, "26090138", "拼音登录重", "7班")
+    _pick_class(name_app, server, two)
     f = name_app.frame
     f.vars["server"].set(server)
-    f.vars["no"].set("姓名登录重")
+    f.vars["no"].set("pinyindengluzhong")
     f.vars["password"].set("123456")
     f.login()
     settle(name_app, 20, lambda: f.msg.cget("text"))
     assert "学号" in f.msg.cget("text")
-    signed_in(name_app, server, "26090134", "123456")
-    assert name_app.student["no"] == "26090134"
+    signed_in(name_app, server, "26090138", "123456")
+    assert name_app.student["no"] == "26090138"
 
 
-def test_姓名登录版_改了密码之后用新密码(name_app, server, exam):
-    _name_student(server, "26090135", "姓名登录丙")
-    shell = signed_in(name_app, server, "姓名登录丙", "123456")
+def test_拼音登录版_改了密码之后用新密码(name_app, server, exam):
+    _pick_class(name_app, server, _name_student(server, "26090135", "拼音登录丙"))
+    shell = signed_in(name_app, server, "pinyindenglubing", "123456")
     assert settle(name_app, until=lambda: hasattr(shell.body, "pwd"))
     page = shell.body
     for key, value in (("old", "123456"), ("new", "Kaoshi2026"), ("again", "Kaoshi2026")):
@@ -840,19 +873,88 @@ def test_姓名登录版_改了密码之后用新密码(name_app, server, exam):
     assert settle(name_app, until=lambda: page.pwd_msg.cget("text"))
     assert "已修改" in page.pwd_msg.cget("text"), page.pwd_msg.cget("text")
     name_app.sign_out()
-    signed_in(name_app, server, "姓名登录丙", "Kaoshi2026")
+    signed_in(name_app, server, "pinyindenglubing", "Kaoshi2026")
 
 
-def test_姓名登录版_离线也按姓名找人(name_app, server, exam, monkeypatch, tmp_path):
+def test_拼音登录版_中文姓名也还认(name_app, server, exam):
+    """4.10.0 的姓名登录版学生已经习惯填中文姓名，这一栏照样认。"""
+    _name_student(server, "26090136", "拼音登录丁")
+    signed_in(name_app, server, "拼音登录丁", "123456")
+    assert name_app.student["no"] == "26090136"
+
+
+def test_拼音登录版_离线也按拼音找人(name_app, server, exam, monkeypatch, tmp_path):
     raw = api.fetch_exam(server, exam["exam"]["token"], tmp_path / "离线.ekb")
     monkeypatch.setattr("client.ui.filedialog.askopenfilename", lambda **k: str(raw))
     f = name_app.frame
     f.vars["server"].set("")
-    f.vars["no"].set("查无此人")
+    f.vars["no"].set("chawuciren")
     f.offline()
-    assert "名单里没有这个姓名" in f.msg.cget("text")
-    f.vars["no"].set("桌面丙")
+    assert "名单里没有这个拼音" in f.msg.cget("text")
+    f.vars["no"].set("ZhuoMian Bing")
     f.offline()
     assert settle(name_app, until=on(name_app, exam_ui.ExamFrame)), f.msg.cget("text")
-    assert name_app.student["no"] == "26090102", "按姓名找到人之后，交卷要带上他的学号"
+    assert name_app.student["no"] == "26090102", "按拼音找到人之后，交卷要带上他的学号"
     assert name_app.student["name"] == "桌面丙"
+
+
+def test_离线名单按拼音找人的规矩():
+    roster = [
+        {"no": "1", "name": "张伟", "py": "zhangwei", "cls": "八年级1班"},
+        {"no": "2", "name": "章伟", "py": "zhangwei", "cls": "九年级2班"},
+        {"no": "3", "name": "李雷", "py": "lilei", "cls": "八年级1班"},
+        {"no": "4", "name": "韩梅梅"},                 # 老考试包没有拼音
+        {"no": "5", "name": "张薇", "py": "zhangwei", "cls": "九年级2班"},
+    ]
+    from client.ui import roster_by_pinyin
+    assert roster_by_pinyin(roster, "lilei")[0]["no"] == "3"
+    hit, why = roster_by_pinyin(roster, "zhangwei")
+    assert hit is None and "选择班级" in why
+    assert roster_by_pinyin(roster, "zhangwei", "八年级1班")[0]["no"] == "1"
+    hit, why = roster_by_pinyin(roster, "zhangwei", "九年级2班")
+    assert hit is None and "学号" in why
+    assert roster_by_pinyin(roster, "zhangwei0801") == (None, "")
+    assert roster_by_pinyin(roster, "韩梅梅")[0]["no"] == "4"
+    assert roster_by_pinyin(roster, "nobody") == (None, "")
+
+
+# ================================================================ 交卷门槛
+def test_交卷门槛_三分之二向上取整():
+    assert exam_ui.submit_needs(30, 45 * 60) == (20, 30 * 60)
+    assert exam_ui.submit_needs(10, 40 * 60) == (7, 1600)
+    assert exam_ui.submit_needs(0, 0) == (0, 0)
+
+
+def test_交卷门槛_时间和题数都够了才放行(app, server, exam, monkeypatch):
+    frame = start_exam(app, server, exam, "26090119")
+    shown = []
+    monkeypatch.setattr(messagebox, "showinfo", lambda *a, **k: shown.append(a[1]))
+    submitted_ = []
+    monkeypatch.setattr(frame, "do_submit", lambda *a, **k: submitted_.append(1))
+
+    total = app.package.duration_min * 60
+    need_q, need_sec = exam_ui.submit_needs(len(frame.paper), total)
+    # 刚开考、一题没答：两样都不够
+    frame.confirm_submit()
+    assert not submitted_ and "才能交卷" in shown[-1] and "再答" in shown[-1]
+    assert "才能交卷" in (frame.tick() or frame.tip.cget("text"))
+
+    # 题答够了、时间还不够
+    for q in frame.paper[:need_q]:
+        frame.answers[str(q["id"])] = "A"
+    frame.confirm_submit()
+    assert not submitted_ and "再等" in shown[-1] and "再答" not in shown[-1]
+
+    # 时间也够了
+    frame.left = total - need_sec
+    assert frame.gate_reason() == ""
+    frame.confirm_submit()
+    assert submitted_ == [1]
+
+
+def test_交卷门槛_时间到了照样自动交(app, server, exam):
+    """门槛只挡学生手动交卷；时间到了一题没答也得交上去。"""
+    frame = start_exam(app, server, exam, "26090120")
+    frame.left = 0
+    frame.tick()
+    assert settle(app, 20, on(app, exam_ui.DoneFrame))
