@@ -54,6 +54,7 @@ async function changePassword() {
         <h2>{{ me?.name || '—' }}</h2>
         <div class="meta">
           <span class="pill">学号 {{ me?.student_no || '—' }}</span>
+          <span v-if="me?.pinyin" class="pill">拼音 {{ me.pinyin }}</span>
           <span class="pill">{{ me?.student_class || '未分班' }}</span>
         </div>
         <p class="note">学号和姓名由学校统一分配，如有错误请找任课老师修改。</p>
@@ -84,7 +85,7 @@ async function changePassword() {
     <section class="card">
       <h3>修改密码</h3>
       <p class="hint">
-        初始密码就是学号，同学之间很容易猜到，<b>第一次登录后请尽快改掉</b>。
+        初始密码是 123456，大家都知道，<b>第一次登录后请尽快改掉</b>。
       </p>
       <div class="form">
         <label class="field">

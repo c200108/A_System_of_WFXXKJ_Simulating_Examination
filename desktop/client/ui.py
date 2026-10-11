@@ -18,8 +18,8 @@
 初始密码就是学号，和网页端一致。早先桌面端用的是"考号 + 姓名"，那样没法做
 改密码 —— 没有密码可改。
 
-**姓名登录版**（`build.py --name-login`）换成中文姓名 + 密码，初始密码统一
-123456；同名的同学在这一栏改填学号。账号还是那一个，改过的密码两版通用。
+**拼音登录版**（`build.py --name-login`）换成先选班级、再填姓名拼音全拼 + 密码，
+初始密码统一 123456；同一个班里拼音重了的同学改填学号。这一栏也认学号和中文姓名。账号还是那一个，改过的密码两版通用。
 
 ## 答题不在这儿
 
@@ -63,9 +63,9 @@ SIDE_ON = "#2c6fd1"
 
 # ================================================================ 登录
 class LoginFrame(ttk.Frame):
-    """教师端地址 + 学号 + 密码（姓名登录版：姓名 + 密码）。
+    """教师端地址 + 学号 + 密码（拼音登录版：班级 + 姓名拼音 + 密码）。
 
-    姓名登录版里第二栏填的是姓名，但变量名仍叫 "no" —— 重名时那一栏也填学号，
+    拼音登录版里第二栏填的是拼音，但变量名仍叫 "no" —— 那一栏也认学号，
     两版共用一套界面代码。
     """
 
@@ -73,6 +73,7 @@ class LoginFrame(ttk.Frame):
         super().__init__(app.root, padding=0)
         self.app = app
         self.busy = False
+        self.class_ids = {}          # 班级下拉：显示名 → 班级 id（拼音登录版）
         self._build()
 
     def _build(self):
@@ -85,23 +86,35 @@ class LoginFrame(ttk.Frame):
         tk.Label(head, text=APP_NAME, bg=BLUE, fg="white",
                  font=(FONT, 20, "bold")).pack(pady=(22, 0))
         by_name = self.app.name_login
-        tk.Label(head, text=(f"用姓名和密码登录　·　初始密码 {NAME_LOGIN_PASSWORD}" if by_name
+        tk.Label(head, text=(f"用姓名拼音和密码登录　·　初始密码 {NAME_LOGIN_PASSWORD}" if by_name
                              else "用学号和密码登录　·　初始密码就是学号"), bg=BLUE,
                  fg="#d8e6ff", font=(FONT, 10)).pack()
 
         card = tk.Frame(wrap, bg=CARD, highlightbackground=LINE, highlightthickness=1)
-        card.place(relx=0.5, rely=0.53, anchor="center", width=470, height=300)
+        extra = 46 if by_name else 0          # 拼音登录版多一行「班级」
+        card.place(relx=0.5, rely=0.53, anchor="center", width=470, height=300 + extra)
 
         self.vars = {}
-        rows = [("server", "教师端地址", "如 192.168.1.8:8080"),
-                ("no", "姓　　名", "重名的同学填学号") if by_name else
-                ("no", "学　　号", "如 26070101"),
-                ("password", "密　　码",
-                 f"初始密码 {NAME_LOGIN_PASSWORD}" if by_name else "初始密码=学号")]
+        rows = [("server", "教师端地址", "如 192.168.1.8:8080")]
+        if by_name:
+            rows += [("cls", "班　　级", "先选班级"),
+                     ("no", "姓名拼音", "全拼，如 zhangsan")]
+        else:
+            rows += [("no", "学　　号", "如 26070101")]
+        rows += [("password", "密　　码",
+                  f"初始密码 {NAME_LOGIN_PASSWORD}" if by_name else "初始密码=学号")]
         for i, (key, label, hint) in enumerate(rows):
             y = 26 + i * 46
             tk.Label(card, text=label, bg=CARD, font=(FONT, 10)).place(x=30, y=y + 4)
             var = tk.StringVar()
+            if key == "cls":
+                self.cls_box = ttk.Combobox(card, textvariable=var, state="readonly",
+                                            font=(FONT, 12), values=())
+                self.cls_box.place(x=118, y=y, width=240, height=30)
+                tk.Label(card, text=hint, bg=CARD, fg=GRAY,
+                         font=(FONT, 8)).place(x=364, y=y + 7)
+                self.vars[key] = var
+                continue
             entry = tk.Entry(card, textvariable=var, font=(FONT, 12), relief="solid",
                              bd=1, highlightthickness=0,
                              show="●" if key == "password" else "")
@@ -116,26 +129,31 @@ class LoginFrame(ttk.Frame):
                 self.server_entry = entry
 
         self.vars["server"].set(self.app.server or default_server())
+        if by_name:
+            # 卡片下面单独一行说规矩 —— 右边那点地方只够写「全拼，如 zhangsan」
+            tk.Label(wrap, text="班里有同学和你拼音一样的，账号改填学号　·　ü 打 v（吕 → lv）",
+                     bg=BG, fg=GRAY, font=(FONT, 9)).place(relx=0.5, rely=0.53,
+                                                           y=158 + extra // 2, anchor="n")
 
         self.net_lbl = tk.Label(card, text="", bg=CARD, fg=GRAY, font=(FONT, 9), anchor="w")
-        self.net_lbl.place(x=30, y=170, width=310)
+        self.net_lbl.place(x=30, y=170 + extra, width=310)
         self.retry_btn = tk.Button(card, text="补传", font=(FONT, 9), relief="groove",
                                    command=self.do_retry)
 
         self.msg = tk.Label(card, text="", bg=CARD, fg=RED, font=(FONT, 9),
                             anchor="w", wraplength=410, justify="left")
-        self.msg.place(x=30, y=192, width=410)
+        self.msg.place(x=30, y=192 + extra, width=410)
 
         self.login_btn = tk.Button(card, text="登 录", bg=BLUE, fg="white",
                                    font=(FONT, 12, "bold"), relief="flat",
                                    cursor="hand2", command=self.login)
-        self.login_btn.place(x=30, y=230, width=410, height=34)
+        self.login_btn.place(x=30, y=230 + extra, width=410, height=34)
 
         tk.Button(card, text="没有网络？用本地考试包开考", font=(FONT, 8), relief="flat",
                   bg=CARD, fg=GRAY, cursor="hand2", command=self.offline
-                  ).place(x=30, y=268, width=410, height=20)
+                  ).place(x=30, y=268 + extra, width=410, height=20)
 
-        tk.Label(wrap, text=f"客户端 {CLIENT_VER}{'（姓名登录版）' if by_name else ''}"
+        tk.Label(wrap, text=f"客户端 {CLIENT_VER}{'（拼音登录版）' if by_name else ''}"
                             f"　构建 {build_stamp()}　"
                             "操作题在真实系统中完成",
                  bg=BG, fg=GRAY, font=(FONT, 8)).pack(side="bottom", pady=6)
@@ -148,7 +166,8 @@ class LoginFrame(ttk.Frame):
     def check_net(self):
         pend = store.pending_uploads(self.app.out_dir)
         if pend:
-            self.retry_btn.place(x=346, y=166, width=94, height=24)
+            self.retry_btn.place(x=346, y=166 + (46 if self.app.name_login else 0),
+                                 width=94, height=24)
         else:
             self.retry_btn.place_forget()
 
@@ -162,9 +181,27 @@ class LoginFrame(ttk.Frame):
             tail = f"　有 {len(pend)} 份答卷没传上去" if pend else ""
             if ok:
                 self.net_lbl.config(text=f"√ 已连上教师端{tail}", fg=GREEN)
+                if self.app.name_login:
+                    self.load_classes(server)
             else:
                 self.net_lbl.config(text=f"× 连不上教师端，请叫监考老师{tail}", fg=AMBER)
         in_thread(self, lambda: api.ping(server), done)
+
+    def load_classes(self, server: str):
+        """拼音登录版：从教师端取班级下拉，默认选上次登录的班。"""
+        def done(got, err):
+            if err or not got:
+                return
+            self.set_classes({str(c.get("display", "")): c.get("id") for c in got
+                              if c.get("display")})
+        in_thread(self, lambda: api.login_classes(server), done)
+
+    def set_classes(self, mapping: dict):
+        self.class_ids = mapping
+        self.cls_box.config(values=list(mapping))
+        last = str(store.load_config().get("last_class") or "")
+        if not self.vars["cls"].get() and last in mapping:
+            self.vars["cls"].set(last)
 
     def do_retry(self):
         self.retry_btn.config(state="disabled", text="上传中")
@@ -185,10 +222,15 @@ class LoginFrame(ttk.Frame):
         if not server:
             self.msg.config(text="请先填教师端地址，问监考老师")
             return
+        cls = self.vars["cls"].get().strip() if self.app.name_login else ""
+        if self.app.name_login and self.class_ids and not cls:
+            self.msg.config(text="请先选择班级")
+            return
         if not no or not pwd:
-            self.msg.config(text=f"姓名和密码都要填（初始密码 {NAME_LOGIN_PASSWORD}）"
+            self.msg.config(text=f"拼音和密码都要填（初始密码 {NAME_LOGIN_PASSWORD}）"
                             if self.app.name_login else "学号和密码都要填（初始密码就是学号）")
             return
+        class_id = self.class_ids.get(cls)
 
         self.busy = True
         self.msg.config(text="")
@@ -200,13 +242,15 @@ class LoginFrame(ttk.Frame):
             if err:
                 self.msg.config(text=err)
                 return
-            store.save_config(server=server)
+            store.save_config(server=server, last_class=cls or None)
             self.app.server = server
             self.app.token = got.get("access_token", "")
             self.app.student = student_of(got.get("student") or {})
             self.app.enter_shell()
-        sign_in = api.login_by_name if self.app.name_login else api.login
-        in_thread(self, lambda: sign_in(server, no, pwd), done)
+        if self.app.name_login:
+            in_thread(self, lambda: api.login_by_name(server, no, pwd, class_id), done)
+        else:
+            in_thread(self, lambda: api.login(server, no, pwd), done)
 
     # ---------------- 离线后路 ----------------
     def offline(self):
@@ -218,7 +262,7 @@ class LoginFrame(ttk.Frame):
             return
         no = self.vars["no"].get().strip()
         if not no:
-            self.msg.config(text="离线开考也要先填" + ("姓名" if self.app.name_login else "学号"))
+            self.msg.config(text="离线开考也要先填" + ("姓名拼音" if self.app.name_login else "学号"))
             return
         try:
             pack = package.ExamPackage(Path(got))
@@ -229,21 +273,47 @@ class LoginFrame(ttk.Frame):
         # 离线时服务器认不了人，只能靠包里的名单
         hit = next((r for r in pack.roster() if str(r.get("no")) == no), None)
         if not hit and self.app.name_login:
-            same = [r for r in pack.roster() if str(r.get("name", "")).strip() == no]
-            if len(same) > 1:
-                self.msg.config(text=f"名单里有 {len(same)} 位同学叫「{no}」，请改填学号")
+            if not self.class_ids:
+                # 连不上教师端时班级下拉是空的，拿考试包名单里的班级补上
+                names = sorted({str(r.get("cls")) for r in pack.roster() if r.get("cls")})
+                if names:
+                    self.set_classes({n: None for n in names})
+            hit, why = roster_by_pinyin(pack.roster(), no, self.vars["cls"].get())
+            if why:
+                self.msg.config(text=why)
                 return
-            hit = same[0] if same else None
             if hit:
                 no = str(hit.get("no", ""))
         if pack.roster() and not hit:
-            self.msg.config(text="名单里没有这个" + ("姓名" if self.app.name_login else "学号")
+            self.msg.config(text="名单里没有这个" + ("拼音" if self.app.name_login else "学号")
                             + "，请找监考老师")
             return
         self.app.student = {"no": no, "name": (hit or {}).get("name", no),
                             "cls": (hit or {}).get("cls", "")}
         self.app.server = api.norm(self.vars["server"].get()) or pack.server
         self.app.start_exam(pack)
+
+
+def roster_by_pinyin(roster: list, text: str, cls: str = ""):
+    """离线开考按「班级 + 拼音」在考试包名单里找人，规矩和服务端拼音登录一样。
+    返回 (这个人, 认不出的原因)。
+
+    名单里每人带 cls（班级）和 py（拼音）。老的考试包没有 py，就只能按中文姓名找。
+    """
+    cls = str(cls or "").strip()
+    if cls:
+        roster = [r for r in roster if str(r.get("cls", "")) == cls]
+    key = "".join(str(text or "").split()).lower()
+    same = [r for r in roster if r.get("py") and str(r["py"]) == key]
+    if len(same) > 1:
+        return None, (f"这个班里有 {len(same)} 位同学的拼音都是「{key}」，请改填学号" if cls
+                      else f"名单里有 {len(same)} 位同学的拼音都是「{key}」，请先选择班级")
+    if same:
+        return same[0], ""
+    named = [r for r in roster if str(r.get("name", "")).strip() == str(text or "").strip()]
+    if len(named) > 1:
+        return None, f"名单里有 {len(named)} 位同学叫「{text}」，请改填学号"
+    return (named[0] if named else None), ""
 
 
 def no_copy(widget) -> None:
@@ -941,7 +1011,7 @@ class ExamApp:
         self.exam_root = Path(exam_root)
         self.out_dir = Path(out_dir)
         self.server = api.norm(server)
-        # 姓名登录版：打包时烤进去的，命令行 --name-login 也能临时打开
+        # 拼音登录版：打包时烤进去的，命令行 --name-login 也能临时打开
         self.name_login = baked_name_login() if name_login is None else name_login
         self.frame: ttk.Frame | None = None
         self.swap(LoginFrame(self))
