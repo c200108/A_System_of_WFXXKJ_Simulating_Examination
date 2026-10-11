@@ -116,6 +116,18 @@ const detailStats = computed(() => {
   }
 })
 
+// ---------- 班干部 ----------
+const monitor = computed(() => detailRows.value.find(s => s.class_role === '班长'))
+const leaders = computed(() => detailRows.value.filter(s => s.class_role === '组长'))
+
+/** 设班长 / 组长。一个班一位班长，换人时后端把原来那位卸任，所以设完整班重拉一遍。 */
+async function setRole(row, role) {
+  if ((row.class_role || '') === role) return
+  await api.studentUpdate(row.id, { class_role: role })
+  detailRows.value = await api.students({ class_id: detail.value.id })
+  ElMessage.success(role ? `已设 ${row.name} 为${role}` : `已取消 ${row.name} 的班干部`)
+}
+
 // ---------- 增删改 ----------
 function openCreate() {
   editing.value = null
@@ -366,6 +378,13 @@ async function doBulkOwner() {
         </span>
         <span v-if="detailStats.inactive" class="muted">停用 {{ detailStats.inactive }} 人</span>
       </div>
+      <div class="dmeta">
+        <span>班长：<b>{{ monitor ? monitor.name : '未设' }}</b></span>
+        <span>
+          组长：<b>{{ leaders.length ? leaders.map(s => s.name).join('、') : '未设' }}</b>
+        </span>
+        <span class="muted">在下面名单的「班干部」一栏里设，一个班一位班长，组长可以有多位</span>
+      </div>
 
       <div class="soon">
         <b>班级总览</b>
@@ -388,6 +407,21 @@ async function doBulkOwner() {
         <el-table-column prop="name" label="姓名" min-width="110" />
         <el-table-column prop="gender" label="性别" width="70">
           <template #default="{ row }">{{ row.gender || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="班干部" width="110">
+          <template #default="{ row }">
+            <el-select
+              :model-value="row.class_role || ''"
+              size="small"
+              placeholder="—"
+              style="width: 90px"
+              @change="v => setRole(row, v)"
+            >
+              <el-option label="—" value="" />
+              <el-option label="班长" value="班长" />
+              <el-option label="组长" value="组长" />
+            </el-select>
+          </template>
         </el-table-column>
         <el-table-column label="状态" width="80">
           <template #default="{ row }">
