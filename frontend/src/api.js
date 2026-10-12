@@ -310,7 +310,7 @@ export const api = {
   // 学生平台（认学生令牌）
   studentLogin: (student_no, password) =>
     http.post('/student/login', null, { params: { student_no, password } }),
-  // 拼音登录：先选班级，账号填姓名拼音全拼（也认学号）
+  // 姓名登录：先选班级，账号填中文姓名（重名的填学号）
   studentLoginClasses: () => http.get('/student/classes'),
   studentLoginByName: (name, password, class_id) =>
     http.post('/student/login-by-name', null, { params: { name, password, class_id } }),

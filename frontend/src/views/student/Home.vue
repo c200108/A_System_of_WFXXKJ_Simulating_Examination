@@ -54,7 +54,6 @@ async function changePassword() {
         <h2>{{ me?.name || '—' }}</h2>
         <div class="meta">
           <span class="pill">学号 {{ me?.student_no || '—' }}</span>
-          <span v-if="me?.pinyin" class="pill">拼音 {{ me.pinyin }}</span>
           <span class="pill">{{ me?.student_class || '未分班' }}</span>
         </div>
         <p class="note">学号和姓名由学校统一分配，如有错误请找任课老师修改。</p>
