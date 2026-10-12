@@ -18,8 +18,8 @@
 初始密码就是学号，和网页端一致。早先桌面端用的是"考号 + 姓名"，那样没法做
 改密码 —— 没有密码可改。
 
-**拼音登录版**（`build.py --name-login`）换成先选班级、再填姓名拼音全拼 + 密码，
-初始密码统一 123456；同一个班里拼音重了的同学改填学号。这一栏也认学号和中文姓名。账号还是那一个，改过的密码两版通用。
+**姓名登录版**（`build.py --name-login`）换成先选班级、再填汉字姓名 + 密码，
+初始密码统一 123456；同一个班里重名的同学改填学号。这一栏也认学号和中文姓名。账号还是那一个，改过的密码两版通用。
 
 ## 答题不在这儿
 
@@ -63,9 +63,9 @@ SIDE_ON = "#2c6fd1"
 
 # ================================================================ 登录
 class LoginFrame(ttk.Frame):
-    """教师端地址 + 学号 + 密码（拼音登录版：班级 + 姓名拼音 + 密码）。
+    """教师端地址 + 学号 + 密码（姓名登录版：班级 + 汉字姓名 + 密码）。
 
-    拼音登录版里第二栏填的是拼音，但变量名仍叫 "no" —— 那一栏也认学号，
+    姓名登录版里第二栏填的是姓名，但变量名仍叫 "no" —— 那一栏也认学号，
     两版共用一套界面代码。
     """
 
@@ -73,7 +73,7 @@ class LoginFrame(ttk.Frame):
         super().__init__(app.root, padding=0)
         self.app = app
         self.busy = False
-        self.class_ids = {}          # 班级下拉：显示名 → 班级 id（拼音登录版）
+        self.class_ids = {}          # 班级下拉：显示名 → 班级 id（姓名登录版）
         self._build()
 
     def _build(self):
@@ -86,19 +86,19 @@ class LoginFrame(ttk.Frame):
         tk.Label(head, text=APP_NAME, bg=BLUE, fg="white",
                  font=(FONT, 20, "bold")).pack(pady=(22, 0))
         by_name = self.app.name_login
-        tk.Label(head, text=(f"用姓名拼音和密码登录　·　初始密码 {NAME_LOGIN_PASSWORD}" if by_name
+        tk.Label(head, text=(f"选班级、填姓名和密码登录　·　初始密码 {NAME_LOGIN_PASSWORD}" if by_name
                              else "用学号和密码登录　·　初始密码就是学号"), bg=BLUE,
                  fg="#d8e6ff", font=(FONT, 10)).pack()
 
         card = tk.Frame(wrap, bg=CARD, highlightbackground=LINE, highlightthickness=1)
-        extra = 46 if by_name else 0          # 拼音登录版多一行「班级」
+        extra = 46 if by_name else 0          # 姓名登录版多一行「班级」
         card.place(relx=0.5, rely=0.53, anchor="center", width=470, height=300 + extra)
 
         self.vars = {}
         rows = [("server", "教师端地址", "如 192.168.1.8:8080")]
         if by_name:
             rows += [("cls", "班　　级", "先选班级"),
-                     ("no", "姓名拼音", "全拼，如 zhangsan")]
+                     ("no", "姓　　名", "汉字，如 张三")]
         else:
             rows += [("no", "学　　号", "如 26070101")]
         rows += [("password", "密　　码",
@@ -130,8 +130,8 @@ class LoginFrame(ttk.Frame):
 
         self.vars["server"].set(self.app.server or default_server())
         if by_name:
-            # 卡片下面单独一行说规矩 —— 右边那点地方只够写「全拼，如 zhangsan」
-            tk.Label(wrap, text="班里有同学和你拼音一样的，账号改填学号　·　ü 打 v（吕 → lv）",
+            # 卡片下面单独一行说规矩
+            tk.Label(wrap, text="班里有同学和你重名的，这一栏改填学号",
                      bg=BG, fg=GRAY, font=(FONT, 9)).place(relx=0.5, rely=0.53,
                                                            y=158 + extra // 2, anchor="n")
 
@@ -153,7 +153,7 @@ class LoginFrame(ttk.Frame):
                   bg=CARD, fg=GRAY, cursor="hand2", command=self.offline
                   ).place(x=30, y=268 + extra, width=410, height=20)
 
-        tk.Label(wrap, text=f"客户端 {CLIENT_VER}{'（拼音登录版）' if by_name else ''}"
+        tk.Label(wrap, text=f"客户端 {CLIENT_VER}{'（姓名登录版）' if by_name else ''}"
                             f"　构建 {build_stamp()}　"
                             "操作题在真实系统中完成",
                  bg=BG, fg=GRAY, font=(FONT, 8)).pack(side="bottom", pady=6)
@@ -188,7 +188,7 @@ class LoginFrame(ttk.Frame):
         in_thread(self, lambda: api.ping(server), done)
 
     def load_classes(self, server: str):
-        """拼音登录版：从教师端取班级下拉，默认选上次登录的班。"""
+        """姓名登录版：从教师端取班级下拉，默认选上次登录的班。"""
         def done(got, err):
             if err or not got:
                 return
@@ -227,7 +227,7 @@ class LoginFrame(ttk.Frame):
             self.msg.config(text="请先选择班级")
             return
         if not no or not pwd:
-            self.msg.config(text=f"拼音和密码都要填（初始密码 {NAME_LOGIN_PASSWORD}）"
+            self.msg.config(text=f"姓名和密码都要填（初始密码 {NAME_LOGIN_PASSWORD}）"
                             if self.app.name_login else "学号和密码都要填（初始密码就是学号）")
             return
         class_id = self.class_ids.get(cls)
@@ -262,7 +262,7 @@ class LoginFrame(ttk.Frame):
             return
         no = self.vars["no"].get().strip()
         if not no:
-            self.msg.config(text="离线开考也要先填" + ("姓名拼音" if self.app.name_login else "学号"))
+            self.msg.config(text="离线开考也要先填" + ("姓名" if self.app.name_login else "学号"))
             return
         try:
             pack = package.ExamPackage(Path(got))
@@ -278,14 +278,14 @@ class LoginFrame(ttk.Frame):
                 names = sorted({str(r.get("cls")) for r in pack.roster() if r.get("cls")})
                 if names:
                     self.set_classes({n: None for n in names})
-            hit, why = roster_by_pinyin(pack.roster(), no, self.vars["cls"].get())
+            hit, why = roster_by_name(pack.roster(), no, self.vars["cls"].get())
             if why:
                 self.msg.config(text=why)
                 return
             if hit:
                 no = str(hit.get("no", ""))
         if pack.roster() and not hit:
-            self.msg.config(text="名单里没有这个" + ("拼音" if self.app.name_login else "学号")
+            self.msg.config(text="名单里没有这个" + ("姓名" if self.app.name_login else "学号")
                             + "，请找监考老师")
             return
         self.app.student = {"no": no, "name": (hit or {}).get("name", no),
@@ -294,25 +294,17 @@ class LoginFrame(ttk.Frame):
         self.app.start_exam(pack)
 
 
-def roster_by_pinyin(roster: list, text: str, cls: str = ""):
-    """离线开考按「班级 + 拼音」在考试包名单里找人，规矩和服务端拼音登录一样。
-    返回 (这个人, 认不出的原因)。
-
-    名单里每人带 cls（班级）和 py（拼音）。老的考试包没有 py，就只能按中文姓名找。
-    """
+def roster_by_name(roster: list, text: str, cls: str = ""):
+    """离线开考按「班级 + 汉字姓名」在考试包名单里找人，规矩和服务端姓名登录一样。
+    返回 (这个人, 认不出的原因)。"""
     cls = str(cls or "").strip()
     if cls:
         roster = [r for r in roster if str(r.get("cls", "")) == cls]
-    key = "".join(str(text or "").split()).lower()
-    same = [r for r in roster if r.get("py") and str(r["py"]) == key]
-    if len(same) > 1:
-        return None, (f"这个班里有 {len(same)} 位同学的拼音都是「{key}」，请改填学号" if cls
-                      else f"名单里有 {len(same)} 位同学的拼音都是「{key}」，请先选择班级")
-    if same:
-        return same[0], ""
-    named = [r for r in roster if str(r.get("name", "")).strip() == str(text or "").strip()]
+    name = "".join(str(text or "").split())
+    named = [r for r in roster if "".join(str(r.get("name", "")).split()) == name]
     if len(named) > 1:
-        return None, f"名单里有 {len(named)} 位同学叫「{text}」，请改填学号"
+        return None, (f"这个班里有 {len(named)} 位同学叫「{text}」，请改填学号" if cls
+                      else f"名单里有 {len(named)} 位同学叫「{text}」，请先选择班级")
     return (named[0] if named else None), ""
 
 
@@ -1011,7 +1003,7 @@ class ExamApp:
         self.exam_root = Path(exam_root)
         self.out_dir = Path(out_dir)
         self.server = api.norm(server)
-        # 拼音登录版：打包时烤进去的，命令行 --name-login 也能临时打开
+        # 姓名登录版：打包时烤进去的，命令行 --name-login 也能临时打开
         self.name_login = baked_name_login() if name_login is None else name_login
         self.frame: ttk.Frame | None = None
         self.swap(LoginFrame(self))

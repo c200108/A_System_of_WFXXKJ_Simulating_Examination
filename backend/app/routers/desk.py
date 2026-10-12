@@ -453,9 +453,7 @@ def _roster(db: Session, exam: Exam) -> list[dict]:
         select(Student).where(Student.student_class.in_(names), Student.is_active.is_(True))
         .order_by(Student.student_class, Student.student_no)
     ).all()
-    # 拼音登录版离线开考时按「班级 + 拼音」认人
-    return [{"no": s.student_no, "name": s.name, "cls": s.student_class,
-             "py": s.pinyin or ""} for s in rows]
+    return [{"no": s.student_no, "name": s.name, "cls": s.student_class} for s in rows]
 
 
 def _minutes(duration: str) -> int:

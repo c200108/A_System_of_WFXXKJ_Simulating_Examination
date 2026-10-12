@@ -4,7 +4,7 @@ r"""打包学生端 exe。
     python build.py                 用当前 Python 打
     python build.py --python 路径   指定用哪个 Python 打（决定能跑在哪些系统）
     python build.py --onedir        打成文件夹（调试用，启动快一点）
-    python build.py --name-login    打「拼音登录版」：学生填姓名拼音全拼，初始密码 123456
+    python build.py --name-login    打「姓名登录版」：学生选班级、填汉字姓名，初始密码 123456
 
 产物在「发布」文件夹里。**只需要把 exe 一个文件拷到学生机**：运行数据写在
 `%LOCALAPPDATA%\信息技术考试客户端\`，exe 旁边不会生成任何东西。
@@ -334,8 +334,8 @@ def main() -> int:
                     help="把教师端地址烤进 exe，如 192.168.1.8:8080。"
                          "烤了之后机房只需要分发这一个 exe，学生双击就能用")
     ap.add_argument("--name-login", action="store_true",
-                    help="打「拼音登录版」：账号填姓名拼音全拼，初始密码统一 123456"
-                         "（登录页先选班级）。文件名会多一个「拼音登录」，和普通版并存")
+                    help="打「姓名登录版」：账号填汉字姓名，初始密码统一 123456"
+                         "（登录页先选班级）。文件名会多一个「姓名登录」，和普通版并存")
     args = ap.parse_args()
 
     py = args.python
@@ -364,7 +364,7 @@ def main() -> int:
         f'SERVER = "{server}"\n'
         f'NAME_LOGIN = {bool(args.name_login)}\n', encoding="utf-8")
     if args.name_login:
-        print("   拼音登录版：学生填姓名拼音全拼，初始密码 123456")
+        print("   姓名登录版：学生选班级、填汉字姓名，初始密码 123456")
     if server:
         print(f"   教师端地址已烤进 exe：{server}（学生不用再输）")
     # 位数写进文件名：32 位那份两种机器都能跑，64 位那份只能跑 64 位 Windows，
@@ -375,7 +375,7 @@ def main() -> int:
         print("装一个 Windows 10 SDK（只勾「Windows SDK for Desktop C++」即可），"
               "或者去掉 --ucrt 用原来的打法。")
         return 1
-    mark = (("-拼音登录" if args.name_login else "") + f"-{bits}位"
+    mark = (("-姓名登录" if args.name_login else "") + f"-{bits}位"
             + ("-内置运行库" if ucrt else ""))
     final = exe_name(server, mark) if not args.onedir else ""
     clear_dist(final)
@@ -399,7 +399,7 @@ def main() -> int:
     packed = subprocess.run(cmd).returncode == 0
     if args.name_login:
         # 打完就把开关拨回去：_build.py 留在源码里，不拨回去的话之后直接跑源码、
-        # 跑测试、再打普通版之前，全都悄悄变成了拼音登录版
+        # 跑测试、再打普通版之前，全都悄悄变成了姓名登录版
         built = HERE / "client" / "_build.py"
         built.write_text(built.read_text(encoding="utf-8").replace(
             "NAME_LOGIN = True", "NAME_LOGIN = False"), encoding="utf-8")

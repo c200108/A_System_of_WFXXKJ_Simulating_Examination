@@ -344,14 +344,14 @@ def login(server: str, student_no: str, password: str) -> dict:
 
 
 def login_classes(server: str) -> list:
-    """拼音登录版登录页的班级下拉：[{"id": 3, "display": "八年级1班"}, …]。不用登录。"""
+    """姓名登录版登录页的班级下拉：[{"id": 3, "display": "八年级1班"}, …]。不用登录。"""
     got = _json(f"{norm(server)}/api/student/classes")
     return got if isinstance(got, list) else []
 
 
 def login_by_name(server: str, name: str, password: str, class_id=None) -> dict:
-    """「拼音登录版」的登录：班级 + 姓名拼音 + 密码（初始 123456）。同一个班里拼音
-    重了的改填学号；这一栏也认学号和中文姓名。"""
+    """「姓名登录版」的登录：班级 + 汉字姓名 + 密码（初始 123456）。同一个班里
+    重名的改填学号；这一栏也认学号。"""
     params = {"name": str(name).strip(), "password": password}
     if class_id is not None:
         params["class_id"] = class_id

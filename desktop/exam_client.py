@@ -141,7 +141,7 @@ def main(argv=None) -> int:
                     help=r"本机备份写到哪，默认 %LOCALAPPDATA%\信息技术考试客户端\答案包")
     ap.add_argument("--server", default="", help="教师端地址，如 192.168.1.8:8000")
     ap.add_argument("--name-login", action="store_true",
-                    help="用姓名拼音登录（初始密码 123456）。打包时 build.py --name-login 已烤进去的不用加")
+                    help="用班级 + 汉字姓名登录（初始密码 123456）。打包时 build.py --name-login 已烤进去的不用加")
     ap.add_argument("--selftest", default="", metavar="结果文件",
                     help="自检：不开窗口，验一遍能不能跑，结果写到这个文件；"
                          "配合 --server 还会真连一次教师端（机房装机排障用）")

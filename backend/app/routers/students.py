@@ -50,7 +50,7 @@ from ..security import (
 from ..routers.classes import owned_class_ids
 from ..routers.take import _submit_out as submit_out
 from ..services.exam import submission_scores
-from ..services import pinyin, roster
+from ..services import roster
 from ..services.exam import grade, group_items, load_items, manual_types, strip_answers
 # 名单解析和入库都在 services/roster.py，上传表格和粘贴名单共用那一套。
 # 这里只保留单个增改用得到的几个小工具。
@@ -216,7 +216,7 @@ class LoginClassOut(BaseModel):
 @student_api.get("/classes", response_model=list[LoginClassOut],
                  summary="登录页的班级下拉（不用登录）")
 def login_classes(db: Session = Depends(get_db)):
-    """有在用学生的班级。学生拼音登录时先选班，再在这个班里按拼音找人。"""
+    """有在用学生的班级。学生姓名登录时先选班，再在这个班里按姓名找人。"""
     used = select(Student.class_id).where(Student.is_active.is_(True),
                                           Student.class_id.is_not(None))
     rows = db.scalars(
@@ -230,31 +230,15 @@ def find_account(db: Session, account: str, class_id: int | None = None) -> list
     """登录框里填的东西 → 可能是谁。依次认：
 
     1. 学号；
-    2. 拼音全拼（zhangsan）—— 选了班级就只在这个班里找；没选班级（老客户端）
-       全校只有一位在用的才认，重了提示先选班级；
-    3. 中文姓名（4.10.0 姓名登录版的老 exe 还在机房里用着）。
+    2. 中文姓名 —— 选了班级就只在这个班里找（同名的几位只要不在一个班就分得开）；
+       没选班级（4.10.0 的老 exe）就全校找。
 
-    同一个班里拼音还重的，提示改填学号。不再有「拼音 + 年级班级」这种账号。
+    同一个班里重名的，密码都是 123456 时分不出是谁，提示改填学号。
     """
     who = (account or "").strip()
     rows = db.scalars(select(Student).where(Student.student_no == who)).all()
     if rows:
         return list(rows)
-
-    key = re.sub(r"\s+", "", who).lower()
-    if key.isascii() and key:
-        stmt = select(Student).where(Student.pinyin == key).order_by(Student.id)
-        if class_id is not None:
-            stmt = stmt.where(Student.class_id == class_id)
-        same = db.scalars(stmt).all()
-        live = [r for r in same if r.is_active]
-        if len(live) > 1:
-            detail = (f"这个班里有 {len(live)} 位同学的拼音都是「{key}」，请改填学号登录"
-                      if class_id is not None else
-                      f"有 {len(live)} 位同学的拼音都是「{key}」，请先选择班级")
-            raise HTTPException(status_code=409, detail=detail)
-        return list(same)
-
     stmt = select(Student).where(Student.name == who).order_by(Student.id)
     if class_id is not None:
         stmt = stmt.where(Student.class_id == class_id)
@@ -262,37 +246,37 @@ def find_account(db: Session, account: str, class_id: int | None = None) -> list
 
 
 @student_api.post("/login-by-name", response_model=StudentTokenOut,
-                  summary="学生登录（班级 + 姓名拼音 + 密码，初始密码 123456）")
+                  summary="学生登录（班级 + 汉字姓名 + 密码，初始密码 123456）")
 def student_login_by_name(
-    name: str = Query(..., description="姓名拼音全拼；也认学号、中文姓名"),
+    name: str = Query(..., description="汉字姓名；也认学号"),
     password: str = Query(..., description="密码"),
     class_id: int | None = Query(None, description="登录页选的班级；老客户端不传"),
     db: Session = Depends(get_db),
 ):
-    """给拼音登录（学生端拼音登录版、学生网页）用。账号就是学号登录的那个账号，只是换个认人的办法。
+    """给姓名登录（学生端姓名登录版、学生网页）用。账号就是学号登录的那个账号，只是换个认人的办法。
 
     密码：没改过密码的账号只认 123456；改过的认新密码。填学号时不看班级，学号那个老的
     初始密码也认 —— 学号登录的老规矩不变。
 
-    **中文姓名重名**（4.10.0 的老 exe）：同名的几位里，谁的密码对上就是谁；都还用着
-    123456 时分不出是谁，提示改填学号。
+    **同班重名**：同名的几位里，谁的密码对上就是谁；都还用着 123456 时分不出是谁，
+    提示改填学号。
     """
     who = (name or "").strip()
     if not who:
-        raise HTTPException(status_code=400, detail="请填写姓名拼音")
+        raise HTTPException(status_code=400, detail="请填写姓名")
     rows = find_account(db, who, class_id)
     by_no = bool(rows) and rows[0].student_no == who
     hits = [r for r in rows if name_login_ok(r, password)
             or (by_no and verify_password(password, r.password_hash))]
     if not hits:
-        raise HTTPException(status_code=400, detail="班级、拼音或密码不正确" if class_id is not None
+        raise HTTPException(status_code=400, detail="班级、姓名或密码不正确" if class_id is not None
                             else "账号或密码不正确")
     active = [r for r in hits if r.is_active]
     if not active:
         raise HTTPException(status_code=403, detail="账号已停用，请找老师")
     if len(active) > 1:
         raise HTTPException(status_code=409,
-                            detail=f"有 {len(active)} 位同学叫「{who}」，请改填学号登录")
+                            detail=f"这个班里有 {len(active)} 位同学叫「{who}」，请改填学号登录")
     return _student_token(active[0], db)
 
 
@@ -666,8 +650,7 @@ def list_students(
         stmt = stmt.where(Student.is_active.is_(is_active))
     if keyword:
         like = f"%{keyword.strip()}%"
-        stmt = stmt.where(Student.name.like(like) | Student.student_no.like(like)
-                          | Student.pinyin.like(like.lower()))
+        stmt = stmt.where(Student.name.like(like) | Student.student_no.like(like))
     stmt = stmt.order_by(Student.student_class, Student.student_no).limit(limit)
     return _out(db.scalars(stmt))
 
@@ -703,7 +686,6 @@ def create_student(
         class_id=cls.id if cls else None,
         student_class=cls.display if cls else "",
         gender=norm_gender(body.gender),
-        pinyin=pinyin.name_pinyin(name),
         password_hash=hash_password(pwd),
         created_by=me.id,
     )
@@ -763,20 +745,6 @@ def update_student(
             row.class_role = ""          # 调走了，原来班里的班干部不跟着走
         row.class_id = cls.id if cls else None
         row.student_class = cls.display if cls else ""
-
-    # 拼音：明确给了就用老师填的（多音字程序猜不准）；给空串或者改了姓名就按姓名重算
-    new_name = (data.get("name") or "").strip()
-    if "pinyin" in data:
-        raw = (data.pop("pinyin") or "").strip()
-        if raw:
-            got = pinyin.norm_pinyin(raw)
-            if not got:
-                raise HTTPException(status_code=400, detail="拼音只能是英文字母（ü 写成 v），不带声调和空格")
-            row.pinyin = got
-        else:
-            row.pinyin = pinyin.name_pinyin(new_name or row.name)
-    elif new_name and new_name != row.name:
-        row.pinyin = pinyin.name_pinyin(new_name)
 
     if "class_role" in data:
         role = (data.pop("class_role") or "").strip()
@@ -887,9 +855,8 @@ def student_template(me: User = Depends(get_current_user), db: Session = Depends
         ["性别填「男」或「女」，选填。留空或写别的都不影响建账号，"],
         ["  只是这一栏空着，以后可以在学生列表里补。"],
         ["", ],
-        ["拼音不用填：导入时按姓名自动生成，单独存一列，在学生列表里能看到、能改。"],
-        ["学生用姓名拼音登录（如 zhangsan），初始密码 123456，登录后自己改；"],
-        ["  登录时先选班级再填拼音；同一个班里拼音重了的同学改填学号。"],
+        ["学生用「班级 + 汉字姓名」登录，初始密码 123456，登录后自己改；"],
+        ["  同一个班里重名的同学改填学号。"],
         ["  用学号登录的老客户端照旧：账号填学号，初始密码就是学号。"],
         ["已经存在的学号会自动跳过，不会覆盖原有账号。"],
         ["也可以存成 CSV 再上传，编码用 UTF-8 或 GBK 都行。"],
@@ -979,27 +946,25 @@ def export_students(
         stmt = stmt.where(Student.class_id == class_id)
     if keyword:
         like = f"%{keyword.strip()}%"
-        stmt = stmt.where(Student.name.like(like) | Student.student_no.like(like)
-                          | Student.pinyin.like(like.lower()))
+        stmt = stmt.where(Student.name.like(like) | Student.student_no.like(like))
     rows = list(db.scalars(stmt.order_by(Student.student_class, Student.student_no)))
 
     wb = Workbook()
     ws = wb.active
     ws.title = "学生名单"
     # 前四列和导入模板完全一致，导出的表改完可以直接再导回来
-    ws.append(["学号", "姓名", "班级", "性别", "拼音", "班干部", "状态", "创建时间"])
+    ws.append(["学号", "姓名", "班级", "性别", "班干部", "状态", "创建时间"])
     for s in rows:
         ws.append([
             s.student_no,
             s.name,
             s.student_class or "未分班",
             s.gender,
-            s.pinyin,
             s.class_role,
             "正常" if s.is_active else "已停用",
             s.created_at.strftime("%Y-%m-%d %H:%M") if s.created_at else "",
         ])
-    for col, w in zip("ABCDEFGH", [16, 12, 16, 8, 16, 8, 10, 18]):
+    for col, w in zip("ABCDEFG", [16, 12, 16, 8, 8, 10, 18]):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A2"
 
