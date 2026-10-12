@@ -1,7 +1,7 @@
 <script setup>
 /**
- * 学生登录：先选班级，再填姓名拼音全拼 + 密码，初始密码 123456。账号由老师创建，
- * 这里不提供注册。同一个班里拼音一样的同学改填学号（学号登录时老的初始密码 = 学号照样能用）。
+ * 学生登录：先选班级，再填中文姓名 + 密码，初始密码 123456。账号由老师创建，
+ * 这里不提供注册。同一个班里重名的同学改填学号（学号登录时老的初始密码 = 学号照样能用）。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -34,7 +34,7 @@ onMounted(() => {
 
 async function submit() {
   if (!form.class_id) return ElMessage.warning('请选择班级')
-  if (!form.student_no.trim()) return ElMessage.warning('请输入姓名拼音')
+  if (!form.student_no.trim()) return ElMessage.warning('请输入姓名')
   if (!form.password) return ElMessage.warning('请输入密码')
 
   loading.value = true
@@ -58,7 +58,7 @@ async function submit() {
       <div class="head">
         <BrandLogo :size="48" :radius="0.29" />
         <h1>{{ title }}</h1>
-        <p class="sub">用姓名拼音登录，做考试和打字练习</p>
+        <p class="sub">选班级、填姓名登录，做考试和打字练习</p>
       </div>
 
       <form @submit.prevent="submit">
@@ -75,12 +75,12 @@ async function submit() {
           </el-select>
         </label>
         <label class="field">
-          <span>姓名拼音</span>
+          <span>姓名</span>
           <el-input
             ref="noRef"
             v-model="form.student_no"
             size="large"
-            placeholder="全拼小写，如 zhangsan"
+            placeholder="你的中文姓名"
             autocomplete="username"
           />
         </label>
@@ -102,8 +102,8 @@ async function submit() {
       </form>
 
       <p class="tip">
-        先选<b>班级</b>，账号填<b>姓名拼音全拼</b>，如张三填 zhangsan，ü 打 v（吕 → lv）。<br />
-        班里有同学和你拼音一样的，账号改填<b>学号</b>。<br />
+        先选<b>班级</b>，再填你的<b>中文姓名</b>。<br />
+        班里有同学和你重名的，账号改填<b>学号</b>。<br />
         第一次登录：<b>密码是 123456</b>，登录后请到「首页」改掉。<br />
         忘记密码找任课老师重置。
       </p>
