@@ -140,9 +140,6 @@ class Student(Base):
     # 男 / 女 / 空。选填 —— 名单里没写就留空，不挡着建账号。
     # 存中文而不是 0/1：导出的 Excel 老师要直接看，存数字还得再对照一遍。
     gender: Mapped[str] = mapped_column(String(8), default="")
-    # 姓名的拼音全拼（zhangsan），学生端拼音登录认的就是它。建账号、改姓名时自动生成，
-    # 名字里有多音字时老师可以手改。见 services/pinyin.py
-    pinyin: Mapped[str] = mapped_column(String(64), index=True, default="")
     # 班干部：班长 / 组长 / 空。一个班只有一位班长，组长可以有好几位
     class_role: Mapped[str] = mapped_column(String(8), default="")
     password_hash: Mapped[str] = mapped_column(String(128))
