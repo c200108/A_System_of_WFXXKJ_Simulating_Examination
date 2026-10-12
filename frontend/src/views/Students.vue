@@ -7,7 +7,7 @@
  *   粘贴名单     —— 从花名册直接粘文本
  * 两条路认**同样的四列**「学号 姓名 班级 性别」、同样的规则、同样的报错措辞
  * （后端共用 services/roster.py），换个入口不用重新适应一遍。
- * 拼音按姓名自动生成，学生用拼音登录、初始密码 123456（学号登录照旧，初始密码是学号）。
+ * 学生选班级、填中文姓名登录，初始密码 123456（学号登录照旧，初始密码是学号）。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -36,7 +36,7 @@ const paged = computed(() => {
 
 const dialog = ref(false)
 const editing = ref(null)
-const form = reactive({ student_no: '', name: '', class_id: null, gender: '', pinyin: '', password: '' })
+const form = reactive({ student_no: '', name: '', class_id: null, gender: '', password: '' })
 
 const batchDlg = ref(false)
 const batch = reactive({ class_id: null, text: '' })
@@ -71,7 +71,6 @@ function openCreate() {
     name: '',
     class_id: query.class_id || null,
     gender: '',
-    pinyin: '',
     password: ''
   })
   dialog.value = true
@@ -84,7 +83,6 @@ function openEdit(row) {
     name: row.name,
     class_id: row.class_id,
     gender: row.gender || '',
-    pinyin: row.pinyin || '',
     password: ''
   })
   dialog.value = true
@@ -93,14 +91,11 @@ function openEdit(row) {
 async function save() {
   if (editing.value) {
     const data = { name: form.name, class_id: form.class_id, gender: form.gender }
-    // 只有老师动过拼音才传：改了姓名、拼音没动时由后端按新姓名重算
-    if (form.pinyin.trim() !== (editing.value.pinyin || '')) data.pinyin = form.pinyin.trim()
     if (form.password) data.password = form.password
     await api.studentUpdate(editing.value.id, data)
   } else {
     // 学号和密码的规则由后端判，报错会直接显示出来
-    const { pinyin, ...rest } = form
-    await api.studentCreate(rest)
+    await api.studentCreate({ ...form })
   }
   dialog.value = false
   await load()
@@ -115,7 +110,7 @@ async function save() {
  * 错十几行就刷出十几遍同样的话，真正有用的行号反而被淹了。
  */
 function importReport(res, head) {
-  const parts = [head, '拼音已按姓名自动生成。学生用姓名拼音登录，初始密码 123456，请提醒学生登录后到「首页」改密码。']
+  const parts = [head, '学生选班级、填中文姓名登录，初始密码 123456，请提醒学生登录后到「首页」改密码。']
   if (res.errors?.length) {
     parts.push('这些行没能导入：\n' + res.errors.join('\n'))
     // 只回前 20 条，没列全的说一声，别让人以为就这几行有问题
@@ -260,9 +255,8 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
     </template>
 
     <el-alert type="info" :closable="false" class="hint">
-      学生用<b>姓名拼音全拼</b>登录学生平台和拼音登录版学生端（如 zhangsan），初始密码 <b>123456</b>；
-      登录时先选班级再填拼音；同一个班里拼音一样的同学改用学号登录。
-      拼音导入时自动生成，名字里有多音字的点「编辑」改。用学号登录也照样可以（初始密码就是学号）。
+      学生登录学生平台和姓名登录版学生端时先选<b>班级</b>，再填<b>中文姓名</b>，初始密码 <b>123456</b>；
+      同一个班里重名的同学改用学号登录。用学号登录也照样可以（初始密码就是学号）。
       系统里没有邮箱，学生忘了密码只能由老师重置。
       班级要先在「班级」页面建好，这里从下拉里选。
       <template v-if="!isAdmin">
@@ -328,7 +322,6 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
           <span v-else class="blank">未分班</span>
         </template>
       </el-table-column>
-      <el-table-column prop="pinyin" label="拼音" width="120" show-overflow-tooltip />
       <el-table-column prop="class_role" label="班干部" width="76" align="center">
         <template #default="{ row }">
           <el-tag v-if="row.class_role" size="small" :type="row.class_role === '班长' ? 'warning' : 'success'">
@@ -384,10 +377,6 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
           <el-option v-for="c in classes" :key="c.id" :label="c.display" :value="c.id" />
         </el-select>
       </el-form-item>
-      <el-form-item v-if="editing" label="拼音">
-        <el-input v-model="form.pinyin" placeholder="清空则按姓名重新生成" />
-        <span class="inline-hint">名字里有多音字时在这里改，如「乐」读 yue 还是 le</span>
-      </el-form-item>
       <el-form-item label="性别">
         <el-radio-group v-model="form.gender">
           <el-radio value="男">男</el-radio>
@@ -425,7 +414,7 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
       <b>性别</b>填「男」或「女」，<b>选填</b> —— 留空或写得认不出来都不影响建账号，
       只是那一栏空着，之后可以在列表里补。<br />
       支持 <b>.xlsx</b> 和 <b>.csv</b>（UTF-8 或 GBK 编码都认）。已存在的学号会跳过，
-      拼音按姓名自动生成，学生用拼音登录，<b>初始密码 123456</b>。
+      学生选班级、填姓名登录，<b>初始密码 123456</b>。
       <el-button link type="primary" size="small" @click="downloadTemplate">下载模板</el-button>
     </div>
 
@@ -456,7 +445,7 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
       <b>单个空格不当列分隔</b>，所以姓名里带空格（如「钱 七」）不会被拆散；
       要粘多列请用 Excel 复制、或者用逗号隔开。<br />
       <b>班级列留空</b>的行归到上面选的班。已存在的学号自动跳过，
-      拼音按姓名自动生成，学生用拼音登录，<b>初始密码 123456</b>，提醒学生登录后到「首页」改掉。
+      学生选班级、填姓名登录，<b>初始密码 123456</b>，提醒学生登录后到「首页」改掉。
     </div>
 
     <el-input
