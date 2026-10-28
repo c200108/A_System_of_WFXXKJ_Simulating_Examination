@@ -65,6 +65,17 @@ def _open_exam(db: Session, token: str) -> Exam:
     return exam
 
 
+@router.get("/{token}/live", summary="考试中途改了的设置（学生端每 30 秒问一次）")
+def take_live(token: str, db: Session = Depends(get_db)):
+    """老师在考试**进行中**改的开关，答题页拿不到 —— 取卷那一刻读过一次就不再问了。
+    这里只回那几个会中途变的、学生端要跟着变的：允许提前交卷、考试是否还开着。
+    不含题目和答案，按口令免登录查，和取卷同一个准入。"""
+    exam = db.scalar(select(Exam).where(Exam.token == token))
+    if not exam:
+        raise HTTPException(status_code=404, detail="链接无效，请向老师确认")
+    return {"early_submit": bool(exam.early_submit), "is_open": bool(exam.is_open)}
+
+
 @router.get("/{token}", response_model=TakePaperOut, summary="学生取卷（不含答案）")
 def take_paper(token: str, db: Session = Depends(get_db)):
     exam = _open_exam(db, token)

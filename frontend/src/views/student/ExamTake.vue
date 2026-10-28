@@ -52,7 +52,7 @@ const numbering = computed(() => {
 
 const answered = computed(() => Object.values(answers).filter(v => String(v || '').trim()).length)
 // 交卷门槛：考试时间过三分之二、且答完三分之二的题
-const gate = useSubmitGate(`student-${examId}`, paper, answered)
+const gate = useSubmitGate(`student-${examId}`, paper, answered, () => api.studentExamLive(examId))
 
 /** 交卷后按题号取回判分明细（老师开了「显示答案」才有） */
 const detailOf = computed(() => {
@@ -77,6 +77,10 @@ const asking = ref(false)
 async function submit() {
   // 学生紧张时容易连点，挡住重复弹窗和重复提交
   if (asking.value || submitting.value || result.value) return
+  if (!gate.canSubmit.value) {
+    // 被门槛拦住时当场再问一次：老师刚打开「允许提前交卷」，不用等下一个 30 秒
+    await gate.sync()
+  }
   if (!gate.canSubmit.value) {
     ElMessage.warning(gate.reason.value)
     return

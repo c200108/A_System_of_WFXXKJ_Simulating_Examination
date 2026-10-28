@@ -527,3 +527,33 @@ def test_early_submit_switch(client, auth, exam):
     # 不填就是关：老考试照旧有门槛
     plain = client.post("/api/exams", json={"paper_id": paper_id}, headers=auth).json()
     assert plain["early_submit"] is False
+
+
+
+def test_early_submit_switched_mid_exam_reaches_students(client, auth, exam):
+    """考试**进行中**打开「允许提前交卷」：答题页每 30 秒问一次能问到，后开考的人拿到的包也是新的。"""
+    import io
+    import json
+    import zipfile
+
+    paper_id = client.post(
+        "/api/papers/generate",
+        json={"title": "中途放开交卷", "by_sections": False, "counts": {"选择题": 2}, "save": True},
+        headers=auth,
+    ).json()["paper_id"]
+    ex = client.post("/api/exams", json={"paper_id": paper_id}, headers=auth).json()
+
+    def manifest():
+        raw = client.get(f"/api/desk/exam/{ex['token']}").content
+        return json.loads(zipfile.ZipFile(io.BytesIO(raw)).read("manifest.json"))
+
+    assert manifest()["early_submit"] is False          # 先取一次，包进了缓存
+    assert client.get(f"/api/take/{ex['token']}/live").json() == {"early_submit": False, "is_open": True}
+
+    client.patch(f"/api/exams/{ex['id']}", json={"early_submit": True}, headers=auth)
+    assert client.get(f"/api/take/{ex['token']}/live").json()["early_submit"] is True
+    assert manifest()["early_submit"] is True, "缓存的考试包要跟着重建，不能还发关着的那份"
+
+    hdr = _stoken(client, auth, no="20260086", grade="七年级", cls="1班")
+    assert client.get(f"/api/student/exams/{ex['id']}/live", headers=hdr).json()["early_submit"] is True
+    assert client.get("/api/take/没有这个口令/live").status_code == 404

@@ -265,6 +265,15 @@ def signin(server: str, student_no: str, name: str = "") -> dict:
                  {"student_no": str(student_no).strip(), "name": str(name).strip()})
 
 
+def exam_live(server: str, token: str) -> dict:
+    """考试中途老师改了的设置：{"early_submit": 允许提前交卷, "is_open": 考试还开着}。
+
+    考试包里那份是开考那一刻的；老师考到一半打开「允许提前交卷」，靠这个跟上。
+    超时给短一点：它在后台问，问不到就按原来的设置走，不耽误考试。
+    """
+    return _json(norm(server) + f"/api/take/{token}/live", timeout=5)
+
+
 def fetch_exam(server: str, token: str, save_to: Path) -> Path:
     """把这场考试的考试包下下来，存成本地文件。返回存到哪了。
 

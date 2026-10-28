@@ -120,6 +120,8 @@ export function explainError(err) {
 http.interceptors.response.use(
   res => res.data,
   err => {
+    // 后台悄悄问的（答题页每 30 秒问一次设置）：出错不弹窗、不踢人，调用方自己吞掉
+    if (err.config?.silent) return Promise.reject(err)
     if (err.response?.status === 401) {
       // 在哪一侧就清哪一侧的登录状态，别把另一边的人也踢下线
       if (window.location.pathname.startsWith('/js')) {
@@ -333,6 +335,7 @@ export const api = {
   studentHome: () => http.get('/student/home'),
   studentExams: () => http.get('/student/exams'),
   studentPaper: id => http.get(`/student/exams/${id}/paper`),
+  studentExamLive: id => http.get(`/student/exams/${id}/live`, { silent: true }),
   studentSubmit: (id, answers) => http.post(`/student/exams/${id}/submit`, { answers }),
   studentTypingRecords: () => http.get('/student/typing/records'),
 
@@ -354,6 +357,7 @@ export const api = {
 
   // 凭链接答题（不需要登录）
   takePaper: token => http.get(`/take/${token}`),
+  takeLive: token => http.get(`/take/${token}/live`, { silent: true }),
   submitPaper: (token, data) => http.post(`/take/${token}/submit`, data)
 }
 
