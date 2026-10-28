@@ -177,6 +177,7 @@ def create_exam(
         allow_retake=body.allow_retake,
         show_score=body.show_score,
         show_answer=body.show_answer,
+        early_submit=body.early_submit,
         target_classes=_resolve_targets(db, user, body.target_class_ids),
         created_by=user.id,
     )

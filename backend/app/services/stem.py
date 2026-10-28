@@ -991,7 +991,13 @@ def _article(topic: str, needs: list, quotes: list | None = None) -> list[dict]:
 
 
 def parse_wps(stem: str) -> dict:
-    """WPS 文字题。
+    """WPS 文字题：题库里的原题按 wps_bank 里逐题写死的来，别的题走通用规则。"""
+    from . import wps_bank
+    return wps_bank.lookup(stem) or parse_wps_generic(stem)
+
+
+def parse_wps_generic(stem: str) -> dict:
+    """WPS 文字题（通用规则）。
 
     文档是**这里现生成的**：题库里只有题干，没有原卷素材。内容围着题目写，
     题干抄出来的原文原样放进去 —— 学生打开文档得能找到题目说的那几段，
@@ -1214,9 +1220,14 @@ def refresh_wps(stem_text: str, env, checks) -> Optional[dict]:
         return None
     if str(env.get("name") or "") != str(got["env"].get("name") or ""):
         return None
-    if _shape(checks) != _shape(got["checks"]):
-        return None
-    return got
+    if _shape(checks) == _shape(got["checks"]):
+        return got
+    # 题库原题现在按 wps_bank 写死的来；库里存的要是**通用规则**当年生成的
+    # （stem_to_sim 配的、或者导入的旧数据），同样换成新的
+    generic = parse_wps_generic(stem_text or "")
+    if generic and _shape(checks) == _shape(generic["checks"]):
+        return got
+    return None
 
 
 def workdir_of(stem: str, kind: str, env: dict | None = None) -> str:

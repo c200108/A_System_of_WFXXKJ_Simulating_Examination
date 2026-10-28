@@ -1,0 +1,41 @@
+"""WPS 文字题文档里要用到的图片。
+
+题库里只有题干、没有原卷素材，可「将大树图片的环绕方式改为紧密型环绕」这类题，
+文档里没有图片就根本没法做。这里放几张自己画的简单示意图（几 KB 的 PNG），
+生成文档时按名字取用。
+"""
+
+import base64
+
+# 「风中的一棵树」用的大树。300×360，16 色
+TREE_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAASwAAAFoBAMAAAAfmts8AAAAFVBMVEX///9Mr1BDoEc4jjyNbmN4UCgufTIjQDMu"
+    "AAAGhElEQVR42u2dv24bRxDGh3PmIakiV0l5YKUmABG9gh+ATfoDBPihAgRILyDgEwSq0h28vYAgCBAgcAqxTEKu"
+    "mUKUTcm825nZPzxS3zQyydndH79vbm6Pos5ECAQCgTjfmCSah5uHn7+NCOuRKR3ZJDVUGrB4rNmB5z78HjlplYOK"
+    "Jl+tjqrW5wamMZIzUR1WsQzWAFUkVxRWE/FqvpIP6BFT95xRaD6GidzEypkFq0mUkxaLjz+7zcIYGzmjhRE2cuZh"
+    "XBSryZAZj8UjWsAoQVMMi8e1gk2ApmCDyBycfwwXwmoy59uweIxrjLa2mgIjeJS2n4+JTYFjt8hhVWKV1mRKmxnr"
+    "7a0J69c2K1ZtreE6K1a7sVFtlDbqsN7aD/m6zYZVU0TU2bBaolsj1K3uaORSYumGs06sjZVpo2teXEws1QSsEisy"
+    "2gxY9a5y7TWvkIsLiqWYg4tVlmoSLimWfBZWvc+NHWijkouLiiWehwtWlmKiV5Y3eU9ERJOL0KhDee1PCbH2Yrt6"
+    "/Mc9vU6QF4FVP1fg8UG/Yn15Mhdlv/O53v385aMEj/HPl8NSfcr7Y3dV9q1LVfJ172rPVJHk1SkbBBERrVcht3qp"
+    "iP5OvjvdHYfrZbiKeqmIbhStixUeLnteXwUe09PxdaKSv376bj+Pf78IVhsR0Ye7S2nRy2trPdCieh+Ip9Bj1cMW"
+    "PrdtNZC3lLooVutG1PkHLBw4aExYrUD/rcDCT9O0CbDqoIX71q0CeUuZixxd709U2kZPJG0Q10REPwfTHprEKph3"
+    "dylpEaf6kW4tlH4r8nA3VZ2mtiTH9UrkoWyuMFYrrdOtSKzdZO151lYt1p1WIg8fZqsTqCXsNdutLG+doraOE6F2"
+    "ei3qpbvLCGHe3WWwoZ5mydeqzZtiQ1mf58lH2h40sYzFarPp0Z6niev0i64jsep8etTnaeIyw6rLOKw2oyDtebZT"
+    "YMmwspyoRSdrmAiso2C1WZduYSKwgHXCWHXepesYtaY5iKbRJvocWD4Wy7ssBnaRWC5TYbkorC5XvQdc4GANNBmg"
+    "mlB58VEsDM499CFl5Yl6fyEeFa+JaPv+T5taPtd5gINdYmjReeYzzNyEVWWmGlqAw2+myXEgBuTi44k1tASHnec8"
+    "FT8oFx9RrIFFWFEKobhQlpalQcxLqNW7CgvkFRbXZKItrX4XWfI2GqGHF3oPe+R6lc6QN/Kv0Fhrq9JfHk2F+36W"
+    "HIssKsVG6E2jPw7nEdeJLEzhJFP1Zll6qbddJVUKrLm+AzbkyInyJK2LKY2LrMszpVX6E0ZD5L0sT+IiUxK5WJsX"
+    "OmMcevLq0JND92Lav/OING/wklG+mWqErzXGOYxYLHyJcy3W07VmQmtmKgsPL6fZETfC55tYCw+jftd3eBy+RdTM"
+    "mvcYX/8VpdZhF2b2vBRV2LPeLCZPgzV0nubZ8GNtXt+C6t3pbP+egLP4vFSbZp7tGnngplLSvHR7+VniPFFtlblC"
+    "HF4Rv/MB1ovHqspDVDARWMACFrCABSxgZcHy5SE8TATWS8c6cEHx/pvSEO9g4gvBKt7mPUxM3iCKd4h3J22iP3rF"
+    "o+TjsZxtrrltmDtxtWw1X1XJKv60St7ZSmueqrR6sIzf4alSeXhifcvZ2sM8kYd9WN7iocVFfxabZmfx0OCi02F5"
+    "i4d6F732VO0sYqnlcmdyQeYtHmpd9Pr9lrN4qHTR6bG8RSydXN6yO3UWsVRyOQuWt4ilkcvb9vLOIpZCLmfD8hax"
+    "5HJZ/1hL+NeJ1XN5rmRUznxB5vQWim109utEiY3+h+fP/PdjpIXh//f1SuDFdLF3Q+17ohvZsKEIfa3MzUVebO9N"
+    "w8wX+6E/YO6SDpPvILztVR9Xs+GNTWfTsouwQLTf6mzTdxFUom9SdtXcUiDGYfLd6eG312UaJt80+07yVKphJP86"
+    "bPe0Q0pvfGAcpviWbvexd6tuxmAbpvrysPF+B4Zh+KQZWMBSxwJqyWM6TqzFKLGm4zRxMUqs6ThLfjFKrOk4G8Ri"
+    "lFiZxIrFWowSK5dY53lOfPBwOTKs6TjVehBrPTKs6Thra9cdMpRW1H1sboi+z6RW5O11bsa6scniIa4TgQUsYAEL"
+    "WMACFrCABSxgAQtYwAIWsIAFLGABC1jAAhawgAUsYAELWMACFrCABSxgAQtYwAIWsIAFLGABC1jAAhawFLF3M6I3"
+    "R4fZ3MJEYAELWKeKhUAgEAgEYtTxPyjXQDnwCRRBAAAAAElFTkSuQmCC"
+)
+
+IMAGES = {"大树": (TREE_PNG, 300, 360)}

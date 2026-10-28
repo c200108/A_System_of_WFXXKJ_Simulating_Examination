@@ -27,7 +27,8 @@ const form = reactive({
   is_open: siteConfig.exam.defaults.is_open,
   allow_retake: siteConfig.exam.defaults.allow_retake,
   show_score: siteConfig.exam.defaults.show_score,
-  show_answer: siteConfig.exam.defaults.show_answer
+  show_answer: siteConfig.exam.defaults.show_answer,
+  early_submit: false
 })
 
 const router = useRouter()
@@ -103,7 +104,8 @@ function openPublish() {
     is_open: siteConfig.exam.defaults.is_open,
     allow_retake: siteConfig.exam.defaults.allow_retake,
     show_score: siteConfig.exam.defaults.show_score,
-    show_answer: siteConfig.exam.defaults.show_answer
+    show_answer: siteConfig.exam.defaults.show_answer,
+    early_submit: false
   })
   publishDlg.value = true
 }
@@ -352,6 +354,17 @@ const hardest = computed(() => {
           />
         </template>
       </el-table-column>
+      <el-table-column label="提前交卷" width="86">
+        <template #default="{ row }">
+          <el-tooltip content="打开后不受「时间过三分之二、答完三分之二的题」限制，随时能交卷" placement="top">
+            <el-switch
+              :model-value="row.early_submit"
+              :disabled="!row.can_edit"
+              @change="v => toggle(row, 'early_submit', v)"
+            />
+          </el-tooltip>
+        </template>
+      </el-table-column>
       <el-table-column label="可重考" width="76">
         <template #default="{ row }">
           <el-switch
@@ -558,6 +571,10 @@ const hardest = computed(() => {
       <el-form-item label="交卷看答案">
         <el-switch v-model="form.show_answer" />
         <span class="fh">正式考试建议关，否则先考的学生能把答案带出去</span>
+      </el-form-item>
+      <el-form-item label="允许提前交卷">
+        <el-switch v-model="form.early_submit" />
+        <span class="fh">默认要考试时间过三分之二、并且答完三分之二的题才能交卷；打开后全程随时能交。发布后也能在列表里改</span>
       </el-form-item>
       <el-form-item label="允许重考">
         <el-switch v-model="form.allow_retake" />

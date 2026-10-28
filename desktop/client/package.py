@@ -70,6 +70,11 @@ class ExamPackage:
         return int(self.manifest.get("duration_min") or 0)
 
     @property
+    def early_submit(self) -> bool:
+        """老师开了「允许提前交卷」：交卷不设三分之二门槛。旧考试包没有这一项，照旧拦。"""
+        return bool(self.manifest.get("early_submit"))
+
+    @property
     def exam_id(self) -> str:
         return str(self.manifest.get("exam_id") or self.path.stem)
 

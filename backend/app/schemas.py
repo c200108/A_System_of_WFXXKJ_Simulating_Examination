@@ -375,6 +375,7 @@ class ExamCreate(BaseModel):
     allow_retake: bool = Field(default_factory=lambda: site.exam.defaults.allow_retake)
     show_score: bool = Field(default_factory=lambda: site.exam.defaults.show_score)
     show_answer: bool = Field(default_factory=lambda: site.exam.defaults.show_answer)
+    early_submit: bool = False      # 允许提前交卷（不受三分之二门槛限制）
 
 
 class ExamUpdate(BaseModel):
@@ -384,6 +385,7 @@ class ExamUpdate(BaseModel):
     allow_retake: bool | None = None
     show_score: bool | None = None
     show_answer: bool | None = None
+    early_submit: bool | None = None
 
 
 class ExamOut(ORMModel):
@@ -395,6 +397,7 @@ class ExamOut(ORMModel):
     allow_retake: bool
     show_score: bool
     show_answer: bool
+    early_submit: bool = False
     target_classes: str = ""       # 班级名，逗号分隔；空串表示全体学生
     target_class_ids: list[int] = []
     created_at: datetime | None = None
@@ -440,6 +443,7 @@ class TakePaperOut(BaseModel):
     code: str = ""
     total: int
     full_score: int = 0
+    early_submit: bool = False      # 老师开了「允许提前交卷」：前端不拦交卷
     groups: list[TakeGroupOut]
 
 

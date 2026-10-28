@@ -493,7 +493,7 @@ class ExamFrame(ttk.Frame):
         need_q, need_sec = submit_needs(len(self.paper), self.app.package.duration_min * 60)
         wait = max(0, need_sec - (self.app.package.duration_min * 60 - self.left))
         more_q = max(0, need_q - self.answered_count())
-        self.tip.config(text="" if not (wait or more_q) else
+        self.tip.config(text="" if self.app.package.early_submit or not (wait or more_q) else
                         f"答满 {need_q} 题、并且开考 {-(-need_sec // 60)} 分钟后才能交卷")
         self.after(1000, self.tick)
 
@@ -507,6 +507,8 @@ class ExamFrame(ttk.Frame):
         和网页端（frontend/src/submitGate.js）是同一条规矩，改一边记得改另一边。
         时间到自动交卷不受这个限制（do_submit(auto=True) 不经过这里）。
         """
+        if self.app.package.early_submit:
+            return ""                   # 老师开了「允许提前交卷」
         total_sec = self.app.package.duration_min * 60
         need_q, need_sec = submit_needs(len(self.paper), total_sec)
         more_q = max(0, need_q - self.answered_count())

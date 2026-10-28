@@ -74,7 +74,11 @@ export function useSubmitGate(key, paper, answered) {
   const elapsed = computed(() => (startedAt ? (now.value - startedAt) / 1000 : 0))
   const waitSeconds = computed(() => Math.max(0, needs.value.seconds - elapsed.value))
   const moreQuestions = computed(() => Math.max(0, needs.value.questions - answered.value))
-  const canSubmit = computed(() => waitSeconds.value <= 0 && moreQuestions.value <= 0)
+  // 老师给这场考试开了「允许提前交卷」：不设门槛
+  const early = computed(() => !!paper.value?.early_submit)
+  const canSubmit = computed(
+    () => early.value || (waitSeconds.value <= 0 && moreQuestions.value <= 0)
+  )
 
   /** 交不了时说清楚还差什么；能交时是空串 */
   const reason = computed(() => {

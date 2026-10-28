@@ -93,8 +93,9 @@ def _rpr(p: dict) -> str:
         bits.append("<w:b/><w:bCs/>")
     if p.get("italic"):
         bits.append("<w:i/><w:iCs/>")
-    if p.get("underline"):
-        bits.append('<w:u w:val="single"/>')
+    if p.get("underline") or p.get("u"):
+        # 线型：single 单线、double 双线、wave 波浪、wavyDouble 双波浪……
+        bits.append(f'<w:u w:val="{esc(p.get("u") or "single")}"/>')
     if p.get("strike"):
         bits.append("<w:strike/>")
     if p.get("sup"):
@@ -169,13 +170,104 @@ def _ppr(p: dict) -> str:
     return f"<w:pPr>{''.join(bits)}</w:pPr>"
 
 
-def _para_xml(p: dict) -> str:
+def _para_xml(p: dict, extra: str = "") -> str:
+    """extra：锚在这一段里的图形（文本框、图片），放在文字前面。"""
     text = str(p.get("text") or "")
     run = ""
     if text:
         run = (f'<w:r><w:rPr>{_rpr(p)}</w:rPr>'
                f'<w:t xml:space="preserve">{esc(text)}</w:t></w:r>')
-    return f"<w:p>{_ppr(p)}{run}</w:p>"
+    return f"<w:p>{_ppr(p)}{extra}{run}</w:p>"
+
+
+# ================================================================ 图形
+# 文本框、图片。题目里有「将文本框的高度设为 60 毫米」「将大树图片的环绕方式改为
+# 紧密型环绕」—— 文档里得**真有**这个文本框、这张图，学生才有东西可改。
+#
+# 文本框写两份：新格式（DrawingML，wps:wsp）给 WPS 2016+ / Word 2010+，
+# 旧格式（VML）放在 mc:Fallback 里给更老的版本。读回来时只认新格式那份。
+WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+PIC_NS = "http://schemas.openxmlformats.org/drawingml/2006/picture"
+WPS_NS = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+V_NS = "urn:schemas-microsoft-com:vml"
+W10_NS = "urn:schemas-microsoft-com:office:word"
+EMU_MM = 36000                  # 1 毫米多少 EMU
+
+# 环绕方式 → DrawingML 标签 / VML 的 w10:wrap
+WRAP_XML = {
+    "square": '<wp:wrapSquare wrapText="bothSides"/>',
+    "topAndBottom": "<wp:wrapTopAndBottom/>",
+    "tight": ('<wp:wrapTight wrapText="bothSides"><wp:wrapPolygon edited="0">'
+              '<wp:start x="0" y="0"/><wp:lineTo x="0" y="21600"/><wp:lineTo x="21600" y="21600"/>'
+              '<wp:lineTo x="21600" y="0"/><wp:lineTo x="0" y="0"/></wp:wrapPolygon></wp:wrapTight>'),
+    "through": ('<wp:wrapThrough wrapText="bothSides"><wp:wrapPolygon edited="0">'
+                '<wp:start x="0" y="0"/><wp:lineTo x="0" y="21600"/><wp:lineTo x="21600" y="21600"/>'
+                '<wp:lineTo x="21600" y="0"/><wp:lineTo x="0" y="0"/></wp:wrapPolygon></wp:wrapThrough>'),
+    "front": "<wp:wrapNone/>",
+    "behind": "<wp:wrapNone/>",
+}
+
+
+def _textbox_xml(shape: dict, sid: int) -> str:
+    cx = int(round(float(shape.get("width_mm") or 40) * EMU_MM))
+    cy = int(round(float(shape.get("height_mm") or 30) * EMU_MM))
+    wrap = str(shape.get("wrap") or "square")
+    fmt = {"font": shape.get("font") or "宋体", "size": shape.get("size") or "五号",
+           "align": shape.get("align") or "center"}
+    inner = "".join(_para_xml({**fmt, "text": line})
+                    for line in str(shape.get("text") or "").split("\n"))
+    behind = "1" if wrap == "behind" else "0"
+    w_pt, h_pt = round(cx / 12700, 1), round(cy / 12700, 1)
+    vml_wrap = {"square": "square", "topAndBottom": "topAndBottom", "tight": "tight",
+                "through": "through"}.get(wrap, "")
+    return (
+        "<w:r><mc:AlternateContent><mc:Choice Requires=\"wps\"><w:drawing>"
+        f'<wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" '
+        f'relativeHeight="{251659264 + sid}" behindDoc="{behind}" locked="0" layoutInCell="1" '
+        'allowOverlap="1"><wp:simplePos x="0" y="0"/>'
+        '<wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH>'
+        '<wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>'
+        f'<wp:extent cx="{cx}" cy="{cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>'
+        f'{WRAP_XML.get(wrap, WRAP_XML["square"])}'
+        f'<wp:docPr id="{sid}" name="文本框 {sid}"/><wp:cNvGraphicFramePr/>'
+        f'<a:graphic><a:graphicData uri="{WPS_NS}"><wps:wsp><wps:cNvSpPr txBox="1"/>'
+        f'<wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>'
+        '<a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill>'
+        '<a:ln w="6350"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></wps:spPr>'
+        f'<wps:txbx><w:txbxContent>{inner}</w:txbxContent></wps:txbx>'
+        '<wps:bodyPr rot="0" vert="horz" wrap="square" lIns="91440" tIns="45720" '
+        'rIns="91440" bIns="45720" anchor="t" anchorCtr="0"><a:noAutofit/></wps:bodyPr>'
+        "</wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice>"
+        "<mc:Fallback><w:pict>"
+        f'<v:rect style="position:absolute;margin-left:0;margin-top:0;width:{w_pt}pt;'
+        f'height:{h_pt}pt;z-index:{251659264 + sid}" fillcolor="white" strokeweight=".5pt">'
+        f"<v:textbox><w:txbxContent>{inner}</w:txbxContent></v:textbox>"
+        + (f'<w10:wrap type="{vml_wrap}"/>' if vml_wrap else "")
+        + "</v:rect></w:pict></mc:Fallback></mc:AlternateContent></w:r>"
+    )
+
+
+def _image_xml(shape: dict, sid: int, rid: str, px: tuple) -> str:
+    """嵌入型图片。宽度按 width_mm，高度按原图比例。"""
+    width = float(shape.get("width_mm") or 40)
+    height = float(shape.get("height_mm") or width * px[1] / px[0])
+    cx, cy = int(round(width * EMU_MM)), int(round(height * EMU_MM))
+    name = esc(shape.get("name") or "图片")
+    return (
+        '<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0">'
+        f'<wp:extent cx="{cx}" cy="{cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>'
+        f'<wp:docPr id="{sid}" name="图片 {sid}" descr="{name}"/>'
+        '<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>'
+        f'<a:graphic><a:graphicData uri="{PIC_NS}"><pic:pic>'
+        f'<pic:nvPicPr><pic:cNvPr id="0" name="{name}.png"/><pic:cNvPicPr/></pic:nvPicPr>'
+        f'<pic:blipFill><a:blip r:embed="{rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>'
+        f'<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>'
+        "</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"
+    )
 
 
 def _sect_xml(page: dict, columns: int, head: str = "", foot: str = "") -> str:
@@ -274,12 +366,30 @@ def build_docx(state: dict) -> bytes:
     paras = [p for p in (state.get("paras") or []) if isinstance(p, dict)]
     if not paras:
         paras = [{"text": ""}]
-    body = "".join(_para_xml(p) for p in paras)
+    # 图形挂到它所在的那一段上
+    extra = {}
+    media = []                         # (部件名, 字节, 关系 id)
+    for n, shape in enumerate(s for s in (state.get("shapes") or []) if isinstance(s, dict)):
+        at = min(max(int(shape.get("para") or 0), 0), len(paras) - 1)
+        sid = n + 1
+        if shape.get("kind") == "image":
+            from .wps_media import IMAGES
+            got = IMAGES.get(str(shape.get("name") or ""))
+            if not got:
+                continue
+            rid = f"rIdImg{sid}"
+            media.append((f"media/image{sid}.png", got[0], rid))
+            extra[at] = extra.get(at, "") + _image_xml(shape, sid, rid, (got[1], got[2]))
+        else:
+            extra[at] = extra.get(at, "") + _textbox_xml(shape, sid)
+    body = "".join(_para_xml(p, extra.get(i, "")) for i, p in enumerate(paras))
     head = str(state.get("header") or "")
     foot = str(state.get("footer") or "")
     document = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        f'<w:document xmlns:w="{W}" xmlns:r="{R}"><w:body>{body}'
+        f'<w:document xmlns:w="{W}" xmlns:r="{R}" xmlns:wp="{WP_NS}" xmlns:a="{A_NS}" '
+        f'xmlns:pic="{PIC_NS}" xmlns:wps="{WPS_NS}" xmlns:mc="{MC_NS}" xmlns:v="{V_NS}" '
+        f'xmlns:w10="{W10_NS}"><w:body>{body}'
         f'{_sect_xml(state.get("page") or {}, state.get("columns") or 1, head, foot)}'
         "</w:body></w:document>"
     )
@@ -301,6 +411,15 @@ def build_docx(state: dict) -> bytes:
                 f'officeDocument/2006/relationships/{kind}" Target="{part}"/>'
                 "</Relationships>")
             z.writestr(f"word/{part}", _hdr_ftr(tag, text))
+        if media:
+            types = types.replace("</Types>",
+                '<Default Extension="png" ContentType="image/png"/></Types>')
+        for part, data, rid in media:
+            rels = rels.replace("</Relationships>",
+                f'<Relationship Id="{rid}" Type="http://schemas.openxmlformats.org/'
+                f'officeDocument/2006/relationships/image" Target="{part}"/>'
+                "</Relationships>")
+            z.writestr(f"word/{part}", data)
         z.writestr("[Content_Types].xml", types)
         z.writestr("_rels/.rels", ROOT_RELS)
         z.writestr("word/document.xml", document)

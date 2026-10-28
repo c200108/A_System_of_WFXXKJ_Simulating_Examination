@@ -10,6 +10,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.dialects.mysql import LONGTEXT
@@ -269,6 +270,8 @@ class Exam(Base):
     allow_retake: Mapped[bool] = mapped_column(Boolean, default=False)  # 同一学号能否重考
     show_score: Mapped[bool] = mapped_column(Boolean, default=True)  # 交卷后给不给学生看分数
     show_answer: Mapped[bool] = mapped_column(Boolean, default=False)  # 交卷后给不给看对错和答案
+    # 允许提前交卷：不受「时间过三分之二、答完三分之二的题」的交卷门槛限制
+    early_submit: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     # 哪些班能在学生平台上看到这场考试，逗号分隔；留空表示所有班都能看。
     # 只影响学生平台的列表，凭链接直接答题的老路子不受它限制。
     target_classes: Mapped[str] = mapped_column(String(255), default="")

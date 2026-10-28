@@ -11,6 +11,17 @@ import pytest
 
 from app.services import sim, stem
 
+
+@pytest.fixture(autouse=True)
+def generic_rules_only(monkeypatch):
+    """这里测的是**通用规则**。题库原题现在按 wps_bank 写死的来（见 test_wps_bank.py），
+    把那张表拿掉，题干就只能走通用规则。"""
+    from app.services import wps_bank
+    monkeypatch.setattr(wps_bank, "BANK", [])
+    stem.auto_sim.cache_clear()
+    yield
+    stem.auto_sim.cache_clear()
+
 # ————— 以下题干全部照抄自题库（questions 表），换行改成 \n —————
 WIN_289 = """本题工作目录:D:\\EXAM windows操作
 请打开本题工作目录下的系统基本操作文件夹，按要求完成以下操作:

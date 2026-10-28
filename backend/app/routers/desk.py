@@ -282,6 +282,8 @@ def build_package(db: Session, exam: Exam, server: str = "") -> bytes:
         "title": exam.title,
         "school": exam.paper.school or "",
         "duration_min": _minutes(exam.paper.duration),
+        # 老师开了「允许提前交卷」：客户端不拦交卷（老客户端不认这一项，照旧拦）
+        "early_submit": bool(exam.early_submit),
         "count": len(paper),
         "full_score": sum(q["score"] for q in paper),
         "created": clock.now().strftime("%Y-%m-%d %H:%M:%S"),

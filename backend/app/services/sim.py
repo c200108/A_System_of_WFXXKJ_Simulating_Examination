@@ -387,48 +387,223 @@ ALIGN_NAMES = {"left": "左对齐", "center": "居中", "right": "右对齐",
                "justify": "两端对齐", "distribute": "分散对齐"}
 
 
+# 字体：WPS 里选「黑体」，存盘可能写中文名，也可能写英文名
+FONT_ALIASES = {
+    "宋体": {"宋体", "simsun", "新宋体", "nsimsun"},
+    "黑体": {"黑体", "simhei"},
+    "楷体": {"楷体", "kaiti", "楷体_gb2312", "kaiti_gb2312", "华文楷体", "stkaiti"},
+    "仿宋": {"仿宋", "fangsong", "仿宋_gb2312", "fangsong_gb2312"},
+    "微软雅黑": {"微软雅黑", "microsoft yahei", "microsoftyahei"},
+}
+
+
+def same_font(got, want) -> bool:
+    g, w = str(got or "").strip().lower(), str(want or "").strip()
+    return g == w.lower() or g in FONT_ALIASES.get(w, set())
+
+
+# 下划线线型：题目里的叫法 → .docx 里 w:u 的取值
+U_ALIASES = {
+    "双下划线": {"double"}, "双线": {"double"},
+    "波浪线": {"wave", "wavyHeavy"}, "波浪形下划线": {"wave", "wavyHeavy"},
+    "双波浪线": {"wavyDouble"}, "双波浪形下划线": {"wavyDouble"},
+    "单下划线": {"single"}, "粗线": {"thick"}, "点式下划线": {"dotted"},
+}
+
+# 环绕方式：题目里的叫法 → 判分用的写法（客户端 docx.py 读出来的）
+WRAP_NAMES = {
+    "嵌入型": "inline", "四周型": "square", "四周型环绕": "square",
+    "紧密型": "tight", "紧密型环绕": "tight", "穿越型": "through", "穿越型环绕": "through",
+    "上下型": "topAndBottom", "上下型环绕": "topAndBottom",
+    "浮于文字上方": "front", "衬于文字下方": "behind",
+}
+WRAP_LABELS = {v: k for k, v in WRAP_NAMES.items() if not k.endswith("环绕")}
+
+# 这些是**字符**格式：学生可能只选中了字、没选中段落标记，段落级的值不可信，
+# 要看这一段每一截字（runs）各自的格式
+CHAR_KEYS = ("font", "size", "bold", "italic", "underline", "u", "strike", "color")
+
+
+def _char_values(p: dict, key: str) -> list:
+    """一段里每一截字的某项格式。老客户端交上来的没有 runs，就只有段落级那一个值。"""
+    runs = [r for r in (p.get("runs") or []) if isinstance(r, dict)
+            and str(r.get("text") or "").strip()]
+    if not runs:
+        return [p.get(key)]
+    return [r[key] if key in r else p.get(key) for r in runs]
+
+
+def _char_ok(values: list, key: str, want):
+    """所有截的字都满足才算。返回 (对不对, 不对的那个值)。"""
+    for got in values:
+        if key == "font":
+            ok = same_font(got or "宋体", want)
+        elif key == "size":
+            ok = same_size(got or "五号", want)
+        elif key == "color":
+            ok = same_color(got, want)
+        elif key == "u":
+            ok = str(got or "") in U_ALIASES.get(str(want), {str(want)})
+        else:
+            ok = bool(got) == bool(want)
+        if not ok:
+            return False, got
+    return True, None
+
+
+def _para_ok(p: dict, a: dict):
+    """一段的格式满不满足检查点里列的每一项。"""
+    for key in CHAR_KEYS:
+        if key not in a:
+            continue
+        ok, got = _char_ok(_char_values(p, key), key, a[key])
+        if ok:
+            continue
+        if key == "u":
+            return False, f"下划线线型不对（要求{a[key]}）"
+        if key in ("bold", "italic", "underline", "strike"):
+            return False, f"{'要' if a[key] else '不要'}{PARA_LABELS[key]}"
+        return False, f"{PARA_LABELS[key]}是「{got or '默认'}」，要求「{a[key]}」"
+    for key in ("highlight", "shading"):
+        if key in a and str(p.get(key) or "") != str(a[key]):
+            return False, f"{PARA_LABELS[key]}是「{p.get(key) or '默认'}」，要求「{a[key]}」"
+    if "style" in a and not same_style(p.get("style") or "正文", a["style"]):
+        want = "「标题」或「标题 1」" if style_name(a["style"]) == "标题" else f"「{a['style']}」"
+        return False, f"样式是「{p.get('style') or '正文'}」，要求{want}"
+    if "bullet" in a and str(p.get("bullet") or "none") != str(a["bullet"]):
+        got = BULLET_NAMES.get(str(p.get("bullet") or "none"), p.get("bullet"))
+        return False, f"项目符号/编号是「{got}」，要求「{BULLET_NAMES.get(a['bullet'], a['bullet'])}」"
+    for key in ("sup", "sub", "border"):
+        if key in a and bool(p.get(key)) != bool(a[key]):
+            return False, f"{'要' if a[key] else '不要'}{PARA_LABELS[key]}"
+    if "align" in a and str(p.get("align") or "left") != str(a["align"]):
+        got = ALIGN_NAMES.get(str(p.get("align") or "left"), p.get("align"))
+        return False, f"对齐方式是{got}，要求{ALIGN_NAMES.get(a['align'], a['align'])}"
+    # left / right 是「文本之前/之后缩进」。**以前漏判了** —— 检查点里写得出来，
+    # 判分时却不看，于是这一问永远算对，白送分
+    for key in ("indent", "before", "after", "left", "right"):
+        if key in a and abs(float(p.get(key) or 0) - float(a[key])) > 0.01:
+            return False, f"{PARA_LABELS[key]}是 {p.get(key) or 0}，要求 {a[key]}"
+    if "line" in a:
+        want, got = a["line"], p.get("line")
+        if not _same_line(got, want):
+            return False, f"行距不对（要求{_line_text(want)}）"
+    return True, "这一段的格式对了"
+
+
+def _span_runs(p: dict, key: str) -> list:
+    """一段里覆盖着某一句话的那几截字。找不到返回空列表。"""
+    runs = [r for r in (p.get("runs") or []) if isinstance(r, dict)]
+    text = "".join(str(r.get("text") or "") for r in runs)
+    flat = loose_text(text)
+    want = loose_text(key)
+    if not runs or not want or want not in flat:
+        return []
+    # loose_text 去掉了空白和引号，位置要按"去掉之后"的字数对回每一截
+    start = flat.index(want)
+    stop = start + len(want)
+    out, pos = [], 0
+    for r in runs:
+        n = len(loose_text(r.get("text")))
+        if n and pos < stop and pos + n > start:
+            out.append(r)
+        pos += n
+    return out
+
+
+def _shapes(state: dict) -> list:
+    got = state.get("shapes")
+    return [x for x in got if isinstance(x, dict)] if isinstance(got, list) else []
+
+
 def _check_wps(a: dict, state: dict):
     op = a.get("op")
     paras = _paras(state)
 
     if op == "para":
-        p = _pick_para(paras, a.get("at", 0))
+        at = a.get("at", 0)
+        # 「第一段」到底算不算标题，题干常说不清 —— 这时写成 {"any": [0, 1]}，哪段对都算
+        tries = at.get("any") if isinstance(at, dict) and "any" in at else [at]
+        why = "找不到要检查的那一段（段落被删了，或者内容被改了）"
+        for one in tries:
+            p = _pick_para(paras, one)
+            if not p:
+                continue
+            ok, why = _para_ok(p, a)
+            if ok:
+                return True, why
+        return False, why
+
+    if op == "paras":
+        # 一组段落一起判（「正文设置为宋体、四号」）：每一段都要对
+        keys = a.get("has") or []
+        rule = {k: v for k, v in a.items() if k not in ("op", "has")}
+        for key in keys:
+            p = _pick_para(paras, {"has": key})
+            if not p:
+                return False, f"找不到「{key}」所在的段落"
+            ok, why = _para_ok(p, rule)
+            if not ok:
+                return False, f"「{key}」那一段：{why}"
+        return True, "这几段的格式都对了"
+
+    if op == "span":
+        # 一段里的**某一句**（「为……这句话添加双下划线」）
+        key = str(a.get("has") or "")
+        p = next((x for x in paras if loose_text(key) in loose_text(x.get("text"))), None)
         if not p:
-            return False, "找不到要检查的那一段（段落被删了，或者内容被改了）"
-        # 颜色单独比：检查点里写「红色」，学生设的是 #ff0000 或 #c00000，
-        # 都该算对（见 COLOR_ALIASES）
-        if "color" in a and not same_color(p.get("color"), a["color"]):
-            return False, f"颜色是「{p.get('color') or '默认'}」，要求「{a['color']}」"
-        # 取值型：字体、突出显示、底纹、项目符号
-        for key in ("font", "highlight", "shading"):
-            if key in a and str(p.get(key) or "") != str(a[key]):
-                return False, f"{PARA_LABELS[key]}是「{p.get(key) or '默认'}」，要求「{a[key]}」"
-        if "style" in a and not same_style(p.get("style") or "正文", a["style"]):
-            want = "「标题」或「标题 1」" if style_name(a["style"]) == "标题" else f"「{a['style']}」"
-            return False, f"样式是「{p.get('style') or '正文'}」，要求{want}"
-        if "bullet" in a and str(p.get("bullet") or "none") != str(a["bullet"]):
-            got = BULLET_NAMES.get(str(p.get("bullet") or "none"), p.get("bullet"))
-            return False, f"项目符号/编号是「{got}」，要求「{BULLET_NAMES.get(a['bullet'], a['bullet'])}」"
-        if "size" in a and not same_size(p.get("size"), a["size"]):
-            return False, f"字号是「{p.get('size') or '默认'}」，要求「{a['size']}」"
-        # 开关型
-        for key in ("bold", "italic", "underline", "strike", "sup", "sub", "border"):
-            if key in a and bool(p.get(key)) != bool(a[key]):
-                want = "要" if a[key] else "不要"
-                return False, f"{want}{PARA_LABELS[key]}"
-        if "align" in a and str(p.get("align") or "left") != str(a["align"]):
-            got = ALIGN_NAMES.get(str(p.get("align") or "left"), p.get("align"))
-            return False, f"对齐方式是{got}，要求{ALIGN_NAMES.get(a['align'], a['align'])}"
-        # left / right 是「文本之前/之后缩进」。**以前漏判了** —— 检查点里写得出来，
-        # 判分时却不看，于是这一问永远算对，白送分
-        for key in ("indent", "before", "after", "left", "right"):
-            if key in a and abs(float(p.get(key) or 0) - float(a[key])) > 0.01:
-                return False, f"{PARA_LABELS[key]}是 {p.get(key) or 0}，要求 {a[key]}"
-        if "line" in a:
-            want, got = a["line"], p.get("line")
-            if not _same_line(got, want):
-                return False, f"行距不对（要求{_line_text(want)}）"
-        return True, "这一段的格式对了"
+            return False, f"文中找不到「{key}」"
+        runs = _span_runs(p, key)
+        if not runs:
+            # 老客户端没交 runs，退回按整段判
+            runs = [p]
+        for k in CHAR_KEYS:
+            if k not in a:
+                continue
+            ok, got = _char_ok([r[k] if k in r else p.get(k) for r in runs], k, a[k])
+            if not ok:
+                if k == "u":
+                    return False, f"「{key[:10]}…」的下划线线型不对（要求{a[k]}）"
+                if k in ("bold", "italic", "underline", "strike"):
+                    return False, f"「{key[:10]}…」{'要' if a[k] else '不要'}{PARA_LABELS[k]}"
+                return False, f"「{key[:10]}…」的{PARA_LABELS[k]}是「{got or '默认'}」，要求「{a[k]}」"
+        return True, "这句话的格式对了"
+
+    if op == "shape":
+        return _check_shape(a, state, paras)
+
+    if op == "file":
+        names = [str(n) for n in (state.get("files") or [])]
+        want = str(a.get("exists") or "")
+        hit = any(n.rsplit("/", 1)[-1].lower() == want.lower() for n in names)
+        return (hit, f"工作目录里有「{want}」" if hit else f"工作目录里找不到「{want}」")
+
+    if op == "cols":
+        p = _pick_para(paras, a.get("at", 1))
+        if not p:
+            return False, "找不到要分栏的那一段"
+        cols = p.get("cols") if isinstance(p.get("cols"), dict) else {"num": 1}
+        want = int(a.get("num") or 2)
+        if int(cols.get("num") or 1) != want:
+            return False, f"这一段分了 {cols.get('num') or 1} 栏，要求 {want} 栏"
+        if a.get("equal") and not cols.get("equal", True):
+            return False, "栏宽不相等"
+        if "space_chars" in a:
+            # 栏间距存的是 twip；「2 字符」按这一段的字号折算，留半个字符的余量
+            pt = SIZE_ALIASES.get(str(p.get("size") or "五号"), 10.5) \
+                if not str(p.get("size") or "").replace(".", "").isdigit() else float(p["size"])
+            chars = float(cols.get("space") or 0) / (pt * 20)
+            if abs(chars - float(a["space_chars"])) > 0.5:
+                return False, f"栏间距约 {chars:.1f} 字符，要求 {a['space_chars']} 字符"
+        return True, "分栏对了"
+
+    if op == "page_number":
+        got = str(state.get("page_number") or "")
+        if not got:
+            return False, "没有插入页码"
+        if "align" in a and got != str(a["align"]):
+            return False, f"页码是{ALIGN_NAMES.get(got, got)}，要求{ALIGN_NAMES.get(a['align'], a['align'])}"
+        return True, "页码插好了"
 
     if op == "text":
         whole = "\n".join(loose_text(p.get("text")) for p in paras)
@@ -436,6 +611,10 @@ def _check_wps(a: dict, state: dict):
             return False, f"文中还有「{a['absent']}」没改掉"
         if "present" in a and loose_text(a["present"]) not in whole:
             return False, f"文中找不到「{a['present']}」"
+        if "once" in a and whole.count(loose_text(a["once"])) != 1:
+            n = whole.count(loose_text(a["once"]))
+            return False, (f"文中找不到「{a['once']}」" if not n else
+                           f"「{a['once']}」出现了 {n} 次，应该是移动不是复制")
         return True, "文字内容对了"
 
     if op == "order":
@@ -454,7 +633,8 @@ def _check_wps(a: dict, state: dict):
         page = state.get("page") or {}
         for key, label in (("left", "左边距"), ("right", "右边距"),
                            ("top", "上边距"), ("bottom", "下边距")):
-            if key in a and abs(float(page.get(key) or 0) - float(a[key])) > 0.01:
+            # 留半毫米：厘米换 twip 有零头，加了页面边框的版本还会把边框间距折进页边距
+            if key in a and abs(float(page.get(key) or 0) - float(a[key])) > 0.05:
                 return False, f"{label}是 {page.get(key) or 0} 厘米，要求 {a[key]} 厘米"
         if "size" in a:
             got = str(page.get("size") or "")
@@ -462,11 +642,32 @@ def _check_wps(a: dict, state: dict):
                 return False, f"纸张是「{got or '未知'}」，要求「{a['size']}」"
         if "orient" in a and str(page.get("orient") or "portrait") != str(a["orient"]):
             return False, "纸张方向不对"
+        if a.get("same_tb"):
+            # 「参照上边距数值修改下边距，使其一致」
+            top, bottom = float(page.get("top") or 0), float(page.get("bottom") or 0)
+            if not top or abs(top - bottom) > 0.05:
+                return False, f"上边距 {top} 厘米、下边距 {bottom} 厘米，要求一致"
+        if "border_color" in a:
+            border = page.get("border") if isinstance(page.get("border"), dict) else None
+            if not border:
+                return False, "没有设置页面边框"
+            if not same_color(border.get("color"), a["border_color"]):
+                return False, f"页面边框颜色是「{border.get('color') or '自动'}」，要求「{a['border_color']}」"
+            if "border_val" in a and str(border.get("val")) != str(a["border_val"]):
+                return False, "页面边框线型不对（要求实线）"
         return True, "页面设置对了"
 
     if op in ("header", "footer"):
         got = str(state.get(op) or "").strip()
         label = "页眉" if op == "header" else "页脚"
+        if "align" in a:
+            if loose_text(a.get("has") or a.get("equals") or "") not in loose_text(got):
+                return False, f"{label}里没有「{a.get('has') or a.get('equals')}」"
+            pos = str(state.get(op + "_align") or "")
+            if pos != str(a["align"]):
+                return False, (f"{label}是{ALIGN_NAMES.get(pos, pos or '默认')}，"
+                               f"要求{ALIGN_NAMES.get(a['align'], a['align'])}")
+            return True, f"{label}对了"
         if "equals" in a:
             return (got == str(a["equals"]).strip(),
                     f"{label}是「{got or '空'}」，要求「{a['equals']}」")
@@ -483,6 +684,63 @@ def _check_wps(a: dict, state: dict):
         return (len(paras) == want, f"现在有 {len(paras)} 段，要求 {want} 段")
 
     return False, f"不认识的检查方式：{op}"
+
+
+def _check_shape(a: dict, state: dict, paras: list):
+    """文本框、图片、艺术字。
+
+    按 kind + 里面的字（has）找图形；找到一个满足全部要求的就算对 —— 学生多插了
+    一个框、或者原来那个没删，不该因此丢分。
+    """
+    kind = str(a.get("kind") or "any")
+    label = {"textbox": "文本框", "image": "图片", "wordart": "艺术字"}.get(kind, "图形")
+    found = []
+    for sh in _shapes(state):
+        k = str(sh.get("kind") or "")
+        # 艺术字在 WPS 里也是一个带字的形状，有的版本存成文本框：带字的形状都认
+        if kind == "wordart" and k not in ("wordart", "textbox", "shape"):
+            continue
+        if kind in ("textbox", "image") and k != kind:
+            continue
+        if a.get("has") and loose_text(a["has"]) not in loose_text(sh.get("text")):
+            continue
+        found.append(sh)
+    if not found:
+        return False, f"找不到{label}" + (f"「{a['has']}」" if a.get("has") else "")
+    why = ""
+    for sh in found:
+        ok, why = _shape_ok(sh, a, label, paras)
+        if ok:
+            return True, why
+    return False, why
+
+
+def _shape_ok(sh: dict, a: dict, label: str, paras: list):
+    for key, name in (("width_mm", "宽度"), ("height_mm", "高度")):
+        if key in a and abs(float(sh.get(key) or 0) - float(a[key])) > 1.0:
+            return False, f"{label}{name}是 {sh.get(key) or 0} 毫米，要求 {a[key]} 毫米"
+    if "wrap" in a:
+        want = WRAP_NAMES.get(str(a["wrap"]), str(a["wrap"]))
+        got = str(sh.get("wrap") or "")
+        if got != want:
+            return False, (f"{label}的环绕方式是「{WRAP_LABELS.get(got, got or '未知')}」，"
+                           f"要求「{WRAP_LABELS.get(want, a['wrap'])}」")
+    if "font" in a:
+        fonts = sh.get("fonts") or []
+        if not fonts or not all(same_font(f or "宋体", a["font"]) for f in fonts):
+            return False, f"{label}里文字的字体不是{a['font']}"
+    if "near" in a:
+        # 「把图片移到某段文字的右侧」：图片得锚在那一段（或紧挨着的一段）上
+        # 锚在那一段上；或者锚在紧挨着它的一个**空段**上（图片原来单独占的那一段）
+        key = loose_text(a["near"])
+        at = int(sh.get("para") or 0)
+        spots = [i for i, p in enumerate(paras) if key and key in loose_text(p.get("text"))]
+
+        def empty(i):
+            return 0 <= i < len(paras) and not loose_text(paras[i].get("text"))
+        if not any(at == i or (abs(at - i) == 1 and empty(at)) for i in spots):
+            return False, f"{label}不在「{a['near'][:10]}…」那一段旁边"
+    return True, f"{label}设置对了"
 
 
 def _same_line(got, want) -> bool:
