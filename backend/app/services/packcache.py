@@ -54,7 +54,9 @@ def fingerprint(db: Session, exam: Exam, server: str) -> str:
     地址不一样，不能混用同一份缓存。
     """
     paper_id = exam.paper_id
-    marks = [str(exam.id), str(exam.token), str(exam.is_open), server]
+    # early_submit 写在包的 manifest 里：开关一改，包也得重建（以前漏了，老师考试中途
+    # 打开「允许提前交卷」，后开考的学生拿到的还是缓存里关着的那份）
+    marks = [str(exam.id), str(exam.token), str(exam.is_open), str(exam.early_submit), server]
 
     row = db.execute(
         select(func.max(Paper.created_at)).where(Paper.id == paper_id)

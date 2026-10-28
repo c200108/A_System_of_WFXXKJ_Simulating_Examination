@@ -34,8 +34,10 @@ function fmt(sec) {
  * @param key      这场考试的标识（考试 id 或口令），用来分开记开考时间
  * @param paper    ref：取回来的卷子（有 total、duration）
  * @param answered computed：已作答题数
+ * @param live     （可选）问教师端最新设置的函数，返回 { early_submit }。
+ *                 老师考试**中途**打开「允许提前交卷」，取卷时那份是旧的，靠它每 30 秒跟上
  */
-export function useSubmitGate(key, paper, answered) {
+export function useSubmitGate(key, paper, answered, live = null) {
   const storeKey = `examStartedAt:${key}`
   const now = ref(Date.now())
   let startedAt = 0
@@ -66,7 +68,21 @@ export function useSubmitGate(key, paper, answered) {
   }
 
   const timer = setInterval(() => (now.value = Date.now()), 1000)
-  onBeforeUnmount(() => clearInterval(timer))
+  const liveEarly = ref(null)        // 问到过就以它为准；没问到（断网）就用取卷时那份
+  async function sync() {
+    if (!live || !paper.value) return
+    try {
+      const got = await live()
+      if (got && 'early_submit' in got) liveEarly.value = !!got.early_submit
+    } catch {
+      /* 连不上就按原来的设置走，不打扰学生 */
+    }
+  }
+  const liveTimer = live ? setInterval(sync, 30000) : null
+  onBeforeUnmount(() => {
+    clearInterval(timer)
+    if (liveTimer) clearInterval(liveTimer)
+  })
 
   const needs = computed(() =>
     gateNeeds(paper.value?.total || 0, durationMinutes(paper.value?.duration))
@@ -75,7 +91,9 @@ export function useSubmitGate(key, paper, answered) {
   const waitSeconds = computed(() => Math.max(0, needs.value.seconds - elapsed.value))
   const moreQuestions = computed(() => Math.max(0, needs.value.questions - answered.value))
   // 老师给这场考试开了「允许提前交卷」：不设门槛
-  const early = computed(() => !!paper.value?.early_submit)
+  const early = computed(() =>
+    liveEarly.value === null ? !!paper.value?.early_submit : liveEarly.value
+  )
   const canSubmit = computed(
     () => early.value || (waitSeconds.value <= 0 && moreQuestions.value <= 0)
   )
@@ -92,5 +110,5 @@ export function useSubmitGate(key, paper, answered) {
     )
   })
 
-  return { start, done, canSubmit, reason, needs, waitSeconds, moreQuestions }
+  return { start, done, sync, canSubmit, reason, needs, waitSeconds, moreQuestions }
 }

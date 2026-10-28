@@ -372,6 +372,15 @@ def _exam_for(db: Session, me: Student, exam_id: int) -> Exam:
     return exam
 
 
+@student_api.get("/exams/{exam_id}/live", summary="考试中途改了的设置（答题页每 30 秒问一次）")
+def student_exam_live(
+    exam_id: int, me: Student = Depends(get_current_student), db: Session = Depends(get_db)
+):
+    """老师考试进行中打开「允许提前交卷」，答题页要跟着放行（取卷时只读过一次）。"""
+    exam = _exam_for(db, me, exam_id)
+    return {"early_submit": bool(exam.early_submit), "is_open": bool(exam.is_open)}
+
+
 @student_api.get("/exams/{exam_id}/paper", summary="取卷（不含答案）")
 def student_paper(
     exam_id: int, me: Student = Depends(get_current_student), db: Session = Depends(get_db)

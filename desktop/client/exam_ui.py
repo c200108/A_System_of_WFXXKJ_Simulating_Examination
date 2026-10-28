@@ -20,7 +20,7 @@ from tkinter import messagebox, ttk
 from . import api, cleanup, package, snapshot, states, store
 from .dragboard import DragBoard, IpBox
 from .shell import (AMBER, APP_NAME, BG, BLUE, CARD, CLIENT_VER, FONT, GRAY,
-                    GREEN, LINE, RED, ai_reply, open_in_system)
+                    GREEN, LINE, RED, ai_reply, in_thread, open_in_system)
 
 
 # ================================================================ 三、答题
@@ -493,7 +493,10 @@ class ExamFrame(ttk.Frame):
         need_q, need_sec = submit_needs(len(self.paper), self.app.package.duration_min * 60)
         wait = max(0, need_sec - (self.app.package.duration_min * 60 - self.left))
         more_q = max(0, need_q - self.answered_count())
-        self.tip.config(text="" if self.app.package.early_submit or not (wait or more_q) else
+        # 每 30 秒问一次教师端：老师考试中途打开「允许提前交卷」，这边要跟上
+        if self.left % 30 == 0:
+            self.sync_live()
+        self.tip.config(text="" if self.early_submit() or not (wait or more_q) else
                         f"答满 {need_q} 题、并且开考 {-(-need_sec // 60)} 分钟后才能交卷")
         self.after(1000, self.tick)
 
@@ -507,7 +510,7 @@ class ExamFrame(ttk.Frame):
         和网页端（frontend/src/submitGate.js）是同一条规矩，改一边记得改另一边。
         时间到自动交卷不受这个限制（do_submit(auto=True) 不经过这里）。
         """
-        if self.app.package.early_submit:
+        if self.early_submit():
             return ""                   # 老师开了「允许提前交卷」
         total_sec = self.app.package.duration_min * 60
         need_q, need_sec = submit_needs(len(self.paper), total_sec)
@@ -524,8 +527,38 @@ class ExamFrame(ttk.Frame):
         return (f"考试时间过了三分之二、并且答完三分之二的题（至少 {need_q} 题）才能交卷。\n\n"
                 + "，".join(parts) + "。")
 
+    # ---------------- 考试中途老师改的设置 ----------------
+    def early_submit(self) -> bool:
+        """允许提前交卷：考试包里开考时那份，被教师端最新的覆盖（问到过的话）。"""
+        live = getattr(self, "_live_early", None)
+        return self.app.package.early_submit if live is None else live
+
+    def sync_live(self, then=None):
+        """后台问一次教师端最新设置。连不上就算了，按原来的走 —— 断网照样能考。"""
+        pack = self.app.package
+        server = getattr(self.app, "server", "") or pack.server
+        if not server or not pack.token or getattr(self, "_live_busy", False):
+            if then:
+                then()
+            return
+        self._live_busy = True
+
+        def done(got, _err):
+            self._live_busy = False
+            if isinstance(got, dict) and "early_submit" in got:
+                self._live_early = bool(got["early_submit"])
+            if then:
+                then()
+        in_thread(self, lambda: api.exam_live(server, pack.token), done)
+
     def confirm_submit(self):
         why = self.gate_reason()
+        if why and not getattr(self, "_asked_live", False):
+            # 被门槛拦住时当场再问一次：老师刚打开「允许提前交卷」，不用等下一个 30 秒
+            self._asked_live = True
+            self.sync_live(then=self._confirm_after_live)
+            return
+        self._asked_live = False
         if why:
             messagebox.showinfo("还不能交卷", why)
             return
@@ -538,6 +571,10 @@ class ExamFrame(ttk.Frame):
                     ("…" if len(blank) > 12 else "") + " 题。\n\n" + text)
         if messagebox.askyesno("交卷", text):
             self.do_submit()
+
+    def _confirm_after_live(self):
+        if not self.submitted:
+            self.confirm_submit()
 
     def do_submit(self, auto: bool = False):
         if self.submitted:
