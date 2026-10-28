@@ -394,6 +394,7 @@ def student_paper(
         "duration": exam.paper.duration,
         "code": exam.paper.code,
         "total": len(items),
+        "early_submit": bool(exam.early_submit),
         "full_score": sum(int(it.get("score") or 0) for it in items),
         # 和公开答题页同一个函数，答案在这一步就被剥掉了
         "groups": strip_answers(group_items(items)),

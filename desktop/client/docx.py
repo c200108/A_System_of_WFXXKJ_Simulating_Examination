@@ -38,7 +38,14 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+WP = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
+A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+WPS = "{http://schemas.microsoft.com/office/word/2010/wordprocessingShape}"
+MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
+V = "{urn:schemas-microsoft-com:vml}"
+W10 = "{urn:schemas-microsoft-com:office:word}"
 CM = 567.0                       # 1 厘米多少 twip
+EMU_MM = 36000.0                 # 1 毫米多少 EMU（图形尺寸的单位）
 
 # 磅 → 字号名。判分器两种写法都认，这里回中文名，老师看报告更顺眼
 PT_SIZE = {42: "初号", 36: "小初", 26: "一号", 24: "小一", 22: "二号", 18: "小二",
@@ -84,6 +91,10 @@ def read_styles(zf: zipfile.ZipFile) -> dict:
     except (KeyError, ET.ParseError):
         return {}
     out = {}
+    # 文档默认的中文字体。run 里没写 eastAsia 的，中文就用它（见 _east_font）
+    fonts = root.find(f"{W}docDefaults/{W}rPrDefault/{W}rPr/{W}rFonts")
+    if fonts is not None and fonts.get(W + "eastAsia"):
+        out[EAST] = fonts.get(W + "eastAsia")
     for st in root.iter(W + "style"):
         sid = st.get(W + "styleId")
         if not sid:
@@ -97,6 +108,8 @@ def read_styles(zf: zipfile.ZipFile) -> dict:
             out[sid] = f"标题{int(level) + 1}"
     return out
 RULE_BACK = {"exact": "fixed", "atLeast": "least", "auto": "multiple"}
+EAST = "\0east"        # read_styles 结果里存「文档默认中文字体」用的键
+CJK = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
 
 
 def blank_para() -> dict:
@@ -170,7 +183,10 @@ def _apply_rpr(para: dict, rpr) -> None:
         if _on(rpr, tag):
             para[key] = True
     if rpr.find(W + "u") is not None:
-        para["underline"] = str(_val(rpr, "u") or "single") != "none"
+        u = str(_val(rpr, "u") or "single")
+        para["underline"] = u != "none"
+        if u != "none" and not para.get("u"):
+            para["u"] = u                # 下划线线型：double 双线、wavyDouble 双波浪……
     vert = _val(rpr, "vertAlign")
     if vert == "superscript":
         para["sup"] = True
@@ -189,7 +205,7 @@ def _apply_rpr(para: dict, rpr) -> None:
             para["shading"] = "#" + fill.lower()
 
 
-def _read_ppr(para: dict, ppr, styles: dict | None = None) -> None:
+def _read_ppr(para: dict, ppr, styles: dict | None = None, text_pt: float = 0) -> None:
     if ppr is None:
         return
     style = _val(ppr, "pStyle")
@@ -205,12 +221,14 @@ def _read_ppr(para: dict, ppr, styles: dict | None = None) -> None:
     if align:
         para["align"] = ALIGN_BACK.get(align, "left")
 
-    pt = 10.5      # 换算 twip→字符要用字号；这一步还不知道，先按默认，下面再校正
+    pt = 10.5      # 换算 twip→字符要用字号：先看段落标记的，正文第一截字写了就用它的
     rpr = ppr.find(W + "rPr")
     if rpr is not None:
         size = _val(rpr, "sz")
         if size:
             pt = _num(size, 21) / 2
+    if text_pt:
+        pt = text_pt
 
     ind = ppr.find(W + "ind")
     if ind is not None:
@@ -243,24 +261,210 @@ def _read_ppr(para: dict, ppr, styles: dict | None = None) -> None:
     _apply_rpr(para, rpr)
 
 
+# 这些标签里的 run 不属于这一段的正文：图形（文本框、艺术字、图片）里的字、
+# 修订删掉的字。**不能往下钻** —— 以前一段里锚着文本框，框里的字就被拼进了这一段
+SKIP = {W + "drawing", W + "pict", W + "del", W + "txbxContent", MC + "AlternateContent",
+        W + "object"}
+
+
+def _own_runs(node):
+    """这一段自己的 run，按出现顺序。超链接、修订插入、域里的 run 也算。"""
+    for child in node:
+        if child.tag in SKIP or child.tag == W + "pPr":
+            continue
+        if child.tag == W + "r":
+            yield child
+        else:
+            yield from _own_runs(child)
+
+
+def _run_text(run) -> str:
+    """一个 run 里的字。制表符按出现的位置拼进去，不能全攒到段尾。"""
+    out = []
+    for item in run:
+        if item.tag == W + "t":
+            out.append(item.text or "")
+        elif item.tag == W + "tab":
+            out.append("\t")
+    return "".join(out)
+
+
+def _east_font(rpr, text: str, east: str) -> str:
+    """这一截**中文**实际用的字体。
+
+    rFonts 里 eastAsia 管中文、ascii 管西文。Word、LibreOffice 在中文字体和默认一样时
+    **不写 eastAsia**，只留一个西文的 ascii —— 拿 ascii 当字体就错了：学生把中文改成了
+    宋体，读出来却是原来西文那个「楷体」。没写 eastAsia 的中文，按文档默认的中文字体算。
+    """
+    fonts = rpr.find(W + "rFonts") if rpr is not None else None
+    if fonts is not None and fonts.get(W + "eastAsia"):
+        return fonts.get(W + "eastAsia")
+    if CJK.search(text or ""):
+        return east
+    return _font_of(rpr)
+
+
+def _run_fmt(run, east: str = "宋体") -> dict:
+    """一个 run 自己写明了的字符格式。**没写的项不给** —— 判分时回落到段落上的值。"""
+    rpr = run.find(W + "rPr")
+    if rpr is None:
+        return {}
+    got = {}
+    font = _east_font(rpr, _run_text(run), east)
+    if font:
+        got["font"] = font
+    size = _val(rpr, "sz")
+    if size:
+        got["size"] = _size_name(size)
+    for key, tag in (("bold", "b"), ("italic", "i"), ("strike", "strike")):
+        if rpr.find(W + tag) is not None:
+            got[key] = _on(rpr, tag)
+    if rpr.find(W + "u") is not None:
+        u = str(_val(rpr, "u") or "single")
+        got["underline"] = u != "none"
+        got["u"] = "" if u == "none" else u
+    color = _val(rpr, "color")
+    if color:
+        got["color"] = "" if color.lower() in ("auto", "000000") else "#" + color.lower()
+    return got
+
+
 def _read_para(node, styles: dict | None = None) -> dict:
     para = blank_para()
-    _read_ppr(para, node.find(W + "pPr"), styles)
+    # 字符缩进只存了 twip 的（没有 Chars），要按**正文**的字号折算：「2 字符」是两个字宽
+    text_pt = 0.0
+    for run in _own_runs(node):
+        size = _val(run.find(W + "rPr"), "sz")
+        if size and _run_text(run).strip():
+            text_pt = _num(size, 21) / 2
+            break
+    _read_ppr(para, node.find(W + "pPr"), styles, text_pt)
 
-    texts, first_rpr = [], None
-    for run in node.iter(W + "r"):
+    east = (styles or {}).get(EAST) or "宋体"
+    texts, runs, first_rpr = [], [], None
+    for run in _own_runs(node):
         if first_rpr is None:
             first_rpr = run.find(W + "rPr")
-        # 制表符在 WPS 里是独立标签，漏了会让「替换后文字对不对」判错；
-        # 按出现的顺序拼，不能全攒到段尾
-        for item in run.iter():
-            if item.tag == W + "t":
-                texts.append(item.text or "")
-            elif item.tag == W + "tab":
-                texts.append("\t")
+        text = _run_text(run)
+        texts.append(text)
+        if text.strip():
+            runs.append({"text": text, **_run_fmt(run, east)})
     _apply_rpr(para, first_rpr)
+    # 段落级的字体也按「中文用 eastAsia」的规矩认，和 runs 一致
+    if runs and runs[0].get("font"):
+        para["font"] = runs[0]["font"]
     para["text"] = "".join(texts)
+    # 每一截字各自的格式：题目常只要求一段里的某一句（「为……这句话加双下划线」），
+    # 也可能学生只选中了字、没选中段落标记 —— 只看段落级的格式会冤枉人
+    para["runs"] = runs
     return para
+
+
+# ================================================================ 图形
+# 环绕方式 → 判分用的写法（WPS 界面上的叫法见 sim.WRAP_NAMES）
+WRAP_TAGS = {"wrapSquare": "square", "wrapTight": "tight", "wrapThrough": "through",
+             "wrapTopAndBottom": "topAndBottom"}
+VML_WRAP = {"square": "square", "tight": "tight", "through": "through",
+            "topAndBottom": "topAndBottom", "top-and-bottom": "topAndBottom"}
+
+
+def _shape_text(node) -> tuple:
+    """图形里的字和字体：(文字, [每一截字的字体，没写的是空串])。"""
+    texts, fonts = [], []
+    for box in node.iter(W + "txbxContent"):
+        for p in box.iter(W + "p"):
+            for run in _own_runs(p):
+                text = _run_text(run)
+                texts.append(text)
+                if text.strip():
+                    fonts.append(_run_fmt(run).get("font", ""))
+            texts.append("\n")
+    return "".join(texts).strip(), fonts
+
+
+def _pt_of(css: str, key: str) -> float:
+    """VML 的 style="width:141.7pt;height:170pt" 里取一项，换成毫米。"""
+    m = re.search(key + r"\s*:\s*([0-9.]+)\s*(pt|mm|cm|in|px)?", css or "")
+    if not m:
+        return 0.0
+    value, unit = float(m.group(1)), (m.group(2) or "pt")
+    per_mm = {"pt": 72 / 25.4, "mm": 1, "cm": 0.1, "in": 1 / 25.4, "px": 96 / 25.4}[unit]
+    return round(value / per_mm, 1)
+
+
+def _drawing_shape(holder) -> dict | None:
+    """一个 wp:anchor / wp:inline。"""
+    ext = holder.find(WP + "extent")
+    shape = {"kind": "shape", "text": "", "fonts": [],
+             "width_mm": round(_num(ext.get("cx")) / EMU_MM, 1) if ext is not None else 0.0,
+             "height_mm": round(_num(ext.get("cy")) / EMU_MM, 1) if ext is not None else 0.0}
+    if holder.tag == WP + "inline":
+        shape["wrap"] = "inline"
+    else:
+        shape["wrap"] = "front"
+        for tag, name in WRAP_TAGS.items():
+            if holder.find(WP + tag) is not None:
+                shape["wrap"] = name
+        if shape["wrap"] == "front" and str(holder.get("behindDoc")) in ("1", "true"):
+            shape["wrap"] = "behind"
+    text, fonts = _shape_text(holder)
+    shape["text"], shape["fonts"] = text, fonts
+    body = holder.find(".//" + WPS + "bodyPr")
+    if holder.find(".//{http://schemas.openxmlformats.org/drawingml/2006/picture}pic") is not None:
+        shape["kind"] = "image"
+    elif body is not None and (body.get("fromWordArt") in ("1", "true")
+                               or body.find(A + "prstTxWarp") is not None):
+        shape["kind"] = "wordart"
+    elif text or holder.find(".//" + WPS + "txbx") is not None:
+        shape["kind"] = "textbox"
+    return shape
+
+
+def _vml_shape(node) -> dict | None:
+    """老格式（VML）的图形：WPS 有时把文本框、艺术字存成这种。"""
+    css = node.get("style") or ""
+    shape = {"kind": "shape", "width_mm": _pt_of(css, "width"),
+             "height_mm": _pt_of(css, "height"), "wrap": "inline"}
+    if "position:absolute" in css.replace(" ", ""):
+        shape["wrap"] = "front"
+    wrap = node.find(W10 + "wrap")
+    if wrap is not None:
+        shape["wrap"] = VML_WRAP.get(str(wrap.get("type") or ""), shape["wrap"])
+    text, fonts = _shape_text(node)
+    shape["text"], shape["fonts"] = text, fonts
+    path = node.find(V + "textpath")
+    if path is not None:
+        shape["kind"] = "wordart"
+        shape["text"] = shape["text"] or str(path.get("string") or "")
+    elif node.find(V + "imagedata") is not None:
+        shape["kind"] = "image"
+    elif node.find(V + "textbox") is not None:
+        shape["kind"] = "textbox"
+    return shape
+
+
+def _shapes_in(node, at: int) -> list:
+    """一段里锚着的所有图形。同一个图形 WPS 常存两份（新格式 + 兼容用的 VML），
+    只认 mc:Choice 那份，Fallback 跳过，免得一个文本框数成两个。"""
+    out = []
+
+    def walk(el):
+        for child in el:
+            if child.tag == MC + "Fallback":
+                continue
+            if child.tag in (WP + "anchor", WP + "inline"):
+                got = _drawing_shape(child)
+                if got:
+                    out.append({**got, "para": at})
+                continue
+            if child.tag in (V + "shape", V + "rect", V + "roundrect"):
+                got = _vml_shape(child)
+                if got:
+                    out.append({**got, "para": at})
+                continue
+            walk(child)
+    walk(node)
+    return out
 
 
 # 纸张尺寸（twip）。**和 sim.py 的 PAPER_SIZES 保持一致，改要一起改** ——
@@ -306,7 +510,26 @@ def _read_sect(sect) -> tuple[dict, int]:
     cols = sect.find(W + "cols")
     if cols is not None:
         columns = int(_num(cols.get(W + "num"), 1) or 1)
+    borders = sect.find(W + "pgBorders")
+    if borders is not None:
+        for side in ("top", "left", "bottom", "right"):
+            got = borders.find(W + side)
+            if got is not None and str(got.get(W + "val") or "none") not in ("none", "nil"):
+                color = str(got.get(W + "color") or "auto").lower()
+                page["border"] = {"val": got.get(W + "val"),
+                                  "color": "" if color == "auto" else "#" + color}
+                break
     return page, columns
+
+
+def _cols_of(sect) -> dict:
+    """一节的分栏：栏数、栏间距（twip）、是否等宽。"""
+    cols = sect.find(W + "cols") if sect is not None else None
+    if cols is None:
+        return {"num": 1, "space": 0, "equal": True}
+    return {"num": int(_num(cols.get(W + "num"), 1) or 1),
+            "space": _num(cols.get(W + "space"), 425),
+            "equal": str(cols.get(W + "equalWidth", "1")).lower() not in ("0", "false")}
 
 
 def _part_text(zf: zipfile.ZipFile, pattern: str) -> str:
@@ -320,6 +543,27 @@ def _part_text(zf: zipfile.ZipFile, pattern: str) -> str:
                 continue
             out.append("".join(t.text or "" for t in root.iter(W + "t")))
     return "\n".join(x for x in out if x.strip()).strip()
+
+
+def _part_info(zf: zipfile.ZipFile, pattern: str) -> dict:
+    """页眉/页脚的对齐方式和页码：{"align": 有字那一段的对齐, "page_number": 页码那一段的对齐或空串}。"""
+    info = {"align": "", "page_number": ""}
+    for name in sorted(zf.namelist()):
+        if not re.fullmatch(pattern, name):
+            continue
+        try:
+            root = ET.fromstring(zf.read(name))
+        except ET.ParseError:
+            continue
+        for p in root.iter(W + "p"):
+            jc = ALIGN_BACK.get(str(_val(p.find(W + "pPr"), "jc") or "left"), "left")
+            code = " ".join([f.get(W + "instr") or "" for f in p.iter(W + "fldSimple")]
+                            + [t.text or "" for t in p.iter(W + "instrText")])
+            if re.search(r"\bPAGE\b", code) and not info["page_number"]:
+                info["page_number"] = jc
+            if "".join(t.text or "" for t in p.iter(W + "t")).strip() and not info["align"]:
+                info["align"] = jc
+    return info
 
 
 def read_docx(path) -> dict:
@@ -345,19 +589,43 @@ def read_docx(path) -> dict:
             # 表格里的段落也算：题目有「在表格中输入……」的写法。
             # **按文档里的先后顺序收**：以前表格段落一律排到最后，文中有表格时
             # 「最后一段是不是新输入的那段」就永远判错
-            paras = []
+            paras, shapes, pending = [], [], []
+
+            def close(sect):
+                # 分栏是按「节」来的：节尾那一段的 pPr 里挂着 sectPr，管它前面那一串段落。
+                # 「把第 1 自然段分成两栏」，WPS 就是在这段前后各插一个分节符
+                cols = _cols_of(sect)
+                for i in pending:
+                    paras[i]["cols"] = cols
+                pending.clear()
+
             for node in body:
                 if node.tag == W + "p":
+                    shapes.extend(_shapes_in(node, len(paras)))
+                    pending.append(len(paras))
                     paras.append(_read_para(node, styles))
+                    sect = node.find(W + "pPr/" + W + "sectPr")
+                    if sect is not None:
+                        close(sect)
                 elif node.tag == W + "tbl":
-                    paras.extend(_read_para(p, styles) for p in node.iter(W + "p"))
+                    for p in node.iter(W + "p"):
+                        pending.append(len(paras))
+                        paras.append(_read_para(p, styles))
+            close(body.find(W + "sectPr"))
             page, columns = _read_sect(body.find(W + "sectPr"))
+            head = _part_info(zf, r"word/header\d*\.xml")
+            foot = _part_info(zf, r"word/footer\d*\.xml")
             return {
                 "paras": paras,
                 "page": page,
                 "columns": columns,
                 "header": _part_text(zf, r"word/header\d*\.xml"),
                 "footer": _part_text(zf, r"word/footer\d*\.xml"),
+                "header_align": head["align"],
+                "footer_align": foot["align"],
+                # 页码：页脚（或页眉）里有 PAGE 域就算插了，记下它那一段的对齐
+                "page_number": foot["page_number"] or head["page_number"],
+                "shapes": shapes,
             }
     except (zipfile.BadZipFile, ET.ParseError, OSError, ValueError):
         return {}

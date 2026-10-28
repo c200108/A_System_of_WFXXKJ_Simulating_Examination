@@ -15,7 +15,19 @@
 
 from __future__ import annotations
 
+import pytest
 from app.services import stem
+
+
+@pytest.fixture(autouse=True)
+def generic_rules_only(monkeypatch):
+    """这里测的是**通用规则**。题库原题现在按 wps_bank 写死的来（见 test_wps_bank.py），
+    把那张表拿掉，题干就只能走通用规则。"""
+    from app.services import wps_bank
+    monkeypatch.setattr(wps_bank, "BANK", [])
+    stem.auto_sim.cache_clear()
+    yield
+    stem.auto_sim.cache_clear()
 
 
 def sim_of(text: str, scope: str = "") -> dict:

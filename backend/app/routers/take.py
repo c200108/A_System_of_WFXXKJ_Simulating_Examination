@@ -77,6 +77,7 @@ def take_paper(token: str, db: Session = Depends(get_db)):
         code=exam.paper.code,
         total=len(items),
         full_score=sum(int(it.get("score") or 0) for it in items),
+        early_submit=bool(exam.early_submit),
         groups=groups,
     )
 

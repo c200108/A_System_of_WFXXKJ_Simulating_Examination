@@ -75,6 +75,20 @@ def _web_files(folder: Path) -> dict:
     return out
 
 
+def _file_names(root: Path, limit: int = 300) -> list[str]:
+    """考试文件夹里的文件名（相对路径），只要名字不要内容。"""
+    out = []
+    try:
+        for p in sorted(Path(root).rglob("*")):
+            if p.is_file() and not p.name.startswith("~$"):
+                out.append(p.relative_to(root).as_posix())
+                if len(out) >= limit:
+                    break
+    except OSError:
+        pass
+    return out
+
+
 def state_for(kind: str, root: Path, open_rel: str, logical_root: str,
               shot: dict | None = None) -> dict:
     """一道操作题的终态。root 是考试文件夹，open_rel 是这道题打开的东西。"""
@@ -84,14 +98,16 @@ def state_for(kind: str, root: Path, open_rel: str, logical_root: str,
                                logical_root)
     if kind == "wps":
         target = root / open_rel if open_rel else root
-        if target.is_file():
-            got = docx.read_docx(target)
-            if got:
-                return got
-        # 学生把文件另存到别处、或者改了名：在考试文件夹里找一个 .docx 顶上，
-        # 总比直接判 0 分强。找不到就交空的，判分器会说"文档是空的"
-        found = docx.find_docs(target if target.is_dir() else root)
-        return docx.read_docx(found[0]) if found else {}
+        got = docx.read_docx(target) if target.is_file() else {}
+        if not got:
+            # 学生把文件另存到别处、或者改了名：在考试文件夹里找一个 .docx 顶上，
+            # 总比直接判 0 分强。找不到就交空的，判分器会说"文档是空的"
+            found = docx.find_docs(target if target.is_dir() else root)
+            got = docx.read_docx(found[0]) if found else {}
+        # 考试文件夹里有哪些文件：判「以 XX.pdf 为名输出到工作目录」这类要求
+        got = dict(got)
+        got["files"] = _file_names(root)
+        return got
     if kind == "html":
         target = root / open_rel if open_rel else root
         # open 指到文件时要取它所在的文件夹，否则同目录的 style.css 收不进来

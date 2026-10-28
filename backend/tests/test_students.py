@@ -257,7 +257,7 @@ def test_exam_targeting_by_class(client, auth, exam):
 
 
 
-def test_add_class_after_publish(client, auth):
+def test_add_class_after_publish(client, auth, exam):
     """考试发出去以后临时补一个班：补上的班马上看得到，原来的班不受影响。"""
     paper_id = client.post(
         "/api/papers/generate",
@@ -505,3 +505,25 @@ def test_batch_errors_do_not_repeat_the_same_advice(client, auth):
 
     # 回显的原文要截断，否则一行三十几个字会把提示框撑爆
     assert all(len(e) < 40 for e in body["errors"]), body["errors"]
+
+
+
+def test_early_submit_switch(client, auth, exam):
+    """「允许提前交卷」：发布时能开，发布后能改，取卷接口和考试包都带上这一项。"""
+    paper_id = client.post(
+        "/api/papers/generate",
+        json={"title": "提前交卷的卷子", "by_sections": False, "counts": {"选择题": 2}, "save": True},
+        headers=auth,
+    ).json()["paper_id"]
+    ex = client.post("/api/exams", json={"paper_id": paper_id, "early_submit": True},
+                     headers=auth).json()
+    assert ex["early_submit"] is True
+    assert client.get(f"/api/take/{ex['token']}").json()["early_submit"] is True
+
+    got = client.patch(f"/api/exams/{ex['id']}", json={"early_submit": False}, headers=auth)
+    assert got.status_code == 200 and got.json()["early_submit"] is False
+    assert client.get(f"/api/take/{ex['token']}").json()["early_submit"] is False
+
+    # 不填就是关：老考试照旧有门槛
+    plain = client.post("/api/exams", json={"paper_id": paper_id}, headers=auth).json()
+    assert plain["early_submit"] is False
