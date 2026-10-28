@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from html.parser import HTMLParser
 
 KINDS = ("win", "wps", "html", "ai")
@@ -336,6 +337,18 @@ def paper_name(width, height) -> str:
     return ""
 
 
+# 文字比对时一律不计较的东西：空白、全角/半角、各式引号。
+# 检查点是从题干里抠出来的（stem.py 的 _clean 会把「：」改成「:」、去掉空格），
+# 学生在 WPS 里打的是全角标点、中间可能带空格 —— 字字都对却判"找不到"，冤。
+_QUOTES = dict.fromkeys(map(ord, "\"'“”‘’「」『』"), None)
+
+
+def loose_text(text) -> str:
+    s = unicodedata.normalize("NFKC", str(text or "").replace("…", ""))
+    s = s.translate(_QUOTES)
+    return re.sub(r"\s+", "", s)
+
+
 def _paras(state: dict) -> list[dict]:
     got = state.get("paras")
     return [p for p in got if isinstance(p, dict)] if isinstance(got, list) else []
@@ -348,9 +361,9 @@ def _pick_para(paras: list[dict], at):
     而学生可能在前面插过段落，段落序号会变 —— 按序号判就冤枉人了。
     """
     if isinstance(at, dict):
-        key = str(at.get("has") or "").strip()
+        key = loose_text(at.get("has"))
         for p in paras:
-            if key and key in str(p.get("text") or ""):
+            if key and key in loose_text(p.get("text")):
                 return p
         return None
     try:
@@ -418,20 +431,22 @@ def _check_wps(a: dict, state: dict):
         return True, "这一段的格式对了"
 
     if op == "text":
-        whole = "\n".join(str(p.get("text") or "") for p in paras)
-        if "absent" in a and str(a["absent"]) in whole:
+        whole = "\n".join(loose_text(p.get("text")) for p in paras)
+        if "absent" in a and loose_text(a["absent"]) in whole:
             return False, f"文中还有「{a['absent']}」没改掉"
-        if "present" in a and str(a["present"]) not in whole:
+        if "present" in a and loose_text(a["present"]) not in whole:
             return False, f"文中找不到「{a['present']}」"
         return True, "文字内容对了"
 
     if op == "order":
-        texts = [str(p.get("text") or "") for p in paras]
+        # 空段不算：学生打完字顺手敲个回车，WPS 存出来最后就多一个空段，
+        # 按「最后一段」去比就成了拿空段比 —— 明明输对了也不给分（老师撞到过）
+        texts = [t for t in (loose_text(p.get("text")) for p in paras) if t]
         if not texts:
             return False, "文档是空的"
-        if "first" in a and str(a["first"]) not in texts[0]:
+        if "first" in a and loose_text(a["first"]) not in texts[0]:
             return False, "第一段不是要求的那一段"
-        if "last" in a and str(a["last"]) not in texts[-1]:
+        if "last" in a and loose_text(a["last"]) not in texts[-1]:
             return False, "最后一段不是要求的那一段"
         return True, "段落顺序对了"
 

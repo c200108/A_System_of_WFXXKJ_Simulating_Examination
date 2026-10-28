@@ -10,6 +10,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
+import { optionText } from '../../optionText'
 import { currentStudent } from '../../auth'
 import { useSubmitGate } from '../../submitGate'
 import SimHost from '../../components/sim/SimHost.vue'
@@ -220,7 +221,7 @@ function back() {
           </div>
 
           <div v-if="detailOf[q.id] && detailOf[q.id].scored && !detailOf[q.id].ok" class="key">
-            正确答案：{{ detailOf[q.id].answer }}
+            正确答案：{{ optionText(q.options, detailOf[q.id].answer) }}
           </div>
         </div>
       </template>
