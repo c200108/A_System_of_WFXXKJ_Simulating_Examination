@@ -322,3 +322,22 @@ def test_typed_text_with_fullwidth_colon_and_trailing_blank():
     state = {"paras": [{"text": "标题"},
                        {"text": "即时AI：即时AI是即时下的AI设计工具。"}, {"text": ""}]}
     assert sim.run_checks("wps", [chk], state)["results"][0]["ok"]
+
+
+
+def test_old_stored_wps_task_is_refreshed():
+    """库里存着旧规则生成的版本（恢复备份、导入旧数据包就是这样）：按新规则重算。"""
+    new = stem.auto_sim(WPS_Q299)
+    old_checks = [{**c, "assert": {**c["assert"], "at": 0}} if "at" in c["assert"] else c
+                  for c in new["checks"]]
+    old_env = {"name": new["env"]["name"], "paras": new["env"]["paras"][:1]}
+    got = stem.refresh_wps(WPS_Q299, old_env, old_checks)
+    assert got and got["env"] == new["env"] and got["checks"] == new["checks"]
+
+
+def test_teacher_edited_wps_task_is_kept():
+    """老师在仿真器里改过检查点的，不动。"""
+    new = stem.auto_sim(WPS_Q299)
+    edited = [{**new["checks"][0], "desc": "老师改过的描述"}] + new["checks"][1:]
+    assert stem.refresh_wps(WPS_Q299, new["env"], edited) is None
+    assert stem.refresh_wps(WPS_Q299, {**new["env"], "name": "别的.docx"}, new["checks"]) is None

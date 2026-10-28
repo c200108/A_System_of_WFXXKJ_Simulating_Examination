@@ -40,6 +40,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from functools import lru_cache
 
@@ -1183,6 +1184,39 @@ _HEAD = re.compile(r"(本题工作目录\s*[:：]\s*)[A-Za-z]\s*[:：][^\n，。
 # 「请打开本题工作目录（C：\EXAM\Win操作）按照要求……」
 _PAREN = re.compile(r"(工作目录\s*[（(]\s*)[A-Za-z]\s*[:：][^）)\n]*([）)])")
 _OPENER = re.compile(r"打开本题工作目录\s*[下中]的[^，。\n]{0,24}?文件夹")
+
+
+def _shape(checks) -> list:
+    """检查点去掉「在哪一段」以后的样子：描述、分值、要求。"""
+    out = []
+    for c in checks or []:
+        a = {k: v for k, v in (c.get("assert") or {}).items() if k != "at"}
+        out.append((str(c.get("desc") or ""), int(c.get("score") or 0),
+                    json.dumps(a, ensure_ascii=False, sort_keys=True)))
+    return out
+
+
+def refresh_wps(stem_text: str, env, checks) -> Optional[dict]:
+    """库里存的 WPS 题要是**按题干自动生成、没被老师改过**的，换成按现在的规则重算的那份。
+
+    为什么要有这一步：环境和检查点是生成时存进库的。规则修好以后（括号里抄的
+    原文要放进文档、「第一自然段」指正文第一段），老库里的旧版本不会跟着变；
+    恢复备份、导入旧的 exam-data 数据包，旧版本又原样回来了 —— 修了等于没修。
+
+    怎么认"没被改过"：检查点除了定位（at）以外，描述、分值、要求和现在生成的
+    一条不差，文档名也一样。老师在仿真器里动过的（加减检查点、改描述、改分）
+    对不上，原样保留 —— 手工调过的比规则准。
+
+    不写库：出卷和判分时当场换，导多少次旧数据都一样生效。
+    """
+    got = auto_sim(stem_text or "")
+    if not got or got["kind"] != "wps" or not isinstance(env, dict):
+        return None
+    if str(env.get("name") or "") != str(got["env"].get("name") or ""):
+        return None
+    if _shape(checks) != _shape(got["checks"]):
+        return None
+    return got
 
 
 def workdir_of(stem: str, kind: str, env: dict | None = None) -> str:
