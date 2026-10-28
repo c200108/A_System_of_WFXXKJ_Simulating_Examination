@@ -99,7 +99,7 @@ async function removeOne(row) {
 }
 async function removePicked() {
   const n = picked.value.length
-  await ElMessageBox.confirm(`删除勾选的 ${n} 条成绩？删除后无法恢复。`, '批量删除', {
+  await ElMessageBox.confirm(`删除勾选的 ${n} 条成绩？删除后 7 天内可在「我的账号 → 数据回收站」还原。`, '批量删除', {
     type: 'warning', confirmButtonText: `删除 ${n} 条`
   })
   const res = await api.typingDeleteMany(picked.value.map(r => r.id))
@@ -107,7 +107,7 @@ async function removePicked() {
 }
 async function removeFiltered() {
   const scope = filtered.value ? `筛选出的全部 ${total.value} 条` : `全部 ${total.value} 条`
-  await ElMessageBox.confirm(`将删除${scope}打字成绩（不只是这一页），且无法恢复。确定吗？`, '删除确认', {
+  await ElMessageBox.confirm(`将删除${scope}打字成绩（不只是这一页）。7 天内可在「我的账号 → 数据回收站」还原。确定吗？`, '删除确认', {
     type: 'warning', confirmButtonText: '确认删除'
   })
   const res = await api.typingClear(filters())

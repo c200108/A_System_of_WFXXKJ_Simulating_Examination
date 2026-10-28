@@ -38,7 +38,7 @@ from ..schemas import (
     TypingResultOut,
     TypingStatsOut,
 )
-from ..services import throttle, typing_analysis
+from ..services import recycle, throttle, typing_analysis
 from ..services.typing_texts import add_texts, build_passage, parse_txt, text_hash
 from ..siteconfig import site
 
@@ -334,15 +334,31 @@ def search_records(
 @router.post("/records/delete", summary="批量删除勾选的成绩（需要删除权）")
 def delete_records(
     body: IdsIn,
-    _: User = Depends(require_delete_permission),
+    me: User = Depends(require_delete_permission),
     db: Session = Depends(get_db),
 ):
     ids = list(dict.fromkeys(body.ids))
     if not ids:
         raise HTTPException(status_code=400, detail="没有勾选任何成绩")
-    n = db.execute(delete(TypingRecord).where(TypingRecord.id.in_(ids))).rowcount
+    _trash_records(db, me, ids)
+    n = recycle.delete_ids(db, TypingRecord, ids)
     db.commit()
     return {"deleted": n}
+
+
+def _trash_records(db: Session, me: User, ids: list[int], f: "RecordFilter | None" = None) -> None:
+    """打字成绩进回收站。标题里写上是哪个班、什么条件，回收站里一眼认得出。"""
+    where = []
+    if f is not None:
+        where = [x for x in (f.student_class, f.module, f.difficulty,
+                             f.keyword and f"姓名含「{f.keyword}」") if x]
+        if f.date_from or f.date_to:
+            where.append(f"{f.date_from or '…'} 至 {f.date_to or '…'}")
+    first = db.get(TypingRecord, ids[0]) if len(ids) == 1 else None
+    title = (f"{first.student_name}（{first.student_class}）的 {first.module} 打字成绩"
+             if first else f"{len(ids)} 条打字成绩")
+    recycle.trash(db, me, "typing_record", title, TypingRecord, ids,
+                  detail="筛选：" + "，".join(where) if where else "")
 
 
 @router.get("/analysis", summary="打字学情分析（可视化页用）")
@@ -530,12 +546,13 @@ def export_xlsx(
 @router.delete("/records/{record_id}", summary="删除一条成绩（需要删除权）")
 def delete_record(
     record_id: int,
-    _: User = Depends(require_delete_permission),
+    me: User = Depends(require_delete_permission),
     db: Session = Depends(get_db),
 ):
     rec = db.get(TypingRecord, record_id)
     if not rec:
         raise HTTPException(status_code=404, detail="记录不存在")
+    _trash_records(db, me, [rec.id])
     db.delete(rec)
     db.commit()
     return {"ok": True}
@@ -544,12 +561,20 @@ def delete_record(
 @router.delete("/records", summary="按筛选条件删除成绩，不带条件就是清空（需要删除权）")
 def clear_records(
     f: RecordFilter = Depends(),
-    _: User = Depends(require_delete_permission),
+    me: User = Depends(require_delete_permission),
     db: Session = Depends(get_db),
 ):
-    """条件和成绩页的筛选一样 —— 页面上「删除筛选出的 N 条」删掉的正是看到的那 N 条。"""
-    ids = select(TypingRecord.id)
-    n = db.execute(delete(TypingRecord).where(TypingRecord.id.in_(f.apply(ids)))).rowcount
+    """条件和成绩页的筛选一样 —— 页面上「删除筛选出的 N 条」删掉的正是看到的那 N 条。
+
+    **先把 id 查出来再按 id 删。** 原来写的是一条
+    `DELETE FROM typing_records WHERE id IN (SELECT id FROM typing_records WHERE …)`，
+    SQLite 认、MySQL 不认（错误 1093：不能在子查询里读正在删的表），
+    于是正式服务器上一点「删除筛选出的全部」就 500，管理员和老师都一样。
+    """
+    ids = list(db.scalars(f.apply(select(TypingRecord.id))))
+    if ids:
+        _trash_records(db, me, ids, f)
+    n = recycle.delete_ids(db, TypingRecord, ids)
     db.commit()
     return {"ok": True, "deleted": n}
 
@@ -649,11 +674,12 @@ def update_text(
 
 @router.delete("/texts/{text_id}", summary="删一段文本")
 def delete_text(
-    text_id: int, _: User = Depends(require_delete_permission), db: Session = Depends(get_db)
+    text_id: int, me: User = Depends(require_delete_permission), db: Session = Depends(get_db)
 ):
     row = db.get(TypingText, text_id)
     if not row:
         raise HTTPException(status_code=404, detail="文本不存在")
+    recycle.trash(db, me, "typing_text", f"练习文本：{(row.content or '')[:40]}", TypingText, [row.id])
     db.delete(row)
     db.commit()
     return {"ok": True}
@@ -687,6 +713,9 @@ def bulk_texts(
 
     rows = db.scalars(select(TypingText).where(TypingText.id.in_(ids))).all()
     if body.action == "delete":
+        if rows:
+            recycle.trash(db, me, "typing_text", f"{len(rows)} 段练习文本", TypingText,
+                          [r.id for r in rows], detail=(rows[0].content or "")[:40])
         for r in rows:
             db.delete(r)
     else:

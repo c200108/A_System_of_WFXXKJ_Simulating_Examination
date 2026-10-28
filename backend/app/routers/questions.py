@@ -12,6 +12,7 @@ from ..database import get_db
 from ..deps import get_current_user, require_delete_permission
 from ..models import Option, Question, User
 from ..schemas import QuestionCreate, QuestionOut, QuestionPage, QuestionUpdate, StatsOut
+from ..services import recycle
 from ..services.difficulty import estimate
 from ..services.export import questions_to_xlsx
 from ..services.importer import stem_hash
@@ -245,10 +246,13 @@ def update_question(
 
 
 @router.delete("/{qid}", summary="删除题目（软删除，可恢复）")
-def delete_question(qid: int, _: User = Depends(require_delete_permission), db: Session = Depends(get_db)):
+def delete_question(qid: int, user: User = Depends(require_delete_permission), db: Session = Depends(get_db)):
     q = db.get(Question, qid)
     if not q:
         raise HTTPException(status_code=404, detail="题目不存在")
+    if not q.is_deleted:
+        recycle.trash(db, user, "question", f"题目 {q.code or q.id}：{(q.stem or '')[:40]}",
+                      detail=f"{q.type}，{q.scope or '未分类'}", soft_questions=[q.id])
     q.is_deleted = True
     db.commit()
     return {"ok": True}

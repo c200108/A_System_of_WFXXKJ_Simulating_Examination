@@ -25,6 +25,7 @@ from ..deps import (
     require_delete_permission,
 )
 from ..models import ChangelogEntry, Feedback, FeedbackLike, FeedbackReply, User
+from ..services import recycle
 from ..schemas import (
     ChangelogEntryIn,
     ChangelogEntryOut,
@@ -350,11 +351,12 @@ def review_bulk(
 
 @router.delete("/feedback/{fid}", summary="删除反馈（管理员）")
 def delete_feedback(
-    fid: int, _: User = Depends(require_admin), db: Session = Depends(get_db)
+    fid: int, me: User = Depends(require_admin), db: Session = Depends(get_db)
 ):
     row = db.get(Feedback, fid)
     if not row:
         raise HTTPException(status_code=404, detail="反馈不存在")
+    recycle.trash(db, me, "feedback", f"{row.author} 的反馈：{(row.content or '')[:40]}", Feedback, [row.id])
     db.delete(row)
     db.commit()
     return {"ok": True}

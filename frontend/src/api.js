@@ -185,6 +185,20 @@ export const api = {
   classBulkDelete: (ids, force) => http.post('/classes/bulk', { ids, force }),
   // 批量分配班主任。owner_id 传 null 就是批量取消分配
   classBulkOwner: (ids, owner_id) => http.post('/classes/bulk-owner', { ids, owner_id }),
+  // 上机座次表：图片直接打开 seat_url；表格走下载接口（保留上传时的原名）
+  classSeatUpload: (id, file) => {
+    const form = new FormData()
+    form.append('file', file)
+    return http.post(`/classes/${id}/seat`, form)
+  },
+  classSeatDelete: id => http.delete(`/classes/${id}/seat`),
+  classSeatFile: id => http.get(`/classes/${id}/seat/file`, { responseType: 'blob' }),
+
+  // 数据回收站：删掉的东西放 7 天，可还原
+  recycleList: (kind = '') => http.get('/recycle', { params: { kind } }),
+  recycleRestore: ids => http.post('/recycle/restore', { ids }),
+  recycleDestroy: ids => http.post('/recycle/destroy', { ids }),
+  recycleClear: () => http.delete('/recycle'),
 
   // 仿真操作题：题面环境 + 检查点。检查点等同于答案，只有教师端拿得到
   sims: params => http.get('/sims', { params }),

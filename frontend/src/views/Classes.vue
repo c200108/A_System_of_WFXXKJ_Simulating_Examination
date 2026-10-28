@@ -8,11 +8,60 @@
  * 老师也能打开这一页，但只能看 —— 发考试要选班，得知道有哪些班；
  * 点开某个班还能看清里面都有谁。**增删改和分配一律限管理员**，
  * 界面藏起来只是顺手，真正拦住的是后端的 require_admin。
+ *
+ * 例外是**上机座次表**：每个班自己的事，班主任（名下的老师）和管理员都能传、换、删。
+ * 图片点开在新页面直接看，Excel 点了下载。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { api } from '../api'
+import { api, download } from '../api'
 import { currentUser } from '../auth'
+
+// ---------- 上机座次表 ----------
+const seatInput = ref()
+const seatFor = ref(null)
+const seatBusy = ref(0)
+const canSeat = c => isAdmin.value || c.owner_id === currentUser.value?.id
+
+function pickSeat(c) {
+  seatFor.value = c
+  seatInput.value.value = ''
+  seatInput.value.click()
+}
+
+async function onSeatFile(e) {
+  const file = e.target.files?.[0]
+  const c = seatFor.value
+  if (!file || !c) return
+  if (!/\.(png|jpe?g|gif|webp|bmp|xlsx?)$/i.test(file.name)) {
+    return ElMessage.warning('座次表只支持图片（png/jpg/gif/webp/bmp）或表格（xls/xlsx）')
+  }
+  seatBusy.value = c.id
+  try {
+    const got = await api.classSeatUpload(c.id, file)
+    Object.assign(c, got)
+    if (detail.value?.id === c.id) Object.assign(detail.value, got)
+    ElMessage.success(`「${c.display}」的座次表已上传`)
+  } finally {
+    seatBusy.value = 0
+  }
+}
+
+async function openSeat(c) {
+  if (c.seat_kind === 'image') {
+    window.open(c.seat_url, '_blank', 'noopener')
+  } else {
+    await download(api.classSeatFile(c.id), c.seat_name || `${c.display}座次表.xlsx`)
+  }
+}
+
+async function removeSeat(c) {
+  await ElMessageBox.confirm(`删掉「${c.display}」的座次表？`, '提示', { type: 'warning' })
+  const got = await api.classSeatDelete(c.id)
+  Object.assign(c, got)
+  if (detail.value?.id === c.id) Object.assign(detail.value, got)
+  ElMessage.success('已删除')
+}
 
 const rows = ref([])
 const teachers = ref([])
@@ -286,6 +335,9 @@ async function doBulkOwner() {
     <el-button size="small" type="danger" @click="removePicked">批量删除</el-button>
   </el-card>
 
+  <!-- 座次表上传用的隐藏文件框，所有班共用一个 -->
+  <input ref="seatInput" type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp,.xls,.xlsx" hidden @change="onSeatFile" />
+
   <el-card v-loading="loading" shadow="never">
     <el-empty v-if="!rows.length && !loading" description="还没有班级，先用「按年级批量建班」建一批" :image-size="80" />
 
@@ -352,6 +404,21 @@ async function doBulkOwner() {
             </span>
           </div>
 
+          <div class="seat" v-loading="seatBusy === c.id">
+            <span class="seatlbl">座次表</span>
+            <template v-if="c.seat_kind">
+              <el-button link size="small" type="primary" :title="c.seat_name" @click="openSeat(c)">
+                {{ c.seat_kind === 'image' ? '🖼 查看' : '📊 下载' }}
+              </el-button>
+              <el-button v-if="canSeat(c)" link size="small" @click="pickSeat(c)">更换</el-button>
+              <el-button v-if="canSeat(c)" link size="small" type="danger" @click="removeSeat(c)">删</el-button>
+            </template>
+            <template v-else>
+              <el-button v-if="canSeat(c)" link size="small" type="primary" @click="pickSeat(c)">上传</el-button>
+              <span v-else class="muted">未上传</span>
+            </template>
+          </div>
+
           <div v-if="isAdmin" class="acts">
             <el-button link size="small" type="primary" @click="openEdit(c)">改名</el-button>
             <el-button link size="small" type="danger" @click="remove(c)">删除</el-button>
@@ -377,6 +444,18 @@ async function doBulkOwner() {
           <template v-if="detailStats.unknown"> · 未填 <b>{{ detailStats.unknown }}</b></template>
         </span>
         <span v-if="detailStats.inactive" class="muted">停用 {{ detailStats.inactive }} 人</span>
+      </div>
+      <div class="dmeta">
+        <span>上机座次表：</span>
+        <template v-if="detail.seat_kind">
+          <el-button link type="primary" @click="openSeat(detail)">
+            {{ detail.seat_kind === 'image' ? '🖼 在新页面查看' : '📊 下载' }}「{{ detail.seat_name }}」
+          </el-button>
+        </template>
+        <span v-else class="muted">未上传</span>
+        <el-button v-if="canSeat(detail)" link size="small" @click="pickSeat(detail)">
+          {{ detail.seat_kind ? '更换' : '上传（图片或 xls/xlsx）' }}
+        </el-button>
       </div>
       <div class="dmeta">
         <span>班长：<b>{{ monitor ? monitor.name : '未设' }}</b></span>
@@ -520,6 +599,17 @@ async function doBulkOwner() {
 </template>
 
 <style scoped>
+.seat {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 6px;
+  font-size: 12px;
+}
+.seatlbl {
+  color: var(--el-text-color-secondary);
+  margin-right: 6px;
+}
 .head {
   display: flex;
   justify-content: space-between;

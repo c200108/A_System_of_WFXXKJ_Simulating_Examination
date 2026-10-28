@@ -103,6 +103,10 @@ class SchoolClass(Base):
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    # 上机座次表：图片或 Excel，存在 uploads/seats/ 下。seat_file 是磁盘上的文件名，
+    # seat_name 是老师上传时的原名（下载时还叫这个名字）
+    seat_file: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    seat_name: Mapped[str] = mapped_column(String(128), default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
 
     owner: Mapped["User | None"] = relationship(back_populates="classes")
@@ -519,3 +523,26 @@ class AppMeta(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str] = mapped_column(String(255), default="", server_default="")
+
+
+class RecycleItem(Base):
+    """数据回收站：删掉的东西先在这里放 7 天，可以原样还原，过期才真的从库里删掉。
+
+    payload 是删除那一刻拍下的快照（见 services/recycle.py）：被删的行（连同跟着一起
+    删的子表行，比如考试下的答卷），以及被置空的引用（比如删班级时学生的 class_id），
+    还原时原样插回去、再接上。
+    """
+
+    __tablename__ = "recycle_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(32), index=True)       # exam / paper / question ...
+    title: Mapped[str] = mapped_column(String(255), default="")
+    detail: Mapped[str] = mapped_column(String(255), default="")
+    payload: Mapped[str] = mapped_column(LONG_TEXT, default="{}")
+    deleted_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    deleted_by_name: Mapped[str] = mapped_column(String(64), default="")
+    deleted_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)

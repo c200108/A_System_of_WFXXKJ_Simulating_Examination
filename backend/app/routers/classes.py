@@ -11,13 +11,20 @@
 老师能看列表（发考试要选班），也能看出哪些班是自己的。
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import os
+import uuid
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..database import get_db
 from ..deps import get_current_user, require_admin
 from ..models import SchoolClass, Student, User
+from ..services import recycle
 from ..schemas import (
     ClassBatchIn,
     ClassBulkIn,
@@ -40,7 +47,33 @@ def _out(row: SchoolClass, student_count: int = 0) -> ClassOut:
         owner_name=(row.owner.name or row.owner.username) if row.owner else "",
         is_active=row.is_active,
         student_count=student_count,
+        seat_kind=seat_kind(row.seat_file),
+        seat_name=row.seat_name or "",
+        seat_url=f"/uploads/seats/{row.seat_file}" if row.seat_file else "",
     )
+
+
+# ================================================================ 上机座次表
+SEAT_IMAGE = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+SEAT_SHEET = {".xls", ".xlsx"}
+
+
+def seat_kind(name: str) -> str:
+    ext = os.path.splitext(name or "")[1].lower()
+    return "image" if ext in SEAT_IMAGE else "sheet" if ext in SEAT_SHEET else ""
+
+
+def _seat_dir() -> str:
+    path = os.path.join(settings.upload_dir, "seats")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _can_seat(row: SchoolClass, me: User) -> None:
+    """座次表是班里的事：班主任（名下的老师）和管理员能传、能删。"""
+    if me.role != "admin" and row.owner_id != me.id:
+        raise HTTPException(status_code=403, detail=f"「{row.display}」不是你带的班，不能改它的座次表")
+
 
 
 def owned_class_ids(db: Session, user: User) -> set[int] | None:
@@ -179,7 +212,7 @@ def update_class(
 def delete_class(
     cid: int,
     force: bool = Query(False, description="班里还有学生时也删"),
-    _: User = Depends(require_admin),
+    me: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """班里还有人时默认不让删 —— 多半是点错了。
@@ -200,6 +233,8 @@ def delete_class(
             "先把他们转到别的班，或者确认后强制删除（学生会变成未分班）。",
         )
 
+    recycle.trash(db, me, "class", f"班级「{row.display}」", SchoolClass, [row.id],
+                  detail=f"{n} 名学生变成未分班" if n else "")
     db.query(Student).filter(Student.class_id == cid).update(
         {Student.class_id: None}, synchronize_session=False
     )
@@ -219,7 +254,7 @@ def list_grades(_: User = Depends(get_current_user), db: Session = Depends(get_d
 @router.post("/bulk", summary="批量删除班级（管理员）")
 def bulk_classes(
     body: ClassBulkIn,
-    _: User = Depends(require_admin),
+    me: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """一次删掉勾选的班。
@@ -258,6 +293,8 @@ def bulk_classes(
         )
 
     detached = sum(n for _, n in occupied)
+    recycle.trash(db, me, "class", f"{len(rows)} 个班级", SchoolClass, [c.id for c in rows],
+                  detail=recycle.names(rows, "display"))
     db.query(Student).filter(Student.class_id.in_([c.id for c in rows])).update(
         {Student.class_id: None}, synchronize_session=False
     )
@@ -297,3 +334,68 @@ def bulk_owner(
         c.owner_id = body.owner_id
     db.commit()
     return {"ok": True, "updated": len(rows)}
+
+
+@router.post("/{cid}/seat", response_model=ClassOut, summary="上传本班上机座次表（图片或 Excel）")
+async def upload_seat(cid: int, file: UploadFile = File(...),
+                      me: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    row = db.get(SchoolClass, cid)
+    if not row:
+        raise HTTPException(status_code=404, detail="班级不存在")
+    _can_seat(row, me)
+    original = os.path.basename(file.filename or "")
+    ext = os.path.splitext(original)[1].lower()
+    if ext not in SEAT_IMAGE | SEAT_SHEET:
+        raise HTTPException(status_code=400,
+                            detail="座次表只支持图片（png/jpg/gif/webp/bmp）或表格（xls/xlsx）")
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="文件是空的")
+    if len(content) > settings.max_upload_mb * 1024 * 1024:
+        raise HTTPException(status_code=400, detail=f"文件不能超过 {settings.max_upload_mb} MB")
+
+    name = f"{uuid.uuid4().hex}{ext}"          # 磁盘上用随机名：别的班猜不到地址
+    with open(os.path.join(_seat_dir(), name), "wb") as f:
+        f.write(content)
+    old = row.seat_file
+    row.seat_file, row.seat_name = name, original[:128] or f"座次表{ext}"
+    db.commit()
+    if old:
+        try:
+            os.remove(os.path.join(_seat_dir(), os.path.basename(old)))
+        except OSError:
+            pass
+    db.refresh(row)
+    return _out(row)
+
+
+@router.delete("/{cid}/seat", response_model=ClassOut, summary="删掉本班的座次表")
+def delete_seat(cid: int, me: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    row = db.get(SchoolClass, cid)
+    if not row:
+        raise HTTPException(status_code=404, detail="班级不存在")
+    _can_seat(row, me)
+    old = row.seat_file
+    row.seat_file, row.seat_name = "", ""
+    db.commit()
+    if old:
+        try:
+            os.remove(os.path.join(_seat_dir(), os.path.basename(old)))
+        except OSError:
+            pass
+    db.refresh(row)
+    return _out(row)
+
+
+@router.get("/{cid}/seat/file", summary="下载座次表（按上传时的原名）")
+def download_seat(cid: int, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """图片可以直接用 seat_url 在新页面打开；表格走这里，下载下来还是老师上传时的名字。"""
+    row = db.get(SchoolClass, cid)
+    if not row or not row.seat_file:
+        raise HTTPException(status_code=404, detail="这个班还没有上传座次表")
+    path = os.path.join(_seat_dir(), os.path.basename(row.seat_file))
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="座次表文件找不到了，请重新上传")
+    name = row.seat_name or f"{row.display}座次表{os.path.splitext(path)[1]}"
+    return FileResponse(path, headers={
+        "Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
