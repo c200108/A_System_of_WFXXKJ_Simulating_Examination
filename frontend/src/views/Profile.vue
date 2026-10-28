@@ -1,14 +1,19 @@
 <script setup>
 /**
- * 我的账号：看账号信息、改个人资料、改密码。
+ * 我的账号：看账号信息、改个人资料、改密码，以及数据回收站。
  *
  * 能改的只有姓名、任教年级班级、联系方式三项 —— 用户名、角色、启停
  * 都得管理员来，接口那边也是这么限的，不是光靠这里不显示。
  */
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { currentUser, setUser } from '../auth'
+import RecycleBin from '../components/RecycleBin.vue'
+
+const route = useRoute()
+const binCard = ref()
 
 const loading = ref(false)
 const savingProfile = ref(false)
@@ -39,6 +44,11 @@ onMounted(async () => {
     fill(u)
   } finally {
     loading.value = false
+  }
+  // 从右上角「数据回收站」点进来的，直接滚到回收站
+  if (route.query.panel === 'recycle') {
+    await nextTick()
+    binCard.value?.$el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 })
 
@@ -158,12 +168,17 @@ async function savePassword() {
         <p class="note">改完当前登录不会掉线，但下次登录要用新密码。</p>
       </el-card>
     </div>
+
+    <el-card ref="binCard" shadow="never" class="bincard">
+      <template #header><span class="ch">🗑 数据回收站</span></template>
+      <RecycleBin />
+    </el-card>
   </div>
 </template>
 
 <style scoped>
 .page {
-  max-width: 900px;
+  max-width: 1000px;
   margin: 0 auto;
   padding: 4px 4px 60px;
 }
@@ -223,6 +238,9 @@ async function savePassword() {
 }
 .ch {
   font-weight: 600;
+}
+.bincard {
+  margin-top: 16px;
 }
 .note {
   margin: 4px 0 0;

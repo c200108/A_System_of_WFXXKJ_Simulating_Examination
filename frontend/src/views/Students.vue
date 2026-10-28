@@ -196,9 +196,9 @@ async function bulk(action) {
 
   if (action === 'delete') {
     await ElMessageBox.prompt(
-      `即将永久删除 ${ids.length} 个学生账号：${pickedNames.value}\n\n` +
+      `即将删除 ${ids.length} 个学生账号：${pickedNames.value}\n\n` +
         '他们交过的卷子和练过的字都会保留，只是不再挂在账号上。\n' +
-        '删除无法撤销。只是想让人登不上的话，用「批量停用」。\n\n' +
+        '删除后 7 天内可在「我的账号 → 数据回收站」还原。只是想让人登不上的话，用「批量停用」。\n\n' +
         '确认请输入「删除」两个字：',
       '危险操作',
       {

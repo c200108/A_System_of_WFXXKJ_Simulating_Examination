@@ -239,7 +239,7 @@ async function reviewPicked(status) {
 }
 
 async function remove(row) {
-  await ElMessageBox.confirm('彻底删除这条反馈？连同下面的回复一起删掉，不可恢复。', '提示', {
+  await ElMessageBox.confirm('彻底删除这条反馈？连同下面的回复一起删掉（7 天内可在「我的账号 → 数据回收站」还原）。', '提示', {
     type: 'warning'
   })
   await api.feedbackDelete(row.id)

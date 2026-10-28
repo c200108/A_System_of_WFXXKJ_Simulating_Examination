@@ -30,6 +30,7 @@ from ..deps import get_current_user
 from ..models import Exam, ExamSubmission, Paper, SchoolClass, Student, User
 from ..routers.classes import owned_class_ids
 from ..schemas import ExamCreate, ExamOut, ExamUpdate, IdsIn, ManualGradeIn, SubmissionOut
+from ..services import recycle
 from ..services.analysis import analyze
 from ..siteconfig import site
 from ..services.exam import (
@@ -238,7 +239,11 @@ def update_exam(
 
 @router.delete("/{exam_id}", summary="删除考试（连同答卷）")
 def delete_exam(exam_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    db.delete(_get(db, exam_id, user, edit=True))
+    exam = _get(db, exam_id, user, edit=True)
+    # 先进回收站（连同答卷），7 天内能还原
+    recycle.trash(db, user, "exam", f"考试「{exam.title}」", Exam, [exam.id],
+                  detail=f"含 {len(exam.submissions)} 份答卷")
+    db.delete(exam)
     db.commit()
     return {"ok": True}
 
@@ -400,10 +405,14 @@ def grade_manual(
     }
 
 
-def _delete_subs(db: Session, exam: Exam, ids: list[int]) -> int:
-    """删答卷。只删这场考试自己的 —— 别的考试的 id 混进来一律不认。"""
+def _delete_subs(db: Session, exam: Exam, ids: list[int], user: User | None = None) -> int:
+    """删答卷。只删这场考试自己的 —— 别的考试的 id 混进来一律不认。删掉的先进回收站。"""
     rows = db.scalars(select(ExamSubmission).where(
         ExamSubmission.exam_id == exam.id, ExamSubmission.id.in_(ids))).all()
+    if rows:
+        recycle.trash(db, user, "submission", f"「{exam.title}」的 {len(rows)} 份答卷",
+                      ExamSubmission, [r.id for r in rows],
+                      detail=recycle.names(rows, "student_name"))
     for sub in rows:
         db.delete(sub)
     db.commit()
@@ -417,7 +426,7 @@ def delete_submission(
     """删成绩要**改得动**这场考试（自己发的，或者管理员）—— 管理员发的全校统考，
     任课老师能批不能删。删掉之后这个学生可以重新交卷（不允许重考的考试也一样）。"""
     exam = _get(db, exam_id, user, edit=True)
-    if not _delete_subs(db, exam, [sub_id]):
+    if not _delete_subs(db, exam, [sub_id], user):
         raise HTTPException(status_code=404, detail="答卷不存在")
     return {"ok": True, "deleted": 1}
 
@@ -429,7 +438,7 @@ def delete_submissions(
     exam = _get(db, exam_id, user, edit=True)
     if not body.ids:
         raise HTTPException(status_code=400, detail="没选答卷")
-    return {"ok": True, "deleted": _delete_subs(db, exam, body.ids)}
+    return {"ok": True, "deleted": _delete_subs(db, exam, body.ids, user)}
 
 
 @router.get("/{exam_id}/paper", summary="这场考试的样卷（带答案，老师看）")

@@ -21,7 +21,7 @@ from ..database import get_db
 from ..deps import get_current_user
 from ..models import Question, SimTask, User
 from ..schemas import SimProposeIn, SimTaskIn, SimTaskOut, SimTaskUpdate, SimTryIn
-from ..services import sim
+from ..services import recycle, sim
 
 router = APIRouter(prefix="/api/sims", tags=["仿真操作题"])
 
@@ -137,12 +137,14 @@ def update_sim(sid: int, body: SimTaskUpdate, _: User = Depends(get_current_user
 
 
 @router.delete("/{sid}", summary="删除仿真任务")
-def delete_sim(sid: int, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def delete_sim(sid: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """挂着这个任务的题目不会跟着删，只是退回「老师人工评阅」。
 
     已经考完的答卷也不受影响 —— 那些分早就算进成绩里了。
     """
     row = _get(db, sid)
+    recycle.trash(db, user, "sim", f"仿真任务「{row.title or row.id}」", SimTask, [row.id],
+                  detail=row.kind or "")
     n = db.query(Question).filter(Question.sim_task_id == sid).update(
         {Question.sim_task_id: None}, synchronize_session=False
     )

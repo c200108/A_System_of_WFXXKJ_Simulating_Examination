@@ -8,8 +8,9 @@ from sqlalchemy.orm import Session
 from ..constants import DICT_TYPE
 from ..database import get_db
 from ..deps import get_current_user
-from ..models import Paper, PaperItem, Question, User
+from ..models import Exam, Paper, PaperItem, Question, User
 from ..schemas import PaperGenerateIn, PaperGenerateOut, PaperOut
+from ..services import recycle
 from ..services.blueprint import slot_hint, slot_key, slot_pool
 from ..services.export import questions_to_xlsx, student_html
 from ..services.paper import build_by_sections, build_paper
@@ -296,10 +297,16 @@ def get_paper(paper_id: int, _: User = Depends(get_current_user), db: Session = 
 
 
 @router.delete("/{paper_id}", summary="删除试卷")
-def delete_paper(paper_id: int, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def delete_paper(paper_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     paper = db.get(Paper, paper_id)
     if not paper:
         raise HTTPException(status_code=404, detail="试卷不存在")
+    # 试题条目、用这份卷发的考试和答卷都会跟着删（外键级联），一起进回收站
+    exams = db.scalars(select(Exam).where(Exam.paper_id == paper.id)).all()
+    recycle.trash(db, user, "paper", f"试卷「{paper.title}」", Paper, [paper.id],
+                  detail=(paper.code or "") + (f"，连同 {len(exams)} 场考试" if exams else ""))
+    for exam in exams:
+        db.delete(exam)
     db.delete(paper)
     db.commit()
     return {"ok": True}

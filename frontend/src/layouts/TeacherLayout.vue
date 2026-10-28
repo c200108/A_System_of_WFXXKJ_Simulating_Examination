@@ -60,6 +60,7 @@ async function logout() {
 
 function onUserCommand(cmd) {
   if (cmd === 'profile') router.push('/js/profile')
+  if (cmd === 'recycle') router.push({ path: '/js/profile', query: { panel: 'recycle' } })
   if (cmd === 'logout') logout()
 }
 </script>
@@ -97,6 +98,7 @@ function onUserCommand(cmd) {
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item command="profile">我的账号</el-dropdown-item>
+              <el-dropdown-item command="recycle">数据回收站</el-dropdown-item>
               <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
             </el-dropdown-menu>
           </template>

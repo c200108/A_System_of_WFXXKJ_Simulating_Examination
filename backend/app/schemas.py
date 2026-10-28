@@ -92,6 +92,10 @@ class ClassOut(ORMModel):
     owner_name: str = ""
     is_active: bool = True
     student_count: int = 0
+    # 上机座次表：image 图片（seat_url 直接打开）/ sheet 表格（走下载接口）/ 空串没传
+    seat_kind: str = ""
+    seat_name: str = ""
+    seat_url: str = ""
 
 
 class ClassIn(BaseModel):

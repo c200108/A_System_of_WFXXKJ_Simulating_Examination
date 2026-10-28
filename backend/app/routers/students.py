@@ -49,7 +49,7 @@ from ..security import (
 from ..routers.classes import owned_class_ids
 from ..routers.take import _submit_out as submit_out
 from ..services.exam import submission_scores
-from ..services import roster
+from ..services import recycle, roster
 from ..services.exam import grade, group_items, load_items, manual_types, strip_answers
 # 名单解析和入库都在 services/roster.py，上传表格和粘贴名单共用那一套。
 # 这里只保留单个增改用得到的几个小工具。
@@ -799,6 +799,9 @@ def bulk_students(
         for r in rows:
             r.password_hash = hash_password(initial_password(r.student_no))
     else:  # delete
+        # 先进回收站：账号连同"答卷、打字成绩挂在谁名下"一起记下，还原后原样接上
+        recycle.trash(db, me, "student", f"{len(rows)} 名学生", Student, [r.id for r in rows],
+                      detail=recycle.names(rows, "name"))
         for r in rows:
             db.query(ExamSubmission).filter(ExamSubmission.student_id == r.id).update(
                 {ExamSubmission.student_id: None}, synchronize_session=False
