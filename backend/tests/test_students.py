@@ -256,6 +256,33 @@ def test_exam_targeting_by_class(client, auth, exam):
     assert client.get(f"/api/student/exams/{targeted['id']}/paper", headers=insider).status_code == 200
 
 
+
+def test_add_class_after_publish(client, auth):
+    """考试发出去以后临时补一个班：补上的班马上看得到，原来的班不受影响。"""
+    paper_id = client.post(
+        "/api/papers/generate",
+        json={"title": "临时加班的卷子", "by_sections": False, "counts": {"选择题": 2}, "save": True},
+        headers=auth,
+    ).json()["paper_id"]
+    first = _class_id(client, auth, "九年级", "21班")
+    exam = client.post("/api/exams", json={"paper_id": paper_id, "target_class_ids": [first]},
+                       headers=auth).json()
+
+    def sees(hdr):
+        return {e["id"] for e in client.get("/api/student/exams", headers=hdr).json()}
+
+    late = _stoken(client, auth, no="20260083", grade="九年级", cls="22班")
+    assert exam["id"] not in sees(late)
+
+    second = _class_id(client, auth, "九年级", "22班")
+    got = client.patch(f"/api/exams/{exam['id']}", json={"target_class_ids": [first, second]},
+                     headers=auth)
+    assert got.status_code == 200, got.text
+    assert set(got.json()["target_class_ids"]) == {first, second}
+    assert exam["id"] in sees(late), "补上的班该看得到"
+    early = _stoken(client, auth, no="20260084", grade="九年级", cls="21班")
+    assert exam["id"] in sees(early), "原来的班不受影响"
+
 def test_submit_records_identity_from_account(client, auth, exam):
     """姓名班级学号从账号来，学生改不了，成绩不会张冠李戴。"""
     hdr = _stoken(client, auth, no="20260091", grade="七年级", cls="5班")

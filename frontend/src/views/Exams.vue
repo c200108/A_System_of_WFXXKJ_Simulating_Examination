@@ -126,6 +126,24 @@ async function copy(text) {
   }
 }
 
+// 发布后临时加班：学生在平台上只看得到发给自己班的考试，
+// 漏发了某个班不用重发一场，在这里把班补上就行（已交的答卷不受影响）
+const classDlg = ref(false)
+const classForm = reactive({ exam: null, ids: [] })
+
+function editClasses(exam) {
+  classForm.exam = exam
+  classForm.ids = [...(exam.target_class_ids || [])]
+  classDlg.value = true
+}
+
+async function saveClasses() {
+  await api.updateExam(classForm.exam.id, { target_class_ids: classForm.ids })
+  classDlg.value = false
+  await load()
+  ElMessage.success('发放班级已更新，新加的班学生刷新一下就能看到这场考试')
+}
+
 async function toggle(exam, field, value) {
   await api.updateExam(exam.id, { [field]: value })
   await load()
@@ -286,6 +304,16 @@ const hardest = computed(() => {
         <template #default="{ row }">
           {{ row.owner_name }}
           <el-tag v-if="!row.can_edit" size="small" type="info" effect="plain" class="ro">只读</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="发放班级" min-width="150">
+        <template #default="{ row }">
+          <span class="cls" :title="row.target_classes">
+            {{ row.target_classes ? row.target_classes.split(',').join('、') : '全部' }}
+          </span>
+          <el-button v-if="row.can_edit" link type="primary" size="small" @click="editClasses(row)">
+            加班级
+          </el-button>
         </template>
       </el-table-column>
       <el-table-column label="学生链接" min-width="230">
@@ -539,6 +567,26 @@ const hardest = computed(() => {
     <template #footer>
       <el-button @click="publishDlg = false">取消</el-button>
       <el-button type="primary" @click="publish">发布并复制链接</el-button>
+    </template>
+  </el-dialog>
+
+  <el-dialog v-model="classDlg" :title="`发放班级 · ${classForm.exam?.title || ''}`" width="480px">
+    <el-select
+      v-model="classForm.ids"
+      multiple
+      filterable
+      :placeholder="isAdmin ? '不选 = 全体学生' : '不选 = 我带的全部班'"
+      style="width: 100%"
+    >
+      <el-option v-for="c in myClasses" :key="c.id" :label="c.display" :value="c.id" />
+    </el-select>
+    <p class="fh">
+      考试已经发布也能改：勾上新的班，那个班的学生就能在平台上看到并参加这场考试；
+      已经交卷的答卷、成绩都不受影响。<template v-if="!isAdmin">只能选自己带的班。</template>
+    </p>
+    <template #footer>
+      <el-button @click="classDlg = false">取消</el-button>
+      <el-button type="primary" @click="saveClasses">保存</el-button>
     </template>
   </el-dialog>
 
@@ -812,4 +860,5 @@ const hardest = computed(() => {
   border: 1px solid var(--el-border-color-lighter);
 }
 
+.cls { margin-right: 6px; }
 </style>
