@@ -95,11 +95,19 @@ def _item_from_row(item: PaperItem, q: Question) -> dict:
     if q.sim_task is not None:
         # sim  —— 学生要拿到的：打开时看到什么
         # sim_checks —— **等同于答案**，只在服务端读，由 strip_answers() 摘掉
+        env = _json(q.sim_task.env_json, {})
+        checks = _json(q.sim_task.checks_json, [])
+        if q.sim_task.kind == "wps":
+            # 旧规则自动生成、老师没改过的 WPS 题，按现在的规则当场重算
+            # （恢复备份、导入旧数据包后也照样生效，见 stem.refresh_wps）
+            fresh = stem_rules.refresh_wps(q.stem or "", env, checks)
+            if fresh:
+                env, checks = fresh["env"], fresh["checks"]
         out["sim"] = sim.sim_for_student({
             "id": q.sim_task.id, "kind": q.sim_task.kind, "title": q.sim_task.title,
-            "env": _json(q.sim_task.env_json, {}),
+            "env": env,
         })
-        out["sim_checks"] = _json(q.sim_task.checks_json, [])
+        out["sim_checks"] = checks
     elif q.type in manual_types():
         # **没配仿真任务的操作题：按题干当场推一份。**
         #
