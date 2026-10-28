@@ -493,8 +493,12 @@ class ExamFrame(ttk.Frame):
         need_q, need_sec = submit_needs(len(self.paper), self.app.package.duration_min * 60)
         wait = max(0, need_sec - (self.app.package.duration_min * 60 - self.left))
         more_q = max(0, need_q - self.answered_count())
-        # 每 30 秒问一次教师端：老师考试中途打开「允许提前交卷」，这边要跟上
-        if self.left % 30 == 0:
+        # 每 30 秒问一次教师端：老师考试中途打开「允许提前交卷」，这边要跟上。
+        # 每台机器错开几秒：全班同一秒开考的话，不错开就是几十台在同一秒一起问
+        if not hasattr(self, "_live_slot"):
+            import random
+            self._live_slot = random.randrange(30)
+        if self.left % 30 == self._live_slot:
             self.sync_live()
         self.tip.config(text="" if self.early_submit() or not (wait or more_q) else
                         f"答满 {need_q} 题、并且开考 {-(-need_sec // 60)} 分钟后才能交卷")
