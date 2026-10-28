@@ -181,9 +181,9 @@ def test_body_indent_and_fixed_line_spacing():
 
 def test_paragraph_spacing_and_multiple_line_spacing():
     got = [a for a in asserts_of(stem.parse(WPS_299)) if a["op"] == "para"]
-    assert {"op": "para", "at": 0, "before": 1.0} in got
-    assert {"op": "para", "at": 0, "after": 0.5} in got
-    assert {"op": "para", "at": 0, "line": {"type": "multiple", "value": 1.5}} in got
+    assert {"op": "para", "at": 1, "before": 1.0} in got
+    assert {"op": "para", "at": 1, "after": 0.5} in got
+    assert {"op": "para", "at": 1, "line": {"type": "multiple", "value": 1.5}} in got
 
 
 def test_new_paragraph_at_the_end():
@@ -296,3 +296,29 @@ def test_unparsed_lines_go_to_todo_not_silently_dropped():
     got = stem.parse(odd)
     assert len(got["checks"]) == 1
     assert got["todo"] and "隐藏" in got["todo"][0]
+
+
+WPS_Q299 = """本题工作目录:C:\\EXAM
+请打开本题工作目录中的"人工智能教育.docx"，请完成以下操作:
+①将文档的第一自然段（人工智能……文化情景的有力支撑。）段落格式设置为文本之前缩进2字符，文本之后缩进2字符。
+②将文档标题字体格式设置为黑体、二号，正文字体格式设置为宋体、四号。
+③在文章最后输入一段新的文字:"人工智能教育是以学习者为中心，融合人工智能、大数据、虚拟现实等技术，贯穿教育全流程的新型教育模式。"。
+④原名原位置保存并退出。"""
+
+
+def test_bracket_excerpt_lands_in_document():
+    """括号里抄的原文也要进文档，而且按内容定位，不能落到标题上。"""
+    got = stem.parse(WPS_Q299)
+    texts = [p["text"] for p in got["env"]["paras"]]
+    assert any(t.startswith("人工智能，文化情景的有力支撑。") for t in texts[1:])
+    left = [a for a in asserts_of(got) if a.get("left")]
+    assert left and left[0]["at"] == {"has": "人工智能"}
+
+
+def test_typed_text_with_fullwidth_colon_and_trailing_blank():
+    """学生打的全角冒号、末尾多敲的空段，都不该让"最后输入一段文字"判错。"""
+    from app.services import sim
+    chk = [c for c in stem.parse(WPS_297)["checks"] if c["assert"]["op"] == "order"][0]
+    state = {"paras": [{"text": "标题"},
+                       {"text": "即时AI：即时AI是即时下的AI设计工具。"}, {"text": ""}]}
+    assert sim.run_checks("wps", [chk], state)["results"][0]["ok"]

@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import queue
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -178,10 +179,87 @@ def ai_reply(ask: str) -> str:
     return AI_HEAD + body + AI_TAIL
 
 
+def option_text(options, letters) -> str:
+    """选择题答案 → 「B．选项内容」。和网页端 optionText.js 一个意思。
+
+    只给个字母，学生回看时还得往上对选项；判断题没有选项，原样返回。
+    """
+    raw = str(letters or "").strip()
+    if not raw or not options:
+        return raw
+    by = {str(o.get("label", "")).upper(): o for o in options if isinstance(o, dict)}
+    picked = [ch for ch in re.sub(r"[\s,，、]", "", raw).upper()]
+    if not all(ch in by for ch in picked):
+        return raw
+    return "；".join(f"{by[ch].get('label', '')}．{by[ch].get('content', '')}" for ch in picked)
+
+
+# 扩展名 → 能打开它的程序（WPS 优先，其次 Office）
+OPENERS = {
+    ".docx": ("wps.exe", "winword.exe"), ".doc": ("wps.exe", "winword.exe"),
+    ".wps": ("wps.exe",), ".rtf": ("wps.exe", "winword.exe"),
+    ".xlsx": ("et.exe", "excel.exe"), ".xls": ("et.exe", "excel.exe"),
+    ".et": ("et.exe",),
+    ".pptx": ("wpp.exe", "powerpnt.exe"), ".ppt": ("wpp.exe", "powerpnt.exe"),
+    ".dps": ("wpp.exe",),
+    ".txt": ("notepad.exe",), ".htm": ("notepad.exe",), ".html": ("notepad.exe",),
+}
+
+
+def _app_path(exe: str) -> str:
+    """注册表 App Paths 里登记的程序路径。WPS、Office 安装时都会写这里。"""
+    try:
+        import winreg
+    except ImportError:
+        return ""
+    key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths" + "\\" + exe
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for flag in (0, getattr(winreg, "KEY_WOW64_32KEY", 0), getattr(winreg, "KEY_WOW64_64KEY", 0)):
+            try:
+                with winreg.OpenKey(hive, key, 0, winreg.KEY_READ | flag) as k:
+                    got = str(winreg.QueryValueEx(k, "")[0] or "").strip().strip('"')
+            except OSError:
+                continue
+            if got and Path(got).exists():
+                return got
+    return ""
+
+
+def find_opener(path: Path) -> str:
+    """找一个能打开这个文件的程序，找不到返回空串。
+
+    为什么要自己找：Win7 机房里常见 WPS 装了却没把 .docx 关联上（个人版默认不
+    抢关联、或者被还原卡还原掉了），os.startfile 就报 WinError 1155「没有应用程序
+    与此操作的指定文件有关联」—— 学生点「打开」没反应，只能去文件夹里右键。
+    """
+    for exe in OPENERS.get(Path(path).suffix.lower(), ()):
+        got = _app_path(exe)
+        if got:
+            return got
+        if exe.startswith(("wps", "et.", "wpp")):
+            # WPS 个人版装在用户目录下，版本号是一层子目录：…\WPS Office\11.1.0.xxxx\office6\wps.exe
+            for base in (os.environ.get("LOCALAPPDATA"), os.environ.get("ProgramFiles"),
+                         os.environ.get("ProgramFiles(x86)"), os.environ.get("APPDATA")):
+                if not base:
+                    continue
+                for root in (Path(base) / "Kingsoft" / "WPS Office", Path(base) / "WPS Office"):
+                    hits = sorted(root.glob("*/office6/" + exe), reverse=True) if root.exists() else []
+                    if hits:
+                        return str(hits[0])
+        else:
+            got = shutil.which(exe)
+            if got:
+                return got
+    return ""
+
+
 def open_in_system(path: Path) -> str:
     """用系统默认方式打开：文件夹进资源管理器，文件进对应的程序。
 
     这一句就是"真机操作"和"网页仿真"的分界线。
+
+    默认关联打不开时（Win7 上的 WinError 1155）不直接报错：先自己找 WPS / Office
+    去开；还找不到就弹系统的「打开方式」让学生选，总比一句报错强。
     """
     path = Path(path)
     if not path.exists():
@@ -193,7 +271,19 @@ def open_in_system(path: Path) -> str:
             subprocess.Popen(["xdg-open", str(path)])
         return ""
     except OSError as exc:
-        return f"打不开：{exc}"
+        if os.name != "nt" or path.is_dir():
+            return f"打不开：{exc}"
+        first = exc
+    exe = find_opener(path)
+    try:
+        if exe:
+            subprocess.Popen([exe, str(path)])
+        else:
+            subprocess.Popen(["rundll32.exe", "shell32.dll,OpenAs_RunDLL", str(path)])
+        return ""
+    except OSError:
+        return (f"打不开：{first}\n\n这台电脑没有给 {path.suffix} 文件设置默认打开程序。"
+                "请点「打开考试主文件夹」，在文件上右键 →「打开方式」选 WPS。")
 
 
 class Why(str):

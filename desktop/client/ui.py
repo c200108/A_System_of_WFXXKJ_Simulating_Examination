@@ -39,8 +39,8 @@ from . import api, cleanup, package, snapshot, states, store
 from .exam_ui import DoneFrame, ExamFrame
 from .shell import (AMBER, APP_NAME, BG, BLUE, CARD, CLIENT_VER, FONT, GRAY,
                     GREEN, LINE, NAME_LOGIN_PASSWORD, RED, baked_name_login,
-                    baked_server, build_stamp, in_thread, server_from_name,
-                    set_window_icon)
+                    baked_server, build_stamp, in_thread, option_text,
+                    server_from_name, set_window_icon)
 
 
 def default_server() -> str:
@@ -757,7 +757,8 @@ class ReviewPage(Page):
                  justify="left", wraplength=700).pack(fill="x", padx=12, pady=(6, 0))
         if told:
             if q.get("answer"):
-                tk.Label(c, text="正确答案：" + str(q["answer"]), bg=CARD, fg=GREEN,
+                tk.Label(c, text="正确答案：" + option_text(q.get("options"), q["answer"]),
+                         bg=CARD, fg=GREEN,
                          font=(FONT, 10), anchor="w", justify="left",
                          wraplength=700).pack(fill="x", padx=12)
             for ck in q.get("checks") or []:

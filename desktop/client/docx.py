@@ -251,11 +251,13 @@ def _read_para(node, styles: dict | None = None) -> dict:
     for run in node.iter(W + "r"):
         if first_rpr is None:
             first_rpr = run.find(W + "rPr")
-        for t in run.iter(W + "t"):
-            texts.append(t.text or "")
-    # 制表符和软换行在 WPS 里是独立标签，漏了会让「替换后文字对不对」判错
-    for br in node.iter(W + "tab"):
-        texts.append("\t")
+        # 制表符在 WPS 里是独立标签，漏了会让「替换后文字对不对」判错；
+        # 按出现的顺序拼，不能全攒到段尾
+        for item in run.iter():
+            if item.tag == W + "t":
+                texts.append(item.text or "")
+            elif item.tag == W + "tab":
+                texts.append("\t")
     _apply_rpr(para, first_rpr)
     para["text"] = "".join(texts)
     return para
@@ -340,10 +342,15 @@ def read_docx(path) -> dict:
             if body is None:
                 return {}
             styles = read_styles(zf)
-            paras = [_read_para(node, styles) for node in body.findall(W + "p")]
-            # 表格里的段落也算：题目有「在表格中输入……」的写法
-            for cell_para in body.iter(W + "tbl"):
-                paras.extend(_read_para(node, styles) for node in cell_para.iter(W + "p"))
+            # 表格里的段落也算：题目有「在表格中输入……」的写法。
+            # **按文档里的先后顺序收**：以前表格段落一律排到最后，文中有表格时
+            # 「最后一段是不是新输入的那段」就永远判错
+            paras = []
+            for node in body:
+                if node.tag == W + "p":
+                    paras.append(_read_para(node, styles))
+                elif node.tag == W + "tbl":
+                    paras.extend(_read_para(p, styles) for p in node.iter(W + "p"))
             page, columns = _read_sect(body.find(W + "sectPr"))
             return {
                 "paras": paras,

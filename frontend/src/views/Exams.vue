@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { siteConfig } from '../siteConfig'
 import { api, download } from '../api'
+import { optionText } from '../optionText'
 import { loadPublicBase, studentLink } from '../publicUrl'
 import { currentUser } from '../auth'
 
@@ -563,7 +564,7 @@ const hardest = computed(() => {
               {{ o.label }}. {{ o.content }}
             </span>
           </div>
-          <div v-if="q.answer" class="dans">参考答案：<b>{{ q.answer }}</b></div>
+          <div v-if="q.answer" class="dans">参考答案：<b>{{ optionText(q.options, q.answer) }}</b></div>
           <div v-if="q.checks.length" class="checks">
             <span v-for="(c, i) in q.checks" :key="i" class="chip">判分点 {{ i + 1 }}：{{ c }}</span>
           </div>
@@ -633,8 +634,8 @@ const hardest = computed(() => {
           </span>
         </div>
         <div v-else class="dans">
-          学生作答：<span :class="d.scored && !d.ok ? 'no' : ''">{{ d.mine || '未作答' }}</span>
-          <template v-if="d.answer">　参考答案：<b>{{ d.answer }}</b></template>
+          学生作答：<span :class="d.scored && !d.ok ? 'no' : ''">{{ optionText(d.options, d.mine) || '未作答' }}</span>
+          <template v-if="d.answer">　参考答案：<b>{{ optionText(d.options, d.answer) }}</b></template>
         </div>
         <div v-if="d.manual" class="grade">
           <span>给分</span>

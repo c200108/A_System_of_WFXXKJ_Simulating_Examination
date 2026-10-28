@@ -703,6 +703,10 @@ def _excerpt(flat: str, least: int = 4) -> str:
             # **返回引号里的原样**（省略号也留着）：放进文档时用 _quote_text()
             # 接成一句完整的话，定位段落时用 _quote_key() 取前十个字。
             return word.strip()
+    # 也有不用引号、用括号抄原文的：「将文档的第一自然段（人工智能……文化情景的
+    # 有力支撑。）段落格式设置为……」。只认带省略号的 —— 括号里还常是"(IOT)"这种注释
+    for m in re.finditer(r"[（(]([^（）()]{4,80}?(?:…+|\.{3,})[^（）()]*)[）)]", flat):
+        return m.group(1).strip()
     return ""
 
 
@@ -847,8 +851,10 @@ def _wps_item(text: str, checks: list, todo: list, needs: list,
         target = {"has": _quote_key(excerpt)}
     elif "标题" in flat or "题目" in flat:
         target = 0                        # 没给标题内容就按第一段算
-    elif re.search(r"第一(?:自然)?段", flat):
-        target = 0
+    elif re.search(r"第一(?:个)?(?:自然)?段", flat):
+        # 生成的文档第 0 段是标题，「第一自然段」是正文第一段，即下标 1。
+        # 以前这里给的是 0，检查点全打在标题上，学生改对了正文第一段反而不得分
+        target = 1
     elif re.search(r"第\s*([2-9１-９二三四五六七八九])\s*(?:个)?(?:自然)?段", flat):
         m2 = re.search(r"第\s*([2-9１-９二三四五六七八九])\s*(?:个)?(?:自然)?段", flat)
         digits = {"二": 2, "三": 3, "四": 4, "五": 5, "六": 6,
