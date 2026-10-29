@@ -65,7 +65,7 @@ def _open_exam(db: Session, token: str) -> Exam:
     return exam
 
 
-@router.get("/{token}/live", summary="考试中途改了的设置（学生端每 30 秒问一次）")
+@router.get("/{token}/live", summary="考试中途改了的设置（学生端每 60 秒问一次）")
 def take_live(token: str, db: Session = Depends(get_db)):
     """老师在考试**进行中**改的开关，答题页拿不到 —— 取卷那一刻读过一次就不再问了。
     这里只回那几个会中途变的、学生端要跟着变的：允许提前交卷、考试是否还开着。

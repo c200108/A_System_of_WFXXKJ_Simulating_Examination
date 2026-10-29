@@ -531,7 +531,7 @@ def test_early_submit_switch(client, auth, exam):
 
 
 def test_early_submit_switched_mid_exam_reaches_students(client, auth, exam):
-    """考试**进行中**打开「允许提前交卷」：答题页每 30 秒问一次能问到，后开考的人拿到的包也是新的。"""
+    """考试**进行中**打开「允许提前交卷」：答题页每 60 秒问一次能问到，后开考的人拿到的包也是新的。"""
     import io
     import json
     import zipfile

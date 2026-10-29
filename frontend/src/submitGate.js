@@ -35,7 +35,7 @@ function fmt(sec) {
  * @param paper    ref：取回来的卷子（有 total、duration）
  * @param answered computed：已作答题数
  * @param live     （可选）问教师端最新设置的函数，返回 { early_submit }。
- *                 老师考试**中途**打开「允许提前交卷」，取卷时那份是旧的，靠它每 30 秒跟上
+ *                 老师考试**中途**打开「允许提前交卷」，取卷时那份是旧的，靠它每 60 秒跟上（各页面随机错开）
  */
 export function useSubmitGate(key, paper, answered, live = null) {
   const storeKey = `examStartedAt:${key}`
@@ -78,9 +78,18 @@ export function useSubmitGate(key, paper, answered, live = null) {
       /* 连不上就按原来的设置走，不打扰学生 */
     }
   }
-  const liveTimer = live ? setInterval(sync, 30000) : null
+  // 每 60 秒问一次；第一次在 0～60 秒里随机挑个时候，全班同时打开试卷也不会扎堆
+  const LIVE_MS = 60000
+  let liveTimer = null
+  const firstTimer = live
+    ? setTimeout(() => {
+        sync()
+        liveTimer = setInterval(sync, LIVE_MS)
+      }, Math.random() * LIVE_MS)
+    : null
   onBeforeUnmount(() => {
     clearInterval(timer)
+    if (firstTimer) clearTimeout(firstTimer)
     if (liveTimer) clearInterval(liveTimer)
   })
 
