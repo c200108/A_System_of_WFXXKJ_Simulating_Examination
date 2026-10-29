@@ -372,7 +372,7 @@ def _exam_for(db: Session, me: Student, exam_id: int) -> Exam:
     return exam
 
 
-@student_api.get("/exams/{exam_id}/live", summary="考试中途改了的设置（答题页每 30 秒问一次）")
+@student_api.get("/exams/{exam_id}/live", summary="考试中途改了的设置（答题页每 60 秒问一次）")
 def student_exam_live(
     exam_id: int, me: Student = Depends(get_current_student), db: Session = Depends(get_db)
 ):

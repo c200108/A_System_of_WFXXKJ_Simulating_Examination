@@ -75,7 +75,7 @@ async function submit() {
   // 学生紧张时容易连点，挡住重复弹窗和重复提交
   if (asking.value || submitting.value || result.value) return
   if (!gate.canSubmit.value) {
-    // 被门槛拦住时当场再问一次：老师刚打开「允许提前交卷」，不用等下一个 30 秒
+    // 被门槛拦住时当场再问一次：老师刚打开「允许提前交卷」，不用等下一个 60 秒
     await gate.sync()
   }
   if (!gate.canSubmit.value) {
