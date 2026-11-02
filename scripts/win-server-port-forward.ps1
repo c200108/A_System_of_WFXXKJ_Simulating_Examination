@@ -83,7 +83,8 @@ if ($AtBoot) { exit 0 }   # 开机任务到此为止
 Say ""
 Say "注册开机任务（WSL 每次重启 IP 都会变，必须自动重设）..."
 
-$taskName = "组卷台-WSL端口转发"
+# 默认端口沿用老任务名；转发别的端口（比如 HTTPS 的 443）各注册一个，不把 8080 那个顶掉
+$taskName = if ($Port -eq 8080) { "组卷台-WSL端口转发" } else { "组卷台-WSL端口转发-$Port" }
 $scriptPath = $MyInvocation.MyCommand.Path
 $action = New-ScheduledTaskAction -Execute "powershell.exe" `
     -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -Port $Port -Distro $Distro -AtBoot"
@@ -103,13 +104,16 @@ Say "当前转发规则："
 netsh interface portproxy show v4tov4 | Select-Object -Skip 2 | ForEach-Object { "      $_" }
 
 Say ""
-try {
+if ($Port -eq 443) {
+    # https 证书只认域名，用 localhost 测会报证书错误，这里不测
+    Warn "443 是 HTTPS，请用浏览器打开 https://你的域名 确认"
+} else { try {
     $r = Invoke-WebRequest "http://localhost:$Port/api/health" -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
     Ok "本机访问正常：$($r.Content)"
 } catch {
     Warn "本机访问 http://localhost:$Port 不通"
     Warn "确认 WSL 里的服务已启动：wsl -d $Distro -e docker compose ps"
-}
+} }
 
 Say ""
 Say "=================================================="

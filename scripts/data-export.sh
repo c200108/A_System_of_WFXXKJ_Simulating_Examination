@@ -114,7 +114,7 @@ ok "config.yaml 已导出"
 {
     echo "# 从 $(hostname) 于 $(date '+%F %T') 导出"
     echo "# 只有部署设置，**没有任何口令**。还原时可选择性套用。"
-    grep -E '^[[:space:]]*(REGISTRY|WEB_PORT|CORS_ORIGINS|PUBLIC_BASE_URL)[[:space:]]*=' \
+    grep -E '^[[:space:]]*(REGISTRY|WEB_PORT|CORS_ORIGINS|PUBLIC_BASE_URL|HTTPS_PORT|SSL_CERT_DIR)[[:space:]]*=' \
         "$ROOT/.env" 2>/dev/null
 } > "$OUT/settings.env"
 ok "端口和对外地址已导出到 settings.env（不含口令）"

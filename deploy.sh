@@ -221,6 +221,18 @@ if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ":${WEB_PORT} 
 else
     ok "端口空闲"
 fi
+# 可选的 HTTPS（见 docs/部署指南.md「HTTPS」）。没填 HTTPS_PORT 就什么都不查
+if [ -n "${HTTPS_PORT:-}" ]; then
+    if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ":${HTTPS_PORT##*:} "; then
+        warn "HTTPS 端口 ${HTTPS_PORT##*:} 已被占用（若不是本系统的容器，前端会起不来）"
+    fi
+    CERT_DIR="${SSL_CERT_DIR:-./data/ssl}"
+    if [ -s "$CERT_DIR/fullchain.pem" ] && [ -s "$CERT_DIR/key.pem" ]; then
+        ok "HTTPS 证书就位：$CERT_DIR"
+    else
+        warn "填了 HTTPS_PORT，但 $CERT_DIR 里没有 fullchain.pem / key.pem，先按 http 跑"
+    fi
+fi
 
 # ---------------------------------------------------------------- 4 构建
 step "[4/6] 构建并启动（首次要下载约 1GB，需要几分钟）..."
@@ -344,7 +356,7 @@ fi
 echo "=================================================="
 echo
 echo "  还要做的两件事："
-echo "    1. 要让外网访问，在云服务器安全组 / 防火墙放行 ${WEB_PORT} 端口"
+echo "    1. 要让外网访问，在云服务器安全组 / 防火墙放行 ${WEB_PORT} 端口${HTTPS_PORT:+ 和 ${HTTPS_PORT##*:} 端口}"
 echo "       Ubuntu: sudo ufw allow ${WEB_PORT}/tcp"
 echo "    2. 把备份加进 crontab，部署当天就设好："
 echo "       0 2 * * * ${ROOT}/backup/backup.sh >> /var/log/exam-backup.log 2>&1"
