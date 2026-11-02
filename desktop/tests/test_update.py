@@ -152,10 +152,10 @@ def test_烤进去的标记(monkeypatch):
     monkeypatch.setitem(sys.modules, "client._build", mod)
     monkeypatch.setattr(client, "_build", mod, raising=False)
     assert update.current_version() == "4.11.1"
-    assert update.source() == "https://api.github.com/repos/c200108/x/releases/latest"
+    assert update.source() == "https://api.github.com/repos/c200108/x/releases?per_page=20"
     assert update.channel() == "lan"
     mod.UPDATE_URL = "c200108/x  http://10.0.0.8/api/client/update.json?channel=lan"
-    assert update.sources() == ["https://api.github.com/repos/c200108/x/releases/latest",
+    assert update.sources() == ["https://api.github.com/repos/c200108/x/releases?per_page=20",
                                 "http://10.0.0.8/api/client/update.json?channel=lan"]
     bits = 64 if sys.maxsize > 2 ** 32 else 32
     assert update.variant() == f"name-login-win{bits}-runtime"
@@ -180,6 +180,26 @@ def test_解析GitHub_机房版只认带lan前缀的():
     # 联网版那边一个 lan 的都不认
     online = update.parse(github_release("http://h"), chan="online")
     assert all("lan-" not in a["url"] for a in online.assets.values())
+
+
+def test_GitHub列表_只挑学生端的正式版(src):
+    """同一个仓库里还发教师端 APP（teacher-v…）、草稿和预发布，学生端都不认。"""
+    items = [dict(github_release("http://h", "4.12.0"), prerelease=True),
+             dict(github_release("http://h", "4.13.0"), draft=True),
+             dict(github_release("http://h", "4.11.0")),
+             {"tag_name": "teacher-v5.1.0", "assets": [{"name": "wfxx-teacher-5.1.0.apk",
+                                                       "browser_download_url": "http://h/a.apk"}]},
+             dict(github_release("http://h", "4.11.2")),
+             dict(github_release("http://h", "4.9.0"))]
+    rel = update.parse(items, chan="online")
+    assert rel.version == "4.11.2" and "win64" in rel.assets
+    url = src.put("/repos/o/r/releases", items)
+    assert update.check(url).version == "4.11.2"
+    with pytest.raises(update.UpdateError, match="还没有发布"):
+        update.parse([items[0], items[3]])
+    # 有人直接把 latest 接口当更新源、而 latest 恰好是 APP：说清楚，不当成新版
+    with pytest.raises(update.UpdateError, match="不是学生端"):
+        update.parse(items[3])
 
 
 def test_解析自建JSON_相对地址和简写():

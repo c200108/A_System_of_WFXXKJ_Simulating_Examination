@@ -104,7 +104,8 @@ python build.py --name-login --server 192.168.1.8:8080
 #### 更新源：联网版公开仓库的 GitHub Releases
 
 两版学生端默认都查 **`c200108/A_System_of_WFXXKJ_Simulating_Examination`（联网版，公开仓库）**
-的 latest Release：查版本走 GitHub 的接口，exe 从 GitHub 下载，上百台机器一起升级也不占学校服务器的带宽。
+的 Release：在 Release 列表里挑 tag 是 `v<数字>` 的最新正式发布（草稿、预发布、教师端 APP 的 `teacher-v…` 都不算），
+查版本走 GitHub 的接口，exe 从 GitHub 下载，上百台机器一起升级也不占学校服务器的带宽。
 （机房版仓库是私有的，匿名查不到，所以机房版的 exe 也发在联网版的 Release 里。）
 
 | | 认 Release 里的哪些附件 |
