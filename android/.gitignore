@@ -7,3 +7,5 @@ local.properties
 keystore.properties
 *.jks
 *.keystore
+# 打好的安装包（发 Release 用），不进 Git
+安装包/
