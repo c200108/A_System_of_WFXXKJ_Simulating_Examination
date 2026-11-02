@@ -13,5 +13,13 @@ RUN npm run build
 ARG REGISTRY=docker.io
 FROM ${REGISTRY}/library/nginx:1.27-alpine
 COPY --from=build /app/dist /usr/share/nginx/html
+# nginx/ 下是拆开的规则和 HTTPS 切换脚本，nginx.conf 是默认的纯 http 配置。
+# http.conf 留一份原样的，开 HTTPS 失败时脚本拿它退回去。
+COPY nginx/base.conf nginx/static.conf nginx/backend.conf nginx/https.conf /etc/nginx/exam/
+COPY nginx.conf /etc/nginx/exam/http.conf
 COPY nginx.conf /etc/nginx/conf.d/default.conf
-EXPOSE 80
+# 在 Windows 上检出、或者从 ZIP 解压的话执行位会丢，这里补上，不然 nginx 镜像会跳过它
+COPY nginx/40-exam-https.sh /docker-entrypoint.d/40-exam-https.sh
+RUN chmod +x /docker-entrypoint.d/40-exam-https.sh
+# 443 只有配了证书（.env 的 HTTPS_PORT + SSL_CERT_DIR）才真的在听
+EXPOSE 80 443

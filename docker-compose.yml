@@ -6,7 +6,8 @@ name: exam-system
 # 三个容器：数据库 / 后端 / 前端。
 # 部署前先跑 python backend/tools/check_deploy.py 确认 .env 已改好。
 #
-# 对外只暴露 WEB_PORT 一个端口，数据库和后端都只在内网，外面连不到。
+# 对外只暴露 WEB_PORT 一个端口（配了 HTTPS 再加一个 HTTPS_PORT），
+# 数据库和后端都只在内网，外面连不到。
 
 x-logging: &default-logging
   # 不限制的话容器日志会一直涨，几个月后能把服务器磁盘写满
@@ -102,8 +103,23 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    environment:
+      # 可选的 HTTPS，见 docs/部署指南.md「HTTPS」一节。HTTPS_PORT 不填就和以前一样只有 http。
+      # 填了的话由 frontend/nginx/40-exam-https.sh 在容器启动时切换配置，并巡检证书续期。
+      HTTPS_PORT: ${HTTPS_PORT:-}
+      # 80 上的网页跳到哪：这里是 https 地址就跳到它，否则跳到同一主机名的 https
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
     ports:
       - "${WEB_PORT:-8080}:80"
+      # 没填 HTTPS_PORT 时展开成 127.0.0.1::443 —— 只在本机回环上随便占一个空闲端口，
+      # 外面连不到，也不会和这台机器上已有的 443 / 8443 撞车，不影响没配证书的学校。
+      # 填了（比如 443）就是正常的 443:443。
+      - "${HTTPS_PORT:-127.0.0.1:}:443"
+    volumes:
+      # 证书目录只读挂进去，里面要有 fullchain.pem 和 key.pem（acme.sh --install-cert 装到这里）。
+      # 挂的是目录不是文件：续期时 acme.sh 换掉文件，容器里立刻看得到。
+      # 没填 SSL_CERT_DIR 时挂 ./data/ssl（空目录，docker 会自己建），不起作用。
+      - ${SSL_CERT_DIR:-./data/ssl}:/etc/nginx/ssl:ro
 
 volumes:
   db_data:

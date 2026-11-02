@@ -126,6 +126,29 @@ def main() -> None:
             "         但改成真实访问地址更稳妥"
         )
 
+    # ---- 可选的 HTTPS ----
+    https_port = env.get("HTTPS_PORT", "")
+    cert_dir = env.get("SSL_CERT_DIR", "")
+    if https_port:
+        port = https_port.rsplit(":", 1)[-1]
+        if not port.isdigit() or not 1 <= int(port) <= 65535:
+            fatal.append(f"HTTPS_PORT 是「{https_port}」，不是合法端口（一般填 443）")
+        # 相对路径按 .env 所在目录算，和 docker compose 一样
+        d = os.path.join(os.path.dirname(os.path.abspath(path)), cert_dir or "data/ssl")
+        missing = [n for n in ("fullchain.pem", "key.pem") if not os.path.isfile(os.path.join(d, n))]
+        if missing:
+            warn.append(
+                f"开了 HTTPS，但 {d} 里找不到 {'、'.join(missing)}，前端会先按 http 跑。\n"
+                "         用 acme.sh --install-cert 装到这个目录，或者把 SSL_CERT_DIR 指对"
+            )
+        else:
+            print(f"{GRN} HTTPS 已配置，证书在 {d}")
+        for key in ("PUBLIC_BASE_URL", "CORS_ORIGINS"):
+            if not env.get(key, "").startswith("https://"):
+                warn.append(f"开了 HTTPS，{key} 最好也改成 https 地址（如 https://exam.example.com）")
+    elif cert_dir:
+        warn.append("填了 SSL_CERT_DIR 但没填 HTTPS_PORT，HTTPS 不会开。要开就再填 HTTPS_PORT=443")
+
     # ---- 汇总 ----
     print()
     for w in warn:

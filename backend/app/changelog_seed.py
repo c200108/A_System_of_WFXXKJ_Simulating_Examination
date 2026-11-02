@@ -49,6 +49,13 @@ from datetime import date
 # 结构：(版本号, 发布日期, [(变动类型, 内容), ...])
 VERSIONS: list[tuple[str, date, list[tuple[str, str]]]] = [
     (
+        "2.15.1",
+        date(2026, 11, 2),
+        [
+            ("Added", "Docker 部署支持可选的 HTTPS：在 .env 里填上证书目录 SSL_CERT_DIR（里面放 fullchain.pem 和 key.pem，例如 acme.sh 申请的 Let's Encrypt 证书）和 HTTPS_PORT=443，前端就同时开 443，http 打开网页会自动跳到 https；两项都不填则和以前一样只有 http，不影响其他学校。证书续期后前端容器最多一小时内自动重新加载，不用重启。开了 https 后 http 上的 /api/ 和 /uploads/ 仍照常可用，填着 http 地址的学生端 exe 不受影响。步骤见 docs/部署指南.md「HTTPS」一节。"),
+        ],
+    ),
+    (
         "4.12.0",
         date(2026, 11, 2),
         [
