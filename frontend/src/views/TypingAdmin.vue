@@ -11,7 +11,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download } from '../api'
-import { loadPublicBase, studentLink } from '../publicUrl'
+import { hostChoices, loadPublicBase, needPublicBase, pickHost, studentLink } from '../publicUrl'
 
 const router = useRouter()
 const rows = ref([])
@@ -72,6 +72,8 @@ async function refresh() {
 onMounted(async () => {
   await loadPublicBase()
   studentUrl.value = studentLink('/dazi')
+  choices.value = hostChoices()
+  noAddress.value = needPublicBase()
   await refresh()
 })
 
@@ -126,8 +128,16 @@ function openAnalysis() {
   window.open(router.resolve({ path: '/js/typing-analysis', query: q }).href, '_blank')
 }
 
-// 学生练习页地址。默认跟着浏览器当前地址走；后端配了 PUBLIC_BASE_URL 就以它为准
-const studentUrl = ref(studentLink('/dazi'))
+// 学生练习页地址：配了 PUBLIC_BASE_URL 就用它；老师用学生能访问的地址打开的就用浏览器当前地址；
+// 在服务器本机用 localhost 打开的，换成服务器的公网 / 局域网 IPv4（见 publicUrl.js）。
+// 地址取回来之前先空着，别让 localhost 闪一下
+const studentUrl = ref('')
+const choices = ref([])      // 本机打开时可选的几个地址
+const noAddress = ref(false)  // 本机打开、又一个地址都查不到
+function choose(origin) {
+  pickHost(origin)
+  studentUrl.value = studentLink('/dazi')
+}
 async function copyUrl() {
   try {
     await navigator.clipboard.writeText(studentUrl.value)
@@ -156,8 +166,23 @@ const when = t => String(t || '').replace('T', ' ').slice(0, 16)
     </template>
 
     <el-alert type="info" :closable="false" class="hint">
-      学生打开 <b>{{ studentUrl }}</b> 即可练习（班级姓名要和学生名单一致），完成后成绩自动进入这里。
-      <el-button link type="primary" @click="copyUrl">复制链接</el-button>
+      学生打开 <b>{{ studentUrl || '（正在获取地址…）' }}</b> 即可练习（班级姓名要和学生名单一致），完成后成绩自动进入这里。
+      <el-button link type="primary" :disabled="!studentUrl" @click="copyUrl">复制链接</el-button>
+      <template v-if="choices.length > 1">
+        <span class="other">这台服务器有好几个地址，学生连不上就换一个：</span>
+        <el-select
+          :model-value="studentUrl.replace(/\/dazi$/, '')"
+          size="small"
+          style="width: 210px"
+          @change="choose"
+        >
+          <el-option v-for="c in choices" :key="c" :label="c" :value="c" />
+        </el-select>
+      </template>
+      <div v-if="noAddress" class="warn">
+        你是在服务器本机用 localhost 打开的，学生访问不了这个地址，也没查到服务器的局域网地址（Docker 部署时查不到）。
+        请在服务器的 .env 里填 PUBLIC_BASE_URL（如 http://111.170.33.3:3315），或者用学生能访问的地址打开后台。
+      </div>
     </el-alert>
 
     <div v-if="stats && stats.total" class="kpi">
@@ -322,5 +347,15 @@ const when = t => String(t || '').replace('T', ' ').slice(0, 16)
 .pager {
   margin-top: 12px;
   justify-content: flex-end;
+}
+.hint .other {
+  margin-left: 10px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.hint .warn {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--el-color-warning);
 }
 </style>

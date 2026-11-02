@@ -18,13 +18,13 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from openpyxl import Workbook
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from .. import clock
 from ..database import get_db
 from ..deps import get_current_user, get_optional_student, require_delete_permission
-from ..models import SchoolClass, Student, TypingRecord, TypingText, User
+from ..models import SchoolClass, Student, TypingRecord, TypingText, TypingTheme, User
 from ..schemas import (
     IdsIn,
     TypingRecordPage,
@@ -33,13 +33,23 @@ from ..schemas import (
     TypingTextIn,
     TypingTextOut,
     TypingTextUpdate,
+    TypingThemeIn,
+    TypingThemeOut,
+    TypingThemeUpdate,
     TypingRecordIn,
     TypingRecordOut,
     TypingResultOut,
     TypingStatsOut,
 )
 from ..services import recycle, throttle, typing_analysis
-from ..services.typing_texts import add_texts, build_passage, parse_txt, text_hash
+from ..services.typing_texts import (
+    add_texts,
+    build_passage,
+    default_theme_id,
+    ensure_default_theme,
+    parse_txt,
+    text_hash,
+)
 from ..siteconfig import site
 
 router = APIRouter(prefix="/api/typing", tags=["打字训练"])
@@ -157,7 +167,8 @@ def get_passage(
     if not text:
         raise HTTPException(
             status_code=404,
-            detail=f"「{difficulty}」难度下还没有{'英文' if mode == 'english' else '中文'}文本，请老师先在打字页添加",
+            detail=f"启用的主题里，「{difficulty}」难度下还没有{'英文' if mode == 'english' else '中文'}文本，"
+            "请老师在「题库 → 练习文本」添加文本或启用主题",
         )
     throttle.hit(db, "passage", who)
     db.commit()
@@ -585,10 +596,13 @@ def list_texts(
     mode: str | None = None,
     difficulty: str | None = None,
     keyword: str | None = None,
+    theme_id: int | None = None,
     _: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     stmt = select(TypingText)
+    if theme_id:
+        stmt = stmt.where(_in_theme(db, theme_id))
     if mode:
         stmt = stmt.where(TypingText.mode == mode)
     if difficulty:
@@ -632,6 +646,7 @@ def create_text(
         content_hash=h,
         source="自定义",
         created_by=user.id,
+        theme_id=_theme_or_default(db, body.theme_id),
     )
     db.add(row)
     db.commit()
@@ -664,6 +679,8 @@ def update_text(
         row.content = content
         row.content_hash = h
         data.pop("content")
+    if "theme_id" in data:
+        data["theme_id"] = _theme_or_default(db, data["theme_id"])
 
     for k, v in data.items():
         setattr(row, k, v)
@@ -711,8 +728,13 @@ def bulk_texts(
             "需要请管理员在「账号」页面给你开通「删除权」后再操作。",
         )
 
+    if body.action == "theme":
+        tid = _theme_or_default(db, body.theme_id)
     rows = db.scalars(select(TypingText).where(TypingText.id.in_(ids))).all()
-    if body.action == "delete":
+    if body.action == "theme":
+        for r in rows:
+            r.theme_id = tid
+    elif body.action == "delete":
         if rows:
             recycle.trash(db, me, "typing_text", f"{len(rows)} 段练习文本", TypingText,
                           [r.id for r in rows], detail=(rows[0].content or "")[:40])
@@ -731,6 +753,7 @@ async def import_texts(
     mode: str = Query(..., pattern="^(english|chinese)$"),
     difficulty: str = Query(...),
     split: str = Query("line", pattern="^(line|blank)$"),
+    theme_id: int | None = Query(None, description="归到哪个主题，不给就是「信息生活」"),
     file: UploadFile = File(...),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -751,6 +774,118 @@ async def import_texts(
     if not chunks:
         raise HTTPException(status_code=400, detail="这个文件里没读到内容")
 
-    res = add_texts(db, mode, difficulty, chunks, source="导入", created_by=user.id)
+    tid = _theme_or_default(db, theme_id)
+    res = add_texts(db, mode, difficulty, chunks, source="导入", created_by=user.id, theme_id=tid)
     res["total"] = len(chunks)
     return res
+
+
+# ---------------------------------------------------------------- 主题（2.15.0，要登录）
+def _theme_or_default(db: Session, theme_id: int | None) -> int:
+    """给了主题就核对一下它在不在，没给就归内置的「信息生活」。"""
+    if theme_id:
+        if not db.get(TypingTheme, theme_id):
+            raise HTTPException(status_code=400, detail="这个主题不存在（可能刚被删了），刷新一下再选")
+        return theme_id
+    return default_theme_id(db) or ensure_default_theme(db)
+
+
+def _in_theme(db: Session, theme_id: int):
+    """属于这个主题的文本。theme_id 为空的文本算内置主题的。"""
+    if theme_id == default_theme_id(db):
+        return (TypingText.theme_id == theme_id) | TypingText.theme_id.is_(None)
+    return TypingText.theme_id == theme_id
+
+
+def _theme_out(db: Session, row: TypingTheme) -> TypingThemeOut:
+    default = default_theme_id(db)
+    stmt = (select(TypingText.mode, TypingText.difficulty, func.count())
+            .where(TypingText.is_active.is_(True), _in_theme(db, row.id))
+            .group_by(TypingText.mode, TypingText.difficulty))
+    counts: dict = {}
+    total = 0
+    for mode, diff, n in db.execute(stmt).all():
+        counts.setdefault(mode, {})[diff] = n
+        total += n
+    out = TypingThemeOut.model_validate(row)
+    out.counts, out.total = counts, total
+    out.is_builtin = row.is_builtin or row.id == default
+    return out
+
+
+def _keep_one_enabled(db: Session) -> None:
+    if not db.scalar(select(TypingTheme.id).where(TypingTheme.is_enabled.is_(True)).limit(1)):
+        raise HTTPException(status_code=400,
+                            detail="至少要保留一个启用的主题，不然学生取不到练习文本")
+
+
+@router.get("/themes", response_model=list[TypingThemeOut], summary="主题列表（带各难度文本数）")
+def list_themes(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ensure_default_theme(db)
+    rows = db.scalars(select(TypingTheme).order_by(TypingTheme.sort_order, TypingTheme.id))
+    return [_theme_out(db, r) for r in rows]
+
+
+@router.post("/themes", response_model=TypingThemeOut, summary="新增主题")
+def create_theme(body: TypingThemeIn, _: User = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="主题名不能为空")
+    if db.scalar(select(TypingTheme.id).where(TypingTheme.name == name)):
+        raise HTTPException(status_code=409, detail=f"已经有「{name}」这个主题了")
+    last = db.scalar(select(func.max(TypingTheme.sort_order))) or 0
+    row = TypingTheme(name=name, is_enabled=True, sort_order=last + 1, is_builtin=False)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _theme_out(db, row)
+
+
+@router.put("/themes/{theme_id}", response_model=TypingThemeOut, summary="改主题：名称、启用、排序")
+def update_theme(theme_id: int, body: TypingThemeUpdate, _: User = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    row = db.get(TypingTheme, theme_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="主题不存在")
+    data = body.model_dump(exclude_unset=True)
+    if "name" in data and data["name"] is not None:
+        name = data["name"].strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="主题名不能为空")
+        if db.scalar(select(TypingTheme.id).where(TypingTheme.name == name, TypingTheme.id != theme_id)):
+            raise HTTPException(status_code=409, detail=f"已经有「{name}」这个主题了")
+        row.name = name
+    if data.get("is_enabled") is not None:
+        row.is_enabled = data["is_enabled"]
+    if data.get("sort_order") is not None:
+        row.sort_order = data["sort_order"]
+    db.flush()
+    _keep_one_enabled(db)
+    db.commit()
+    db.refresh(row)
+    return _theme_out(db, row)
+
+
+@router.delete("/themes/{theme_id}", summary="删除主题（文本归回「信息生活」；需要删除权）")
+def delete_theme(theme_id: int, me: User = Depends(require_delete_permission),
+                 db: Session = Depends(get_db)):
+    """主题删了，它下面的文本**不删**，归回内置的「信息生活」（停用的照样停用）。
+    进回收站：还原主题时，这些文本会接回原来的主题。"""
+    row = db.get(TypingTheme, theme_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="主题不存在")
+    default = default_theme_id(db)
+    if row.is_builtin or row.id == default:
+        raise HTTPException(status_code=400, detail="内置主题「信息生活」不能删除")
+    moved = db.scalar(select(func.count()).select_from(TypingText).where(TypingText.theme_id == row.id))
+    recycle.trash(db, me, "typing_theme", f"打字主题：{row.name}", TypingTheme, [row.id],
+                  detail=f"{moved} 段文本归回「信息生活」")
+    # 置空 = 算内置主题；不直接改成内置主题的 id，回收站还原时才接得回去（只接还是空的那些）
+    db.execute(update(TypingText).where(TypingText.theme_id == row.id).values(theme_id=None))
+    db.delete(row)
+    db.flush()
+    if not db.scalar(select(TypingTheme.id).where(TypingTheme.is_enabled.is_(True)).limit(1)) and default:
+        db.get(TypingTheme, default).is_enabled = True     # 删的是唯一启用的那个：把内置的打开
+    db.commit()
+    return {"ok": True, "moved": moved}
