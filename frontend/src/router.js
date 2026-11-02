@@ -35,7 +35,7 @@ const teacherRoutes = {
   children: [
     { path: '', redirect: '/js/paper' },
     { path: 'paper', component: () => import('./views/Paper.vue'), meta: { title: '组卷' } },
-    // 题库 = 题库管理 + 批量导入；考试 = 考试 + 打字学情 + 练习文本；
+    // 题库 = 题库管理 + 批量导入 + 仿真操作题 + 练习文本；考试 = 考试 + 打字学情；
     // 学生 = 学生账号 + 班级。
     // 两个工作台页面用同一个折叠面板组件，加功能只改各自的 panels 数组。
     { path: 'bank', component: () => import('./views/BankHub.vue'), meta: { title: '题库' } },
@@ -49,7 +49,7 @@ const teacherRoutes = {
     { path: 'typing', redirect: { path: '/js/exams', query: { panel: 'typing' } } },
     {
       path: 'typing-texts',
-      redirect: { path: '/js/exams', query: { panel: 'typing-texts' } }
+      redirect: { path: '/js/bank', query: { panel: 'typing-texts' } }
     },
     { path: 'profile', component: () => import('./views/Profile.vue'), meta: { title: '我的账号' } },
     { path: 'users', component: () => import('./views/Users.vue'), meta: { title: '账号', admin: true } },
