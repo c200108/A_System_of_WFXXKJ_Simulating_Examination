@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     # 默认值取自 config.yaml 的 upload.max_mb，环境变量 MAX_UPLOAD_MB 可再覆盖
     max_upload_mb: int = _site.upload.max_mb
 
+    # 学生端 exe 的更新清单和安装包（「检查更新」的自建更新源），按渠道分 online / lan 两个子目录。
+    # **预留，默认关着**：现在学生端只查 GitHub Releases。要启用：CLIENT_UPDATES_ENABLED=true，
+    # 再把 exe 和清单放进这个目录。见 routers/client_update.py、desktop/README.md「自建更新源」
+    client_updates_enabled: bool = False
+    client_update_dir: str = "./data/client-updates"
+
     admin_username: str = "admin"
     admin_password: str = "admin123"
     admin_name: str = "系统管理员"

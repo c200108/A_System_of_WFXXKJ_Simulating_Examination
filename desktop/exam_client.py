@@ -96,6 +96,10 @@ def selftest(report: Path, server: str = "") -> int:
         from client.shell import baked_name_login
         lines.append("登录方式：" + ("姓名 + 密码（初始 123456）" if baked_name_login()
                                      else "学号 + 密码（初始密码就是学号）"))
+        from client import update
+        lines.append(f"版本：{update.current_version() or '开发版'}"
+                     f"（{'机房版' if update.channel() == 'lan' else '联网版'} · {update.variant()}）"
+                     f"　更新源：{update.source() or '没有设置'}")
 
         lines.append("")
         lines.append("自检通过")
@@ -153,6 +157,8 @@ def main(argv=None) -> int:
     # 界面在这儿才导：放在文件顶上的话，client.ui 一旦出问题，程序还没走到
     # 自检就崩了，弹个窗谁也看不懂。放这儿，--selftest 能把原因写成一句人话。
     from client.ui import ExamApp
+    from client.update import cleanup_old
+    cleanup_old()                      # 上次「检查更新」升级换下来的旧 exe
 
     # **不往 exe 旁边写。** 写在那儿的话，"只发一个 exe"就不成立了 ——
     # 程序一跑就在 exe 边上长出「答案包」文件夹；exe 要是放在只读位置

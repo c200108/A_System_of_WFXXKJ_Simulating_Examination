@@ -63,6 +63,10 @@ services:
       DATABASE_URL: mysql+pymysql://${MYSQL_USER:-exam}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE:-exam}?charset=utf8mb4
       JWT_SECRET: ${JWT_SECRET:?请先在 .env 里设置 JWT_SECRET}
       UPLOAD_DIR: /app/data/uploads
+      # 学生端「检查更新」的自建更新源：预留，默认关着（学生端现在查 GitHub）。要启用就把下面两行、
+      # 以及 volumes 里那条 client-updates 的注释去掉，见 desktop/README.md「自建更新源」
+      # CLIENT_UPDATES_ENABLED: "true"
+      # CLIENT_UPDATE_DIR: /app/data/client-updates
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请先在 .env 里设置 ADMIN_PASSWORD}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
@@ -71,6 +75,8 @@ services:
     volumes:
       # 上传的图片和 Excel 原件挂到宿主机，容器重建数据不丢
       - ./data/uploads:/app/data/uploads
+      # 学生端 exe 的更新清单和安装包（自建更新源，预留）：启用后 scp 到宿主机这个目录就生效，不用重启
+      # - ./data/client-updates:/app/data/client-updates:ro
       # 改完 config.yaml 只要 docker compose restart backend，不用重新构建
       - ./config.yaml:/app/config.yaml:ro
       # 原题库存档。全新部署时容器会从这里把 331 道题导进空库
