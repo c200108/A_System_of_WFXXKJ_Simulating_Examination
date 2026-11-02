@@ -1,6 +1,6 @@
 <script setup>
 /**
- * 题库工作台。题库维护和 Excel 导入收在一页，摆法和考试工作台一致。
+ * 题库工作台。题库维护、Excel 导入、仿真操作题、打字练习文本收在一页，摆法和考试工作台一致。
  */
 import { defineAsyncComponent } from 'vue'
 import PanelGroup from '../components/PanelGroup.vue'
@@ -26,6 +26,13 @@ const panels = [
     label: '仿真操作题',
     desc: '学生在网页里真做一遍，自动判分',
     component: defineAsyncComponent(() => import('./Sims.vue'))
+  },
+  {
+    key: 'typing-texts',
+    icon: '📖',
+    label: '练习文本',
+    desc: '打字练习用的中英文段落',
+    component: defineAsyncComponent(() => import('./TypingTexts.vue'))
   }
 ]
 </script>
