@@ -15,7 +15,7 @@ import cn.wfxxkj.teacher.typing.TypingFeature;
 
 /**
  * 底部标签栏上的五个标签，和网页版教师端的顶部菜单一一对应：
- * 组卷 / 题库（题库管理、批量导入、仿真操作题）/ 考试（考试管理、打字学情、练习文本）/
+ * 组卷 / 题库（题库管理、批量导入、仿真操作题、练习文本）/ 考试（考试管理、打字学情）/
  * 学生（学生账号、班级）/ 我的。
  *
  * 各功能模块互不依赖，标签怎么拼在这里决定。加一个模块：新建 feature-xxx，
@@ -32,12 +32,12 @@ final class Features {
                         () -> new HubScreen("题库", "bank", Arrays.asList(
                                 HubScreen.page("题库管理", BankFeature::questions),
                                 HubScreen.page("批量导入", BankFeature::imports),
-                                HubScreen.page("仿真操作题", BankFeature::sims)))),
+                                HubScreen.page("仿真操作题", BankFeature::sims),
+                                HubScreen.page("练习文本", TypingFeature::texts)))),
                 new TabSpec("exams", "考试", R.drawable.ic_assignment_outlined, R.drawable.ic_assignment,
                         () -> new HubScreen("考试", "exams", Arrays.asList(
                                 HubScreen.page("考试管理", ExamFeature::exams),
-                                HubScreen.page("打字学情", TypingFeature::records),
-                                HubScreen.page("练习文本", TypingFeature::texts)))),
+                                HubScreen.page("打字学情", TypingFeature::records)))),
                 new TabSpec("students", "学生", R.drawable.ic_groups_outlined, R.drawable.ic_groups,
                         () -> new HubScreen("学生", "students", Arrays.asList(
                                 HubScreen.page("学生账号", StudentFeature::students),
