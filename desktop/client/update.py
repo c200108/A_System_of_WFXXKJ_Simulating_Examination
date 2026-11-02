@@ -33,8 +33,9 @@ GitHub 的接口对同一个出口 IP 一小时只给 60 次。
 
   url 可以写相对路径，相对于这个 JSON 的地址。size / sha256 可省，给了就校验。
 
-· **GitHub Releases**（仓库得是公开的）：`https://api.github.com/repos/<owner>/<repo>/releases/latest`
-  （也可以只写 `<owner>/<repo>`）。版本号取 tag_name，说明取 body，下载地址按
+· **GitHub Releases**（仓库得是公开的）：`https://api.github.com/repos/<owner>/<repo>/releases`
+  （也可以只写 `<owner>/<repo>`）。从列表里挑 tag 是 v<数字> 的最新正式发布（教师端 APP 的 teacher-v… 不算），
+  版本号取 tag_name，说明取 body，下载地址按
   附件名里的变体后缀认（`exam-client-4.12.0-win32-runtime.exe` → `win32-runtime`）。
 
 ## 升级：原地换掉自己，文件名不变
@@ -83,7 +84,10 @@ CHUNK = 64 * 1024
 USER_AGENT = "wfxxkj-exam-client"
 # 附件名末尾的变体后缀：exam-client-4.12.0-name-login-win32-runtime.exe
 ASSET_RE = re.compile(r"((?:name-login-)?win(?:32|64)(?:-runtime)?)\.exe$", re.I)
-GITHUB_API = "https://api.github.com/repos/{}/releases/latest"
+# 用 Release 列表而不是 releases/latest：同一个仓库里还发教师端 APP（tag 以 teacher-v 开头），
+# 万一它被标成 Latest，latest 接口返回的就是 APP —— 学生端得自己挑 tag 是 v<数字> 的那个
+GITHUB_API = "https://api.github.com/repos/{}/releases?per_page=20"
+STUDENT_TAG = re.compile(r"^v\d+(?:\.\d+)*$")
 MAX_MOVES = 2                    # 清单里 moved_to 最多跟几次
 LAN_PREFIX = "exam-client-lan-"  # Release 里机房版附件名的前缀
 SLOW = "规定时间内没有拿到更新信息，请检查这台电脑能不能上网"
@@ -125,7 +129,7 @@ def current_version() -> str:
 
 
 def sources() -> list:
-    """更新源地址，按顺序（主源在前）。`owner/repo` 的简写展开成 GitHub 的 latest 接口。"""
+    """更新源地址，按顺序（主源在前）。`owner/repo` 的简写展开成 GitHub 的 Release 列表接口。"""
     return [expand_source(s) for s in str(_baked("UPDATE_URL", "") or "").split() if s]
 
 
@@ -208,9 +212,13 @@ def parse(data, base_url: str = "", chan: str | None = None) -> Release:
     GitHub 的 Release 里联网版、机房版的附件放在一起，按 chan 只取自己那一组
     （机房版带 `exam-client-lan-` 前缀）。自建源是一个渠道一份清单，不用分。
     """
+    if isinstance(data, list):                          # GitHub 的 Release 列表
+        data = pick_release(data)
     if not isinstance(data, dict):
         raise UpdateError("更新源返回的内容看不懂")
     if "tag_name" in data:
+        if not STUDENT_TAG.match(str(data.get("tag_name", ""))):
+            raise UpdateError("更新源上最新的发布不是学生端的版本")
         lan = (chan or channel()) == "lan"
         assets = {}
         for a in data.get("assets") or []:
@@ -242,6 +250,23 @@ def parse(data, base_url: str = "", chan: str | None = None) -> Release:
     page = str(data.get("page") or "")
     return Release(version.lstrip("vV"), str(data.get("notes") or ""), assets,
                    urllib.parse.urljoin(base_url, page) if page else "")
+
+
+def pick_release(items: list) -> dict:
+    """Release 列表里挑学生端最新的一个：正式发布（不是草稿、不是预发布）、tag 是 v<数字>。"""
+    best, best_v = None, ()
+    for r in items:
+        if not isinstance(r, dict) or r.get("draft") or r.get("prerelease"):
+            continue
+        tag = str(r.get("tag_name", ""))
+        if not STUDENT_TAG.match(tag):
+            continue
+        v = version_tuple(tag)
+        if v > best_v:
+            best, best_v = r, v
+    if best is None:
+        raise UpdateError("更新源上还没有发布任何版本")
+    return best
 
 
 def _open(url: str, timeout: int):
