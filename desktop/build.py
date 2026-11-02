@@ -5,6 +5,7 @@ r"""打包学生端 exe。
     python build.py --python 路径   指定用哪个 Python 打（决定能跑在哪些系统）
     python build.py --onedir        打成文件夹（调试用，启动快一点）
     python build.py --name-login    打「姓名登录版」：学生选班级、填中文姓名，初始密码 123456
+    python build.py --update-url 地址   「检查更新」查哪儿（默认学校服务器上本渠道的清单）
 
 产物在「发布」文件夹里。**只需要把 exe 一个文件拷到学生机**：运行数据写在
 `%LOCALAPPDATA%\信息技术考试客户端\`，exe 旁边不会生成任何东西。
@@ -48,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -65,6 +67,14 @@ ICONS = HERE / "图标"
 # 运行时窗口图标读的是这个固定名字（client/shell.py 的 asset），打包前会把选中
 # 的那枚改名复制成它，见 stage_icon
 ICON_NAME = "考试客户端.ico"
+# 「检查更新」默认去哪查：联网版公开仓库的 GitHub Releases（联网版、机房版的 exe 都发在那儿，
+# 下载走 GitHub，不占学校服务器带宽）。
+GITHUB_REPO = "c200108/A_System_of_WFXXKJ_Simulating_Examination"
+# 自建更新源（预留，默认不用）：后端 /api/client/update.json，要 CLIENT_UPDATES_ENABLED=true 才开。
+# 要用时打包加 --update-url（可以和 GitHub 一起给，按顺序试），**最好用域名**，见 README「自建更新源」：
+#   --update-url c200108/A_System_of_WFXXKJ_Simulating_Examination
+#   --update-url http://update.学校域名.cn/api/client/update.json[?channel=lan]
+UPDATE_SERVER = ""
 
 # 只排除**第三方**重家伙：打包用的 Python 里装着后端那套依赖，PyInstaller 会
 # 顺着依赖把它们拖进来，体积能差好几倍。
@@ -224,6 +234,44 @@ exe = EXE(
     return spec
 
 
+def latest_client_version() -> str:
+    """更新日志里最新的学生端版本（4.x）。不 import 后端 —— 打包用的 Python 未必装着它的依赖。"""
+    seed = HERE.parent / "backend" / "app" / "changelog_seed.py"
+    try:
+        text = seed.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    found = [tuple(int(x) for x in v.split(".")) for v in re.findall(r'"(4\.\d+\.\d+)"', text)]
+    return ".".join(map(str, max(found))) if found else ""
+
+
+def update_channel() -> str:
+    """这份代码是联网版（online）还是机房版（lan）。
+
+    两边的 desktop/ 是同一份代码（机房版靠 同步主项目.py 从联网版合过来），按仓库认，
+    就不用在两边各写死一个地址 —— 合代码时也就不会在这一行上打架。
+    """
+    try:
+        url = subprocess.run(["git", "-C", str(HERE), "remote", "get-url", "origin"],
+                             capture_output=True, text=True).stdout.strip()
+    except OSError:
+        url = ""
+    if re.search(r"_LAN(\.git)?/?$", url):
+        return "lan"
+    return "lan" if (HERE.parent / "Win7机房版说明.md").exists() else "online"
+
+
+def default_update_url() -> str:
+    """没给 --update-url 时：联网版公开仓库的 GitHub Releases；填了 UPDATE_SERVER 的再加上
+    自建源这个渠道的清单当备用。几个地址用空格隔开，学生端按顺序试。"""
+    if not UPDATE_SERVER:
+        return GITHUB_REPO
+    channel = update_channel()
+    backup = f"{UPDATE_SERVER.rstrip('/')}/api/client/update.json" + ("" if channel == "online"
+                                                                     else f"?channel={channel}")
+    return f"{GITHUB_REPO} {backup}"
+
+
 def floor_of(version) -> str:
     major, minor = version[0], version[1]
     if (major, minor) <= (3, 8):
@@ -336,6 +384,13 @@ def main() -> int:
     ap.add_argument("--name-login", action="store_true",
                     help="打「姓名登录版」：登录页先选班级、账号填中文姓名，初始密码统一 123456"
                          "（重名的同学填学号）。文件名会多一个「姓名登录」，和普通版并存")
+    ap.add_argument("--update-url", action="append", default=[],
+                    help="「检查更新」去哪查：清单 JSON 的地址（推荐用域名，格式见 README「检查更新」），"
+                         "或公开 GitHub 仓库 owner/repo。可以给多次，按顺序试（前面的查不通换后面的）。"
+                         "不给就查联网版公开仓库的 GitHub Releases；写 off 关掉")
+    ap.add_argument("--version", default="",
+                    help="烤进 exe 的版本号（检查更新拿它比新旧）。"
+                         "不给就取 backend/app/changelog_seed.py 里最新的学生端（4.x）版本")
     args = ap.parse_args()
 
     py = args.python
@@ -357,16 +412,6 @@ def main() -> int:
     # 十有八九是跑了旧 exe，有这个戳一眼就能对上
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     server = args.server.strip().rstrip("/")
-    (HERE / "client" / "_build.py").write_text(
-        "# -*- coding: utf-8 -*-\n"
-        '"""打包时自动生成，不要手改。"""\n'
-        f'BUILT_AT = "{stamp}"\n'
-        f'SERVER = "{server}"\n'
-        f'NAME_LOGIN = {bool(args.name_login)}\n', encoding="utf-8")
-    if args.name_login:
-        print("   姓名登录版：学生选班级、填中文姓名，初始密码 123456")
-    if server:
-        print(f"   教师端地址已烤进 exe：{server}（学生不用再输）")
     # 位数写进文件名：32 位那份两种机器都能跑，64 位那份只能跑 64 位 Windows，
     # 机房里两版并存时得一眼分得出来
     ucrt = ucrt_dir(bits) if args.ucrt else None
@@ -375,6 +420,26 @@ def main() -> int:
         print("装一个 Windows 10 SDK（只勾「Windows SDK for Desktop C++」即可），"
               "或者去掉 --ucrt 用原来的打法。")
         return 1
+    version = args.version.strip().lstrip("vV") or latest_client_version()
+    given = " ".join(u.strip() for u in args.update_url if u.strip())
+    upd = default_update_url() if not given else ("" if given.lower() == "off" else given)
+    channel = update_channel()
+    (HERE / "client" / "_build.py").write_text(
+        "# -*- coding: utf-8 -*-\n"
+        '"""打包时自动生成，不要手改。"""\n'
+        f'BUILT_AT = "{stamp}"\n'
+        f'SERVER = "{server}"\n'
+        f'NAME_LOGIN = {bool(args.name_login)}\n'
+        f'VERSION = "{version}"\n'
+        f'UPDATE_URL = {upd!r}\n'
+        f'RUNTIME = {bool(ucrt)}\n'
+        f'CHANNEL = {channel!r}\n', encoding="utf-8")
+    if args.name_login:
+        print("   姓名登录版：学生选班级、填中文姓名，初始密码 123456")
+    if server:
+        print(f"   教师端地址已烤进 exe：{server}（学生不用再输）")
+    print(f"   版本 {version or '（没认出来）'}（{'机房版' if channel == 'lan' else '联网版'}）　"
+          f"更新源 {' → '.join(upd.split()) or '（不检查更新）'}")
     mark = (("-姓名登录" if args.name_login else "") + f"-{bits}位"
             + ("-内置运行库" if ucrt else ""))
     final = exe_name(server, mark) if not args.onedir else ""
