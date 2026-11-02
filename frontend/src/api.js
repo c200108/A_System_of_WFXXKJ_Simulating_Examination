@@ -237,6 +237,9 @@ export const api = {
   papers: () => http.get('/papers'),
   paper: id => http.get(`/papers/${id}`),
   deletePaper: id => http.delete(`/papers/${id}`),
+  // 历史试卷多选：批量删（进回收站，连考试一起）、批量导出 zip（fmt: xlsx / html / both）
+  bulkDeletePapers: ids => http.post('/papers/bulk-delete', { ids }),
+  bulkExportPapers: (ids, fmt) => http.post('/papers/bulk-export', { ids, fmt }, { responseType: 'blob' }),
 
   // 导出：都返回二进制流，配合上面的 download() 用
   exportPaperXlsx: paper =>

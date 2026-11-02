@@ -150,6 +150,42 @@ async function openPaper(id) {
   mode.value = 'paper'
 }
 
+// ---------- 历史试卷多选 ----------
+const picked = ref([])
+const historyTable = ref(null)
+const FMT_LABEL = { xlsx: 'Excel', html: '学生答题网页', both: 'Excel 和学生答题网页' }
+
+function pickAll() {
+  history.value.forEach(r => historyTable.value?.toggleRowSelection(r, true))
+}
+
+async function bulkExport(fmt) {
+  const ids = picked.value.map(r => r.id)
+  if (!ids.length) return
+  await download(api.bulkExportPapers(ids, fmt), `历史试卷_${ids.length}份.zip`)
+  ElMessage.success(`已导出 ${ids.length} 份（${FMT_LABEL[fmt]}），打包成一个 zip`)
+}
+
+async function bulkRemove() {
+  const rows = picked.value
+  if (!rows.length) return
+  const exams = rows.reduce((n, r) => n + (r.exam_count || 0), 0)
+  const withExam = rows.filter(r => r.exam_count).length
+  await ElMessageBox.confirm(
+    `确定删除选中的 ${rows.length} 份试卷？` +
+      (exams ? `其中 ${withExam} 份发过考试，会连同这 ${exams} 场考试和答卷一起删除。` : '') +
+      '删掉的都在回收站里，7 天内可以一份一份还原。',
+    '批量删除',
+    { type: 'warning', confirmButtonText: `删除 ${rows.length} 份`, confirmButtonClass: 'el-button--danger' }
+  )
+  const res = await api.bulkDeletePapers(rows.map(r => r.id))
+  if (paper.value && res.deleted.includes(paper.value.paper_id)) paper.value = null
+  history.value = await api.papers()
+  picked.value = []
+  const extra = res.failed.length ? `，${res.failed.length} 份已经不在了` : ''
+  ElMessage.success(`已删除 ${res.deleted.length} 份${res.exams ? `（连同 ${res.exams} 场考试）` : ''}${extra}`)
+}
+
 async function removePaper(row) {
   await ElMessageBox.confirm(`确定删除《${row.title}》？`, '提示', { type: 'warning' })
   await api.deletePaper(row.id)
@@ -359,8 +395,41 @@ function printPaper() {
       <el-card shadow="never">
         <template #header>历史试卷</template>
         <el-empty v-if="!history.length" description="勾选「把这套卷子存档」后会出现在这里" :image-size="60" />
-        <el-table v-else :data="history" size="small" border>
-          <el-table-column prop="title" label="标题" show-overflow-tooltip />
+        <!-- 勾选后浮出来的批量操作条，没勾就不占地方 -->
+        <div v-if="picked.length" class="hbulk no-print">
+          <span class="hcount">已选 <b>{{ picked.length }}</b> 份</span>
+          <el-button link size="small" @click="pickAll">全选 {{ history.length }} 份</el-button>
+          <el-button link size="small" @click="historyTable?.clearSelection()">取消</el-button>
+          <span class="grow" />
+          <el-dropdown trigger="click" @command="bulkExport">
+            <el-button size="small">批量导出</el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="xlsx">每份一个 Excel</el-dropdown-item>
+                <el-dropdown-item command="html">每份一个学生答题网页</el-dropdown-item>
+                <el-dropdown-item command="both">两种都要</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <el-button size="small" type="danger" @click="bulkRemove">批量删除</el-button>
+        </div>
+        <div v-else-if="history.length > 1" class="hhint no-print">勾选左侧方框可批量导出、删除</div>
+        <el-table
+          v-if="history.length"
+          ref="historyTable"
+          :data="history"
+          size="small"
+          border
+          row-key="id"
+          @selection-change="picked = $event"
+        >
+          <el-table-column type="selection" width="34" />
+          <el-table-column label="标题" show-overflow-tooltip>
+            <template #default="{ row }">
+              {{ row.title }}
+              <el-tag v-if="row.exam_count" size="small" type="warning" class="exam-tag">{{ row.exam_count }} 场考试</el-tag>
+            </template>
+          </el-table-column>
           <el-table-column prop="code" label="卷号" width="86" />
           <el-table-column prop="question_count" label="题数" width="60" />
           <el-table-column label="" width="88">
@@ -910,5 +979,31 @@ label.op:hover {
     max-width: 100% !important;
     flex: 0 0 100% !important;
   }
+}
+.hbulk {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--el-color-primary-light-9);
+  border: 1px solid var(--el-color-primary-light-7);
+}
+.hbulk .grow {
+  flex: 1;
+}
+.hcount {
+  font-size: 12px;
+  color: var(--el-color-primary);
+}
+.hhint {
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.exam-tag {
+  margin-left: 4px;
 }
 </style>

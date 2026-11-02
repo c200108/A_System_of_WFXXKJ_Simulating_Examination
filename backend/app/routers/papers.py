@@ -1,15 +1,17 @@
+import io
 import json
+import zipfile
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..constants import DICT_TYPE
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import Exam, Paper, PaperItem, Question, User
-from ..schemas import PaperGenerateIn, PaperGenerateOut, PaperOut
+from ..schemas import IdsIn, PaperExportIn, PaperGenerateIn, PaperGenerateOut, PaperOut
 from ..services import recycle
 from ..services.blueprint import slot_hint, slot_key, slot_pool
 from ..services.export import questions_to_xlsx, student_html
@@ -230,10 +232,15 @@ def list_papers(
     limit: int = 50, _: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
     rows = db.scalars(select(Paper).order_by(Paper.id.desc()).limit(limit)).all()
+    exams = dict(db.execute(
+        select(Exam.paper_id, func.count()).where(Exam.paper_id.in_([p.id for p in rows]))
+        .group_by(Exam.paper_id)
+    ).all()) if rows else {}
     out = []
     for p in rows:
         item = PaperOut.model_validate(p)
         item.question_count = len(p.items)
+        item.exam_count = exams.get(p.id, 0)
         out.append(item)
     return out
 
@@ -296,17 +303,77 @@ def get_paper(paper_id: int, _: User = Depends(get_current_user), db: Session = 
     }
 
 
-@router.delete("/{paper_id}", summary="删除试卷")
-def delete_paper(paper_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    paper = db.get(Paper, paper_id)
-    if not paper:
-        raise HTTPException(status_code=404, detail="试卷不存在")
-    # 试题条目、用这份卷发的考试和答卷都会跟着删（外键级联），一起进回收站
+def _trash_paper(db: Session, user: User, paper: Paper) -> int:
+    """删一份卷：试题条目、用这份卷发的考试和答卷都会跟着删（外键级联），一起进回收站。
+    返回连带删掉的考试场数。不提交 —— 单个删和批量删都在调用方一次提交。"""
     exams = db.scalars(select(Exam).where(Exam.paper_id == paper.id)).all()
     recycle.trash(db, user, "paper", f"试卷「{paper.title}」", Paper, [paper.id],
                   detail=(paper.code or "") + (f"，连同 {len(exams)} 场考试" if exams else ""))
     for exam in exams:
         db.delete(exam)
     db.delete(paper)
+    return len(exams)
+
+
+@router.delete("/{paper_id}", summary="删除试卷")
+def delete_paper(paper_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    paper = db.get(Paper, paper_id)
+    if not paper:
+        raise HTTPException(status_code=404, detail="试卷不存在")
+    _trash_paper(db, user, paper)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/bulk-delete", summary="批量删除勾选的历史试卷（进回收站）")
+def bulk_delete_papers(body: IdsIn, user: User = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    """和单个删一样的规矩（登录的老师都能删，连带考试和答卷一起进回收站），
+    每份卷各占回收站一条，能一份一份还原。整批一个事务：要么全删，要么一份不动。
+    已经不在的（别人刚删了）记进 failed，不算错。"""
+    ids = list(dict.fromkeys(body.ids))
+    if not ids:
+        raise HTTPException(status_code=400, detail="没有选中任何试卷")
+    found = {p.id: p for p in db.scalars(select(Paper).where(Paper.id.in_(ids)))}
+    deleted, exams, failed = [], 0, []
+    for pid in ids:
+        paper = found.get(pid)
+        if paper is None:
+            failed.append({"id": pid, "reason": "试卷不存在（可能已经被删了）"})
+            continue
+        exams += _trash_paper(db, user, paper)
+        deleted.append(pid)
+    db.commit()
+    return {"deleted": deleted, "exams": exams, "failed": failed}
+
+
+@router.post("/bulk-export", summary="批量导出勾选的历史试卷（打成一个 zip）")
+def bulk_export_papers(body: PaperExportIn, user: User = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    """每份卷照单个导出的办法生成 Excel / 学生答题网页，打进一个 zip。
+    文件名前面带序号和卷号，同名的卷子不会互相覆盖。找不到的卷子写进 zip 里的「说明.txt」。"""
+    ids = list(dict.fromkeys(body.ids))
+    if not ids:
+        raise HTTPException(status_code=400, detail="没有选中任何试卷")
+    buf = io.BytesIO()
+    missing, done = [], 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for i, pid in enumerate(ids, 1):
+            if db.get(Paper, pid) is None:
+                missing.append(pid)
+                continue
+            paper = PaperGenerateOut(**get_paper(pid, user, db))
+            stem = f"{i:02d}_{_safe_name(paper.title)}" + (f"_{paper.code}" if paper.code else "")
+            if body.fmt in ("xlsx", "both"):
+                rows = [it.model_dump() for g in paper.groups for it in g.items]
+                zf.writestr(stem + ".xlsx", questions_to_xlsx(rows, "试卷"))
+            if body.fmt in ("html", "both"):
+                zf.writestr(stem + "_学生答题.html", student_html(paper.model_dump()).encode("utf-8"))
+            done += 1
+        if missing:
+            zf.writestr("说明.txt", "下面这些试卷没找到（可能已经被删了），没有导出：\n"
+                        + "\n".join(f"  id {m}" for m in missing) + "\n")
+    if not done:
+        raise HTTPException(status_code=404, detail="选中的试卷都不存在了")
+    return Response(content=buf.getvalue(), media_type="application/zip",
+                    headers=_attachment(f"历史试卷_{done}份.zip"))
