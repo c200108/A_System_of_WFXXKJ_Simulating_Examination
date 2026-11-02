@@ -1,2 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 「我的 → 检查更新」：下载新版 apk 后交给系统安装器（安卓 8 起要老师在设置里允许一次） -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <application>
+        <!-- 把缓存目录里下载好的 apk 只读地交给安装器（代替 AndroidX 的 FileProvider，见 ApkProvider） -->
+        <provider
+            android:name="cn.wfxxkj.teacher.me.ApkProvider"
+            android:authorities="${applicationId}.apkprovider"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+    </application>
+</manifest>
