@@ -10,6 +10,7 @@ from .routers import (
     app_mobile,
     auth,
     classes,
+    client_update,
     community,
     config,
     desk,
@@ -61,6 +62,7 @@ app.include_router(typing_train.router)  # 打字训练：学生端公开，教�
 app.include_router(community.router)  # 反馈与更新日志
 app.include_router(app_mobile.router)  # 教师端安卓 APP：认服务器、心跳保持登录
 app.include_router(recycle.router)  # 数据回收站
+app.include_router(client_update.router)  # 学生端 exe 检查更新：清单 + 下载，公开只读
 
 
 @app.on_event("startup")

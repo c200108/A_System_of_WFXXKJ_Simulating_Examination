@@ -35,7 +35,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from . import api, cleanup, package, snapshot, states, store
+from . import api, cleanup, package, snapshot, states, store, update
 from .exam_ui import DoneFrame, ExamFrame
 from .shell import (AMBER, APP_NAME, BG, BLUE, CARD, CLIENT_VER, FONT, GRAY,
                     GREEN, LINE, NAME_LOGIN_PASSWORD, RED, baked_name_login,
@@ -153,14 +153,120 @@ class LoginFrame(ttk.Frame):
                   bg=CARD, fg=GRAY, cursor="hand2", command=self.offline
                   ).place(x=30, y=268 + extra, width=410, height=20)
 
-        tk.Label(wrap, text=f"客户端 {CLIENT_VER}{'（姓名登录版）' if by_name else ''}"
+        foot = tk.Frame(wrap, bg=BG)
+        foot.pack(side="bottom", pady=6)
+        ver = update.current_version()
+        tk.Label(foot, text=f"客户端 {ver or CLIENT_VER}{'（姓名登录版）' if by_name else ''}"
                             f"　构建 {build_stamp()}　"
                             "操作题在真实系统中完成",
-                 bg=BG, fg=GRAY, font=(FONT, 8)).pack(side="bottom", pady=6)
+                 bg=BG, fg=GRAY, font=(FONT, 8)).pack(side="left")
+        # 只在这儿（登录页）能查更新：考试中不联网查、不弹窗
+        self.upd_btn = tk.Button(foot, text="检查更新", font=(FONT, 8), relief="flat",
+                                 bg=BG, fg=BLUE, cursor="hand2", command=self.check_update)
+        self.upd_btn.pack(side="left", padx=(8, 0))
+        self._cool_down()
 
         self.after(80, lambda: (self.no_entry if self.vars["server"].get()
                                 else self.server_entry).focus_set())
         self.after(120, self.check_net)
+
+    # ---------------- 检查更新 ----------------
+    def _cool_down(self):
+        """按钮上倒数：两次检查至少隔 60 秒，间隔内按钮灰着、写着还要等几秒。"""
+        left = update.THROTTLE.wait_left()
+        try:
+            if left:
+                self.upd_btn.config(state="disabled", text=f"检查更新（{left} 秒后可再查）")
+                self.after(1000, self._cool_down)
+            else:
+                self.upd_btn.config(state="normal", text="检查更新")
+        except tk.TclError:
+            pass                         # 已经登录进去，登录页没了
+
+    def check_update(self):
+        if update.THROTTLE.wait_left():
+            self._cool_down()
+            return
+        update.THROTTLE.mark()
+        self.upd_btn.config(state="disabled", text="正在检查更新…")
+
+        def work():
+            try:
+                return update.check_within(), ""      # 整次 5 秒封顶，拿不到就算了
+            except update.UpdateError as exc:
+                return None, str(exc)
+
+        def done(got, err):
+            self._cool_down()
+            rel, why = got if got else (None, err or "检查更新出错了")
+            if why:
+                messagebox.showwarning("检查更新", f"无法获取更新。\n\n{why}")
+                return
+            cur = update.current_version()
+            if not update.is_newer(rel.version, cur):
+                messagebox.showinfo("检查更新", f"已经是最新版本（{cur or rel.version}）。")
+                return
+            self.offer_update(rel, cur)
+        in_thread(self, work, done)
+
+    def offer_update(self, rel, cur: str):
+        notes = rel.notes.strip()
+        if len(notes) > 600:
+            notes = notes[:600] + "…"
+        head = f"发现新版本 {rel.version}" + (f"（当前 {cur}）" if cur else "")
+        exe = update.exe_path()
+        var = update.variant()
+        # 查到它的那个源没有这个变体、后面也没有备用源可问 —— 那是真没有
+        if exe is None or (var not in rel.assets and not rel.fallbacks):
+            where = f"\n\n请到这里下载：{rel.page}" if rel.page else ""
+            why = ("现在是直接跑的源码，没有 exe 可换。" if exe is None
+                   else f"更新源里没有这一版（{var}）的安装包，没法自动升级。")
+            messagebox.showinfo("检查更新", f"{head}\n\n{notes}\n\n{why}{where}".strip())
+            return
+        if not messagebox.askyesno("检查更新", f"{head}\n\n{notes}\n\n现在升级吗？"
+                                   "（下载完自动重启，文件名不变）"):
+            return
+        self.do_update(rel, var, exe)
+
+    def do_update(self, rel, var: str, exe: Path):
+        dest = exe.with_name(exe.name + ".download")
+        state = {"got": 0, "total": int((rel.assets.get(var) or {}).get("size") or 0),
+                 "done": False}
+
+        def show():
+            if state["done"]:
+                return
+            pct = f" {state['got'] * 100 // state['total']}%" if state["total"] else ""
+            try:
+                self.upd_btn.config(state="disabled", text=f"正在下载新版{pct}…")
+                self.after(300, show)
+            except tk.TclError:
+                pass
+
+        def work():
+            try:
+                return update.download_any(rel, var, dest,
+                                           lambda g, t: state.update(got=g, total=t)), ""
+            except update.UpdateError as exc:
+                return None, str(exc)
+
+        def done(got, err):
+            state["done"] = True
+            self._cool_down()
+            path, why = got if got else (None, err or "下载出错了")
+            if why:
+                messagebox.showwarning("检查更新", why)
+                return
+            final = update.target_name(exe, baked_server())
+            try:
+                update.swap_in(path, exe, final)
+            except OSError as exc:
+                messagebox.showwarning("检查更新", f"新版下载好了，但换不上去：{exc}")
+                return
+            messagebox.showinfo("检查更新", f"已升级到 {rel.version}，马上用新版重新打开。")
+            self.app.root.destroy()
+        show()
+        in_thread(self, work, done)
 
     # ---------------- 服务器状态与补传 ----------------
     def check_net(self):
