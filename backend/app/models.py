@@ -371,6 +371,24 @@ class ImportLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
 
 
+class TypingTheme(Base):
+    """打字练习文本的主题（2.15.0）：信息生活、……，老师可以自己加。
+
+    学生取文本时**先随机挑一个启用的主题，再只在这个主题里抽几段拼起来** ——
+    一篇文章前后讲的是同一件事，读起来通顺；开了好几个主题时，每次随机换着来。
+    内置的「信息生活」删不掉（升级前的老文本全归它）；文本的 theme_id 为空时也当它算。
+    """
+
+    __tablename__ = "typing_themes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(32), unique=True)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_builtin: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
+
+
 class TypingText(Base):
     """打字练习文本。原来写在 config.yaml 里，挪进数据库后老师能在界面上增删改。
 
@@ -388,6 +406,10 @@ class TypingText(Base):
     content_hash: Mapped[str] = mapped_column(String(64), unique=True)  # 查重
     source: Mapped[str] = mapped_column(String(32), default="自定义")  # 内置 / 自定义 / 导入
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    # 所属主题。为空 = 内置的「信息生活」（删掉某个主题时它下面的文本就置空，回收站还原时再接回去）
+    theme_id: Mapped[int | None] = mapped_column(
+        ForeignKey("typing_themes.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
 

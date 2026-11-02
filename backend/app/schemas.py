@@ -633,16 +633,39 @@ class TypingStatsOut(BaseModel):
     by_class: list[dict] = []
 
 
+class TypingThemeIn(BaseModel):
+    name: str = Field(min_length=1, max_length=32)
+
+
+class TypingThemeUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=32)
+    is_enabled: bool | None = None
+    sort_order: int | None = None
+
+
+class TypingThemeOut(ORMModel):
+    id: int
+    name: str
+    is_enabled: bool
+    sort_order: int
+    is_builtin: bool
+    # 各语言、各难度启用的文本有几段：{"chinese": {"简单": 12}, ...}
+    counts: dict = Field(default_factory=dict)
+    total: int = 0
+
+
 class TypingTextIn(BaseModel):
     mode: str = Field(pattern="^(english|chinese)$")
     difficulty: str
     content: str
+    theme_id: int | None = None  # 不给就归内置的「信息生活」
 
 
 class TypingTextUpdate(BaseModel):
     difficulty: str | None = None
     content: str | None = None
     is_active: bool | None = None
+    theme_id: int | None = None
 
 
 class TypingTextOut(ORMModel):
@@ -652,14 +675,16 @@ class TypingTextOut(ORMModel):
     content: str
     source: str
     is_active: bool
+    theme_id: int | None = None
     created_at: datetime | None = None
 
 
 class TypingTextBulkIn(BaseModel):
-    """批量处理勾选的文本。action 限死这三个，别的一律拒绝。"""
+    """批量处理勾选的文本。action 限死这几个，别的一律拒绝。theme：改到 theme_id 那个主题。"""
 
     ids: list[int] = Field(default_factory=list)
-    action: Literal["delete", "enable", "disable"]
+    action: Literal["delete", "enable", "disable", "theme"]
+    theme_id: int | None = None
 
 
 # ---------- 需求反馈 ----------

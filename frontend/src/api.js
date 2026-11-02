@@ -160,6 +160,8 @@ export function safeName(name) {
 export const api = {
   // 前后端共用 config.yaml，这里取界面要用的那部分
   siteConfig: () => http.get('/config'),
+  // 服务器自己的网卡地址（老师在服务器本机用 localhost 打开后台时拼学生链接用，要登录）
+  serverAddresses: () => http.get('/config/addresses'),
 
   login(username, password) {
     const form = new URLSearchParams()
@@ -295,7 +297,13 @@ export const api = {
   typingTextCreate: data => http.post('/typing/texts', data),
   typingTextUpdate: (id, data) => http.put(`/typing/texts/${id}`, data),
   typingTextDelete: id => http.delete(`/typing/texts/${id}`),
-  typingTextBulk: (ids, action) => http.post('/typing/texts/bulk', { ids, action }),
+  // extra：改主题时带 { theme_id }
+  typingTextBulk: (ids, action, extra = {}) => http.post('/typing/texts/bulk', { ids, action, ...extra }),
+  // 主题（学生取文本时先挑一个启用的主题，再只在这个主题里抽段）
+  typingThemes: () => http.get('/typing/themes'),
+  typingThemeCreate: name => http.post('/typing/themes', { name }),
+  typingThemeUpdate: (id, data) => http.put(`/typing/themes/${id}`, data),
+  typingThemeDelete: id => http.delete(`/typing/themes/${id}`),
 
   // 需求反馈（提交与浏览都不需要登录）
   feedbackList: params => http.get('/feedback', { params }),
