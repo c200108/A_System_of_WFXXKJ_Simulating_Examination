@@ -84,6 +84,28 @@ keyPassword=你设的密码
   `exam.xxx.cn`。是 https 的要写上 `https://`；
 - **账号密码**：和网页版教师端一样。
 
+## 检查更新与发版
+
+「我的 → 检查更新」去**联网版公开仓库**（`c200108/A_System_of_WFXXKJ_Simulating_Examination`）的 Release 列表里
+找 tag 以 `teacher-v` 开头的最新正式版，下载 `.apk` 后交给系统安装器（`AppUpdate.java`、`ApkProvider.java`）。
+两次检查至少隔 60 秒；整次查询 5 秒封顶，拿不到就提示「无法获取更新」。
+
+发一版：
+
+1. `app/build.gradle` 里 `versionCode`、`versionName` 都加一，`backend/app/changelog_seed.py` 和 `docs/更新日志/` 记一笔；
+2. 用**正式签名**打包（`keystore.properties` 在就自动用它）：`gradlew.bat assembleRelease`；
+3. 发 Release（tag 必须是 `teacher-v<版本>`，**不要标成 Latest**，Latest 留给学生端 exe）：
+
+   ```bat
+   gh release create teacher-v5.1.0 app\build\outputs\apk\release\app-release.apk#教师端APP-5.1.0.apk ^
+      --title "教师端 APP 5.1.0" --notes-file 说明.md --latest=false
+   ```
+
+   附件名会显示成 `app-release.apk`，想改名先把文件复制成英文名（如 `wfxx-teacher-5.1.0.apk`）再传 ——
+   GitHub 会把附件名里的中文换掉。
+
+学生端 exe 只认 `v<数字>` 的 tag，APP 只认 `teacher-v…`，两边发在同一个仓库里不会互相干扰。
+
 ## 版本号
 
 跟系统的产品线走：5.x = 教师端 APP。改了 APP 就在

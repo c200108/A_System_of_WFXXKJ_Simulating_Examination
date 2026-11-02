@@ -29,6 +29,7 @@ env.secrets
 # 桌面客户端的打包产物；「答案包」里是学生的真实答卷，更不能进版本库
 desktop/发布/
 desktop/build/
+desktop/更新包/
 
 # 编辑器与系统
 .idea/
