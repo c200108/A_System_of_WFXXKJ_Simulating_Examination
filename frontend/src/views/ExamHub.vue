@@ -1,7 +1,7 @@
 <script setup>
 /**
- * 考试工作台。把考试、打字学情、练习文本三件事收在一页里，
- * 默认都收着，点按钮才展开。
+ * 考试工作台。把考试、打字学情两件事收在一页里，
+ * 默认都收着，点按钮才展开。（练习文本挪到了题库工作台）
  *
  * 三个功能的代码原封不动 —— 这里只是换了个摆放方式。
  * 以后再加一个模块，往 panels 里加一项就行。
@@ -23,13 +23,6 @@ const panels = [
     label: '打字学情',
     desc: '成绩排名、正确率分布',
     component: defineAsyncComponent(() => import('./TypingAdmin.vue'))
-  },
-  {
-    key: 'typing-texts',
-    icon: '📖',
-    label: '练习文本',
-    desc: '打字练习用的中英文段落',
-    component: defineAsyncComponent(() => import('./TypingTexts.vue'))
   }
 ]
 </script>
