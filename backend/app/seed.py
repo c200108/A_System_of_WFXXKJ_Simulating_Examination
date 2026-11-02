@@ -17,7 +17,7 @@ from .models import AppMeta, DictItem, ExamSubmission, User
 from .security import hash_password
 from .changelog_seed import seed_changelog
 from .services.exam import settle_submission
-from .services.typing_texts import seed_from_config
+from .services.typing_texts import ensure_default_theme, seed_from_config
 from .siteconfig import site
 
 
@@ -85,6 +85,7 @@ def seed() -> None:
         n = seed_from_config(db)
         if n:
             print(f"[seed] 打字文本已导入 {n} 段")
+        ensure_default_theme(db)  # 内置主题「信息生活」，没归主题的文本归它
 
         # 更新日志按内容去重，可反复执行；新版本追加到 changelog_seed.py 即可
         n = seed_changelog(db)

@@ -4,9 +4,12 @@
 本来也不在 config.yaml 中）。学生答题页也要读，所以不要求登录。
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from ..config import settings
+from ..deps import get_current_user
+from ..models import User
+from ..services.netaddr import in_container, server_addresses
 from ..siteconfig import site
 
 router = APIRouter(prefix="/api/config", tags=["配置"])
@@ -43,4 +46,20 @@ def get_config():
             "max_mb": site.upload.max_mb,
             "image_extensions": site.upload.image_extensions,
         },
+    }
+
+
+@router.get("/addresses", summary="服务器自己的可访问地址（拼学生链接用，要登录）")
+def addresses(_: User = Depends(get_current_user)):
+    """老师在服务器本机用 localhost 打开后台时，学生链接不能用 localhost，
+    前端拿这里的地址换掉主机名（端口用浏览器实际的端口）。
+
+    public_base_url 配了就以它为准；ips 是本机网卡上的 IPv4（公网在前、局域网其次），
+    在 Docker 容器里查不到宿主机的地址，返回空并带 in_container，前端提示去配 PUBLIC_BASE_URL。
+    不放进公开的 /api/config：内网地址不必告诉所有人。
+    """
+    return {
+        "public_base_url": settings.public_url,
+        "ips": server_addresses(),
+        "in_container": in_container(),
     }

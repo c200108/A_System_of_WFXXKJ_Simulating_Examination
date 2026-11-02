@@ -43,6 +43,7 @@ CHUNK = 500
 KIND_NAMES = {
     "exam": "考试", "submission": "答卷", "paper": "存档试卷", "question": "题目",
     "student": "学生", "class": "班级", "typing_record": "打字成绩", "typing_text": "练习文本",
+    "typing_theme": "打字主题",
     "sim": "仿真任务", "feedback": "反馈",
 }
 
