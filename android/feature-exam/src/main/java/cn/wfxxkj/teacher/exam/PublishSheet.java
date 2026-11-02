@@ -91,6 +91,8 @@ final class PublishSheet {
                 creating ? ExamApi.defShowScore : Json.bool(exam, "show_score"));
         Form.Toggle showAnswer = f.toggle("交卷看答案", "正式考试建议关，否则先考的学生能把答案带出去",
                 creating ? ExamApi.defShowAnswer : Json.bool(exam, "show_answer"));
+        Form.Toggle early = f.toggle("允许提前交卷", "默认要考试时间过三分之二、并且答完三分之二的题才能交卷；打开后全程随时能交",
+                !creating && Json.bool(exam, "early_submit"));
         Form.Toggle retake = f.toggle("允许重考", "默认同一学号只能交一次",
                 creating ? ExamApi.defRetake : Json.bool(exam, "allow_retake"));
 
@@ -104,6 +106,7 @@ final class PublishSheet {
                     "is_open", open.value(),
                     "show_score", showScore.value(),
                     "show_answer", showAnswer.value(),
+                    "early_submit", early.value(),
                     "allow_retake", retake.value());
             List<Object> ids = targets.values();
             // 修改时班级没动就不发，免得把已删班级的旧记录冲掉

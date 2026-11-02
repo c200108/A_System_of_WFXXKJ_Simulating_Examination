@@ -264,8 +264,20 @@ public abstract class Screen {
     /** 主线程上稍后执行（页面已关闭就不执行） */
     public final void post(Runnable r, long delayMs) {
         MAIN.postDelayed(() -> {
-            if (!destroyed) r.run();
+            if (!destroyed) guard("定时任务", r);
         }, delayMs);
+    }
+
+    /**
+     * 在主线程上跑一段改界面的代码；出错交给主界面（弹错误详情、关掉这个页面），不让整个 APP 退出。
+     */
+    public final void guard(String where, Runnable r) {
+        try {
+            r.run();
+        } catch (Throwable t) {
+            if (host != null) host.screenFailed(this, t, title() + " · " + where);
+            else throw t;
+        }
     }
 
     // ---------- 后台任务 ----------
@@ -277,18 +289,29 @@ public abstract class Screen {
 
     public final <T> void run(final Task<T> task, final Ok<T> ok, final Err err) {
         IO.execute(() -> {
+            final T r;
             try {
-                final T r = task.call();
-                MAIN.post(() -> {
-                    if (!destroyed && ok != null) ok.done(r);
-                });
+                r = task.call();
             } catch (final Exception e) {
                 MAIN.post(() -> {
                     if (destroyed) return;
-                    if (err != null && err.failed(e)) return;
-                    showError(e);
+                    guard("处理出错", () -> {
+                        if (err != null && err.failed(e)) return;
+                        showError(e);
+                    });
                 });
+                return;
+            } catch (final Throwable t) {
+                // 内存不够、手机上缺某个系统方法这类 Error：以前没接，后台线程直接把 APP 带走
+                MAIN.post(() -> {
+                    if (!destroyed && host != null) host.screenFailed(this, t, title() + " · 加载数据");
+                });
+                return;
             }
+            MAIN.post(() -> {
+                // 数据回来画页面这一步最容易因为数据和预想的不一样而出错
+                if (!destroyed && ok != null) guard("显示数据", () -> ok.done(r));
+            });
         });
     }
 

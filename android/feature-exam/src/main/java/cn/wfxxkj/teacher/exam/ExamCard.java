@@ -102,6 +102,7 @@ final class ExamCard extends LinearLayout {
         if (!Json.bool(e, "can_edit")) tags.addView(ExamUi.tag(c, "只读", Tone.INFO));
         if (Json.bool(e, "show_score")) tags.addView(ExamUi.tag(c, "交卷看分", Tone.PRIMARY));
         if (Json.bool(e, "show_answer")) tags.addView(ExamUi.tag(c, "交卷看答案", Tone.WARNING));
+        if (Json.bool(e, "early_submit")) tags.addView(ExamUi.tag(c, "可提前交卷", Tone.SUCCESS));
         if (Json.bool(e, "allow_retake")) tags.addView(ExamUi.tag(c, "可重考", Tone.VIOLET));
 
         nSubs.setText(String.valueOf(Json.num(e, "submission_count")));

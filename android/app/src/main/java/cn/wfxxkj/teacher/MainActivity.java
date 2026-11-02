@@ -88,6 +88,9 @@ public class MainActivity extends Activity implements Host, Session.Listener {
         Session.get().addListener(this);
         buildShell();
         switchTab(tabs.get(0).key);
+        // 上次 APP 异常退出留下的记录（TeacherApp 里记的），弹出来让老师能复制发给维护者
+        String last = cn.wfxxkj.teacher.core.util.Crash.takeSaved(this);
+        if (last != null) cn.wfxxkj.teacher.core.util.Crash.show(this, "上次 APP 异常退出", last);
     }
 
     @Override
@@ -275,7 +278,13 @@ public class MainActivity extends Activity implements Host, Session.Listener {
     /** 把当前标签栈顶的页面放进内容区 */
     private void showTop(boolean animate) {
         Screen s = top();
-        View v = s.attach(this, this);
+        View v;
+        try {
+            v = s.attach(this, this);
+        } catch (Throwable t) {
+            screenFailed(s, t, s.title() + " · 打开页面");
+            return;
+        }
         if (v.getParent() != null) ((ViewGroup) v.getParent()).removeView(v);
         content.removeAllViews();
         content.addView(v, new FrameLayout.LayoutParams(V.MATCH, V.MATCH));
@@ -285,8 +294,39 @@ public class MainActivity extends Activity implements Host, Session.Listener {
             v.animate().alpha(1f).translationX(0).setDuration(200)
                     .setInterpolator(new DecelerateInterpolator(1.5f)).start();
         }
-        renderChrome();
-        s.dispatchShow();
+        try {
+            renderChrome();
+            s.dispatchShow();
+        } catch (Throwable t) {
+            screenFailed(s, t, s.title() + " · 显示页面");
+        }
+    }
+
+    @Override
+    public void screenFailed(Screen screen, Throwable error, String where) {
+        android.util.Log.e("WfxxTeacher", "页面出错：" + where, error);
+        String detail = cn.wfxxkj.teacher.core.util.Crash.describe(error, where);
+        // 出错的页面关掉，退回上一层；是标签首页的话就留着（关不掉），至少 APP 不退
+        ArrayList<Screen> st = stack();
+        if (st.size() > 1 && st.contains(screen)) {
+            st.remove(screen);
+            try {
+                screen.dispatchDestroy();
+            } catch (Throwable ignored) {
+                // 已经在处理一个错误了，关页面时再出错也不管
+            }
+            showTopSafely();
+        }
+        cn.wfxxkj.teacher.core.util.Crash.show(this, "页面出错了", detail);
+    }
+
+    /** 出错后回到上一层；上一层也打不开就停在空白内容区，不再递归 */
+    private void showTopSafely() {
+        try {
+            showTop(false);
+        } catch (Throwable t) {
+            content.removeAllViews();
+        }
     }
 
     @Override
