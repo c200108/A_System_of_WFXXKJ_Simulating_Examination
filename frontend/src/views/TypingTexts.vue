@@ -1,5 +1,10 @@
 <script setup>
-/** 打字练习文本库管理：逐条增删改 + 上传 txt 批量导入。 */
+/**
+ * 打字练习文本库管理：逐条增删改 + 上传 txt 批量导入 + 主题。
+ *
+ * 主题（2.15.0）：每段文本属于一个主题。学生取文本时先在**启用的主题**里随机挑一个，
+ * 再只在这个主题里抽几段拼成长文，不跨主题拼。内置主题「信息生活」不能删。
+ */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
@@ -14,14 +19,19 @@ const stats = ref({ english: {}, chinese: {} })
 const difficulties = ref(['简单', '中等', '困难'])
 const loading = ref(false)
 
-const query = reactive({ mode: 'chinese', difficulty: '', keyword: '' })
+const query = reactive({ mode: 'chinese', difficulty: '', keyword: '', theme_id: '' })
+
+const themes = ref([])
+const themeName = id => themes.value.find(t => t.id === id)?.name || '信息生活'
+const builtinId = computed(() => themes.value.find(t => t.is_builtin)?.id ?? null)
+const bulkTheme = ref(null)
 
 const dialog = ref(false)
 const editing = ref(null)
-const form = reactive({ mode: 'chinese', difficulty: '简单', content: '' })
+const form = reactive({ mode: 'chinese', difficulty: '简单', content: '', theme_id: null })
 
 const importDlg = ref(false)
-const imp = reactive({ mode: 'chinese', difficulty: '简单', split: 'line' })
+const imp = reactive({ mode: 'chinese', difficulty: '简单', split: 'line', theme_id: null })
 const importing = ref(false)
 
 // 勾选。切换筛选条件后表格会重建，选中项跟着清掉，免得误删看不见的那些
@@ -35,6 +45,7 @@ async function load() {
     Object.keys(params).forEach(k => params[k] === '' && delete params[k])
     rows.value = await api.typingTexts(params)
     stats.value = await api.typingTextStats()
+    themes.value = await api.typingThemes()
     selected.value = []
     tableRef.value?.clearSelection()
   } finally {
@@ -62,13 +73,23 @@ const summary = computed(() =>
 
 function openCreate() {
   editing.value = null
-  Object.assign(form, { mode: query.mode, difficulty: query.difficulty || '简单', content: '' })
+  Object.assign(form, {
+    mode: query.mode,
+    difficulty: query.difficulty || '简单',
+    content: '',
+    theme_id: query.theme_id || builtinId.value
+  })
   dialog.value = true
 }
 
 function openEdit(row) {
   editing.value = row
-  Object.assign(form, { mode: row.mode, difficulty: row.difficulty, content: row.content })
+  Object.assign(form, {
+    mode: row.mode,
+    difficulty: row.difficulty,
+    content: row.content,
+    theme_id: row.theme_id ?? builtinId.value
+  })
   dialog.value = true
 }
 
@@ -77,7 +98,8 @@ async function save() {
   if (editing.value) {
     await api.typingTextUpdate(editing.value.id, {
       difficulty: form.difficulty,
-      content: form.content
+      content: form.content,
+      theme_id: form.theme_id
     })
   } else {
     await api.typingTextCreate({ ...form })
@@ -100,7 +122,7 @@ async function remove(row) {
 }
 
 // ---------- 批量操作 ----------
-const BULK_LABEL = { delete: '删除', enable: '启用', disable: '停用' }
+const BULK_LABEL = { delete: '删除', enable: '启用', disable: '停用', theme: '改主题' }
 
 async function bulk(action) {
   const ids = selected.value.map(r => r.id)
@@ -114,7 +136,8 @@ async function bulk(action) {
     )
   }
 
-  const res = await api.typingTextBulk(ids, action)
+  if (action === 'theme' && !bulkTheme.value) return ElMessage.warning('先选要改到哪个主题')
+  const res = await api.typingTextBulk(ids, action, action === 'theme' ? { theme_id: bulkTheme.value } : {})
   await load()
   ElMessage.success(`已${BULK_LABEL[action]} ${res.affected} 段`)
 }
@@ -128,6 +151,58 @@ function clearSelection() {
   tableRef.value?.clearSelection()
 }
 
+function openImport() {
+  imp.theme_id = query.theme_id || builtinId.value
+  importDlg.value = true
+}
+
+// ---------- 主题 ----------
+/** 当前语言下这个主题各难度有几段，比如「简单 8 · 中等 8 · 困难 8」 */
+function themeCounts(t) {
+  const c = t.counts?.[query.mode] || {}
+  return difficulties.value.map(d => `${d} ${c[d] || 0}`).join(' · ')
+}
+
+async function addTheme() {
+  const { value } = await ElMessageBox.prompt('主题名称，比如「人工智能」「网络安全」', '新增主题', {
+    inputValidator: v => (v || '').trim().length > 0 || '名称不能为空',
+    inputPattern: /^.{1,32}$/,
+    inputErrorMessage: '不超过 32 个字'
+  })
+  await api.typingThemeCreate(value.trim())
+  await load()
+  ElMessage.success('已新增主题，添加或导入文本时选它就行')
+}
+
+async function renameTheme(t) {
+  const { value } = await ElMessageBox.prompt('新的主题名称', '改名', {
+    inputValue: t.name,
+    inputValidator: v => (v || '').trim().length > 0 || '名称不能为空'
+  })
+  await api.typingThemeUpdate(t.id, { name: value.trim() })
+  await load()
+}
+
+async function toggleTheme(t) {
+  try {
+    await api.typingThemeUpdate(t.id, { is_enabled: !t.is_enabled })
+  } finally {
+    await load() // 被拦下（至少留一个启用）时开关弹回原样
+  }
+}
+
+async function removeTheme(t) {
+  await ElMessageBox.confirm(
+    `删除主题「${t.name}」？它下面的 ${t.total} 段文本不会删，会归回「信息生活」。可以在回收站还原。`,
+    '删除主题',
+    { type: 'warning', confirmButtonText: '删除主题', confirmButtonClass: 'el-button--danger' }
+  )
+  const res = await api.typingThemeDelete(t.id)
+  if (query.theme_id === t.id) query.theme_id = ''
+  await load()
+  ElMessage.success(`已删除，${res.moved} 段文本归回「信息生活」`)
+}
+
 async function doImport(opt) {
   importing.value = true
   try {
@@ -138,6 +213,7 @@ async function doImport(opt) {
       difficulty: imp.difficulty,
       split: imp.split
     })
+    if (imp.theme_id) qs.set('theme_id', imp.theme_id)
     const res = await fetch(`/api/typing/texts/import?${qs}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
@@ -168,15 +244,15 @@ async function doImport(opt) {
       <div class="head">
         <span>练习文本库</span>
         <div>
-          <el-button size="small" @click="importDlg = true">上传 txt 批量导入</el-button>
+          <el-button size="small" @click="openImport">上传 txt 批量导入</el-button>
           <el-button size="small" type="primary" @click="openCreate">添加一段</el-button>
         </div>
       </div>
     </template>
 
     <el-alert type="info" :closable="false" class="hint">
-      学生每次练习会从对应难度里<b>随机抽几段拼成长文</b>，所以每档的段数越多，重复感越低。
-      建议每档至少 10 段。
+      学生每次练习先在<b>启用的主题</b>里随机挑一个，再从这个主题对应难度里<b>随机抽几段拼成长文</b>，
+      不会把不同主题拼在一起。每个启用的主题每档建议至少 8 段，段数越多重复感越低。
     </el-alert>
 
     <div class="summary">
@@ -191,12 +267,35 @@ async function doImport(opt) {
       </div>
     </div>
 
+    <div class="themes">
+      <div class="thead">
+        <span class="sname">主题</span>
+        <span class="ttip">开着的主题参与随机；关掉的主题下的文本学生取不到（文本本身不删）</span>
+        <span class="grow" />
+        <el-button size="small" @click="addTheme">新增主题</el-button>
+      </div>
+      <div class="tlist">
+        <div v-for="th in themes" :key="th.id" class="titem" :class="{ off: !th.is_enabled }">
+          <el-switch :model-value="th.is_enabled" size="small" @change="toggleTheme(th)" />
+          <span class="tname">{{ th.name }}</span>
+          <el-tag v-if="th.is_builtin" size="small" type="info">内置</el-tag>
+          <span class="tcount">{{ themeCounts(th) }}</span>
+          <el-button link size="small" @click="query.theme_id = th.id; load()">查看</el-button>
+          <el-button link size="small" type="primary" @click="renameTheme(th)">改名</el-button>
+          <el-button v-if="!th.is_builtin" link size="small" type="danger" @click="removeTheme(th)">删除</el-button>
+        </div>
+      </div>
+    </div>
+
     <div class="bar">
       <el-select v-model="query.mode" style="width: 110px" @change="load">
         <el-option v-for="m in MODES" :key="m.value" :label="m.label" :value="m.value" />
       </el-select>
       <el-select v-model="query.difficulty" placeholder="全部难度" clearable style="width: 130px" @change="load">
         <el-option v-for="d in difficulties" :key="d" :label="d" :value="d" />
+      </el-select>
+      <el-select v-model="query.theme_id" placeholder="全部主题" clearable style="width: 150px" @change="load">
+        <el-option v-for="th in themes" :key="th.id" :label="th.name" :value="th.id" />
       </el-select>
       <el-input v-model="query.keyword" placeholder="搜内容" clearable style="width: 200px" @keyup.enter="load" />
       <el-button type="primary" @click="load">查询</el-button>
@@ -212,6 +311,10 @@ async function doImport(opt) {
       <span class="grow" />
       <el-button size="small" @click="bulk('enable')">批量启用</el-button>
       <el-button size="small" @click="bulk('disable')">批量停用</el-button>
+      <el-select v-model="bulkTheme" size="small" placeholder="改到主题…" style="width: 130px">
+        <el-option v-for="th in themes" :key="th.id" :label="th.name" :value="th.id" />
+      </el-select>
+      <el-button size="small" @click="bulk('theme')">批量改主题</el-button>
       <el-button size="small" type="danger" @click="bulk('delete')">批量删除</el-button>
     </div>
     <div v-else-if="rows.length" class="bulkhint">
@@ -232,6 +335,9 @@ async function doImport(opt) {
     >
       <el-table-column type="selection" width="44" />
       <el-table-column prop="difficulty" label="难度" width="76" />
+      <el-table-column label="主题" width="110" show-overflow-tooltip>
+        <template #default="{ row }">{{ themeName(row.theme_id) }}</template>
+      </el-table-column>
       <el-table-column prop="content" label="内容" min-width="380" show-overflow-tooltip />
       <el-table-column label="字数" width="70">
         <template #default="{ row }">{{ row.content.length }}</template>
@@ -265,6 +371,11 @@ async function doImport(opt) {
           <el-option v-for="d in difficulties" :key="d" :label="d" :value="d" />
         </el-select>
       </el-form-item>
+      <el-form-item label="主题">
+        <el-select v-model="form.theme_id" style="width: 180px">
+          <el-option v-for="th in themes" :key="th.id" :label="th.name" :value="th.id" />
+        </el-select>
+      </el-form-item>
       <el-form-item label="内容">
         <el-input
           v-model="form.content"
@@ -289,6 +400,11 @@ async function doImport(opt) {
         </el-select>
         <el-select v-model="imp.difficulty" style="width: 110px; margin-left: 10px">
           <el-option v-for="d in difficulties" :key="d" :label="d" :value="d" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="主题">
+        <el-select v-model="imp.theme_id" style="width: 230px">
+          <el-option v-for="th in themes" :key="th.id" :label="th.name" :value="th.id" />
         </el-select>
       </el-form-item>
       <el-form-item label="分段方式">
@@ -352,6 +468,50 @@ async function doImport(opt) {
 .spill.low {
   background: var(--el-color-warning-light-9);
   color: var(--el-color-warning);
+}
+.themes {
+  margin-bottom: 14px;
+  padding: 10px 13px;
+  border-radius: 9px;
+  background: var(--el-fill-color-lighter);
+}
+.thead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.thead .grow {
+  flex: 1;
+}
+.ttip {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.tlist {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.titem {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  min-height: 30px;
+}
+.titem.off .tname,
+.titem.off .tcount {
+  color: var(--el-text-color-placeholder);
+}
+.tname {
+  font-size: 13px;
+  font-weight: 600;
+}
+.tcount {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  font-family: ui-monospace, Consolas, monospace;
 }
 .bar {
   display: flex;
