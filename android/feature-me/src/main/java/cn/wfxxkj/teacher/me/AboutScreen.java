@@ -24,7 +24,7 @@ import cn.wfxxkj.teacher.core.ui.Ui;
 import cn.wfxxkj.teacher.core.ui.V;
 
 /**
- * 关于：APP 版本、服务器版本、平台最新版本（网页页脚的「v版本号」，管理员点进更新日志）、
+ * 关于：APP 版本、服务器版本、平台最新版本（网页页脚的「v版本号」，只显示；更新日志统一从「我的 → 更新日志」进）、
  * 服务器地址、学校与平台名称、页脚文字。
  */
 public class AboutScreen extends Screen {
@@ -91,11 +91,9 @@ public class AboutScreen extends Screen {
         String sv = session().prefs().serverVersion();
         LinearLayout serverRow = V.row(c, R.drawable.ic_dns, Tone.INFO, "服务器版本", "登录时服务器报告的版本",
                 TextUtils.isEmpty(sv) ? "未知" : sv, null);
-        boolean admin = session().isAdmin();
-        // 版本号谁都看得到，但只有管理员点得进更新日志（和网页页脚一致）
+        // 只显示版本号。更新日志只留「我的 → 更新日志」一个入口，这里不再重复
         latestRow = V.row(c, R.drawable.ic_new_releases, Tone.WARNING, "平台最新版本",
-                admin ? "点开看更新日志" : "更新日志里记录的最新版本", null,
-                admin ? v -> push(new ChangelogScreen()) : null);
+                "更新日志里记录的最新版本", null, null);
         latestText = V.oneLine(V.text(c, "…", V.BODY2));
         MeUi.putTrailing(latestRow, latestText);
         page.addView(MeUi.group(c, appRow, serverRow, latestRow), V.matchWrap());

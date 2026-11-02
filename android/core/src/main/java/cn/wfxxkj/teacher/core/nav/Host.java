@@ -47,4 +47,10 @@ public interface Host {
 
     /** 退出登录回到登录页 */
     void logout(String message);
+
+    /**
+     * 页面出错了（建界面、数据回来画页面时抛了异常）：弹出错误详情、把这个页面关掉，APP 不退出。
+     * 以前这里没人接，异常一路抛到系统，老师看到的就是「点开回到桌面」，什么信息都没有。
+     */
+    void screenFailed(Screen screen, Throwable error, String where);
 }

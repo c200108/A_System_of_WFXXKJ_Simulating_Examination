@@ -3,6 +3,7 @@ package cn.wfxxkj.teacher.core.ui;
 import android.app.Dialog;
 import android.content.Context;
 import android.graphics.drawable.GradientDrawable;
+import android.os.Build;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -100,7 +101,15 @@ public class Sheet {
         Window w = dialog.getWindow();
         if (w != null) {
             w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
-            w.setDecorFitsSystemWindows(false);
+            // setDecorFitsSystemWindows 是安卓 11（API 30）才有的。APP 最低支持安卓 10，
+            // 以前不判断，安卓 10 的手机上一弹底部弹窗就 NoSuchMethodError，APP 直接退回桌面
+            if (Build.VERSION.SDK_INT >= 30) {
+                w.setDecorFitsSystemWindows(false);
+            } else {
+                w.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+            }
             w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         }
         dialog.setOnDismissListener(d -> {
