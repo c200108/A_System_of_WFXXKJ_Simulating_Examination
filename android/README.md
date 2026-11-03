@@ -13,7 +13,7 @@ APP 和服务器怎么通讯，见 [docs/更新日志/5.0.0.md](../docs/更新�
 ```
 android/
 ├─ app/            外壳：登录页 LoginActivity、主界面 MainActivity（导航栏/顶栏/页面栈）、
-│                  Features.java（五个底部标签怎么拼）
+│                  Features.java（六个底部标签怎么拼）
 ├─ core/           公共库：net（Http/Json）、session（登录、保持登录、密码加密）、
 │                  nav（Screen 页面基类、HubScreen 顶部页签）、ui（V 控件构建器、Form 表单、
 │                  ItemList 列表、Sheet 弹层、Charts 图表…）、io（导出文件、打印、图片）。
@@ -22,7 +22,8 @@ android/
 ├─ feature-bank/     题库：题库管理、批量导入、仿真操作题
 ├─ feature-exam/     考试：发布、学生链接/二维码、提交记录、人工阅卷、成绩分析、样卷
 ├─ feature-typing/   打字：打字学情（成绩与分析）、练习文本
-├─ feature-student/  学生：学生账号、班级
+├─ feature-student/  学生：学生账号、班级、学生学情
+├─ feature-api/      API：建接口收第三方教学网页的数据、数据列表、来源网页、图表、接入说明
 ├─ feature-me/       我的：我的账号、账号管理、需求反馈、更新日志、设置、关于
 ├─ build.gradle / settings.gradle / gradlew(.bat)
 └─ keystore.properties   正式签名（自己建，不进 Git）
@@ -117,7 +118,7 @@ keyPassword=你设的密码
 APP 改动后，在真机上过一遍（手机竖屏、横屏、平板各看一次）：
 
 - [ ] 地址填错（少端口、填成百度）→ 提示「不是教学平台的服务器」；密码错 → 提示「用户名或密码不正确」
-- [ ] 登录后底部五个标签都能进，每个页签都有数据；「我的 → 关于」能看到 APP 版本，退出登录回到登录页
+- [ ] 登录后底部六个标签都能进，每个页签都有数据；「我的 → 关于」能看到 APP 版本，退出登录回到登录页
 - [ ] 题库「导出 Excel」、成绩「导出」→ 底部提示已保存，点「打开」能用 WPS 打开
 - [ ] 批量导入选 Excel 文件、题目配图选照片 → 能选到并上传
 - [ ] 考试「复制」链接 → 粘贴到微信是完整链接

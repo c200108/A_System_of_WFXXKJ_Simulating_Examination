@@ -4,6 +4,7 @@ from sqlalchemy import (
     Boolean,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -568,3 +569,104 @@ class RecycleItem(Base):
     deleted_by_name: Mapped[str] = mapped_column(String(64), default="")
     deleted_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
+# ================================================================ 教师端「API」：收第三方教学网页的数据（2.16.0）
+class DataApi(Base):
+    """老师建的一个数据接收接口。
+
+    老师自己做的答题网页、自评互评表、问卷，把数据 POST 到 /api/hook/{key}，
+    平台存下来给老师看表、看图，学生在名单里的还汇总进「学情」。
+
+    **严格按老师隔离**：只有 owner 和管理员看得到。和考试不一样 —— 管理员建的 API
+    普通老师也看不到。写入密钥会写进学生网页里（等于半公开），它只能往这一个 API 里写，
+    看不到任何数据。
+    """
+
+    __tablename__ = "data_apis"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    name: Mapped[str] = mapped_column(String(64))
+    description: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT, "mysql"), default="")
+    # answer / self_eval / peer_eval / survey / custom：只决定默认图表和示例代码，不限制能收什么
+    template: Mapped[str] = mapped_column(String(16), default="custom")
+    key: Mapped[str] = mapped_column(String(24), unique=True, index=True)      # 接收地址里的公开编号
+    write_token: Mapped[str] = mapped_column(String(64))
+    read_token: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    status: Mapped[str] = mapped_column(String(8), default="active")             # active / paused
+    accept_from: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    accept_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    allowed_origins: Mapped[str] = mapped_column(String(1000), default="", server_default="")  # 一行一个
+    dedupe: Mapped[str] = mapped_column(String(8), default="all")               # all / latest
+    allow_get: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # 学生网页能不能用写入密钥读「全班平均」这类不含个人信息的汇总
+    public_summary: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    class_ids: Mapped[str] = mapped_column(String(255), default="", server_default="")  # 逗号分隔
+    # {字段路径: {"label": 中文名, "kind": number/text/choice, "hidden": bool}}
+    field_meta: Mapped[str] = mapped_column(LONG_TEXT, default="{}")
+    record_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_received_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=now_local, server_default=func.now(), onupdate=now_local
+    )
+
+
+class DataRecord(Base):
+    """第三方送来的一条数据。原样留在 payload 里，常用的几样拆成列方便筛选统计。"""
+
+    __tablename__ = "data_records"
+    __table_args__ = (
+        UniqueConstraint("api_id", "client_id", name="uq_data_records_client"),
+        Index("ix_data_records_api_time", "api_id", "received_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    api_id: Mapped[int] = mapped_column(ForeignKey("data_apis.id", ondelete="CASCADE"), index=True)
+    client_id: Mapped[str | None] = mapped_column(String(64), nullable=True)   # 第三方给的唯一号，防重发
+    type: Mapped[str] = mapped_column(String(32), default="", index=True)
+    activity_id: Mapped[str] = mapped_column(String(64), default="")
+    activity_name: Mapped[str] = mapped_column(String(128), default="")
+    page: Mapped[str] = mapped_column(String(255), default="", index=True)      # 来源网页（去掉 ? 和 #）
+    student_no: Mapped[str] = mapped_column(String(64), default="", index=True)
+    student_name: Mapped[str] = mapped_column(String(64), default="")
+    class_name: Mapped[str] = mapped_column(String(64), default="")
+    # 按学号（或班级+姓名）对上平台里的学生；对不上就是空，只在 API 里显示
+    student_id: Mapped[int | None] = mapped_column(
+        ForeignKey("students.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    target_no: Mapped[str] = mapped_column(String(64), default="")
+    target_name: Mapped[str] = mapped_column(String(64), default="")
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    comment: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT, "mysql"), default="")
+    payload: Mapped[str] = mapped_column(BIG_JSON, default="{}")
+    source_ip: Mapped[str] = mapped_column(String(64), default="")
+    device_id: Mapped[str] = mapped_column(String(80), default="")
+    origin: Mapped[str] = mapped_column(String(255), default="")
+    user_agent: Mapped[str] = mapped_column(String(255), default="")
+    flag: Mapped[str] = mapped_column(String(8), default="normal")             # normal / invalid
+    # 「只算最新一条」时，同一学生同一活动更早的提交标成被替代：表里照样能看，统计不算
+    superseded: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
+
+
+class DataRecordItem(Base):
+    """一条数据里的逐题作答（answer）和评价维度（rating），拆出来按题、按维度统计。"""
+
+    __tablename__ = "data_record_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    record_id: Mapped[int] = mapped_column(ForeignKey("data_records.id", ondelete="CASCADE"), index=True)
+    api_id: Mapped[int] = mapped_column(Integer, index=True)       # 冗余一份，按 API 统计时不用连表
+    kind: Mapped[str] = mapped_column(String(8))                    # answer / rating
+    item: Mapped[str] = mapped_column(String(64), default="")       # 题号或评价维度
+    answer: Mapped[str] = mapped_column(String(255), default="")
+    correct: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
