@@ -366,6 +366,14 @@ class PaperOut(ORMModel):
     school: str = ""
     created_at: datetime | None = None
     question_count: int = 0
+    exam_count: int = 0  # 用这份卷发过几场考试（删卷会连考试一起删，批量删前要提醒）
+
+
+class PaperExportIn(BaseModel):
+    """批量导出勾选的历史试卷：xlsx = 每份一个 Excel，html = 每份一个学生答题网页，both = 两种都要。"""
+
+    ids: list[int] = Field(default_factory=list, max_length=100)
+    fmt: Literal["xlsx", "html", "both"] = "xlsx"
 
 
 # ---------- 考试 ----------
