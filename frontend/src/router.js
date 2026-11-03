@@ -41,6 +41,15 @@ const teacherRoutes = {
     { path: 'bank', component: () => import('./views/BankHub.vue'), meta: { title: '题库' } },
     { path: 'exams', component: () => import('./views/ExamHub.vue'), meta: { title: '考试' } },
     { path: 'students', component: () => import('./views/StudentHub.vue'), meta: { title: '学生' } },
+    // 学生学情：学生名单「学情」一列点进来
+    {
+      path: 'students/:id/insight',
+      component: () => import('./views/StudentInsight.vue'),
+      meta: { title: '学生学情' }
+    },
+    // API：老师建接口收第三方教学网页的数据
+    { path: 'api', component: () => import('./views/DataApis.vue'), meta: { title: 'API' } },
+    { path: 'api/:id', component: () => import('./views/DataApiDetail.vue'), meta: { title: 'API 数据' } },
 
     // 合并前的老地址：重定向到新位置，并带上要展开哪个面板。
     // 老师收藏夹里存的链接不会失效。
@@ -91,6 +100,12 @@ const routes = [
     path: '/js/analysis/:id',
     component: () => import('./views/ExamAnalysis.vue'),
     meta: { title: '成绩分析' }
+  },
+  // API 数据大图投屏：新开标签页整屏看，不套顶栏
+  {
+    path: '/js/api-board/:id',
+    component: () => import('./views/DataApiBoardPage.vue'),
+    meta: { title: '数据大图' }
   },
   // 打字学情分析：从「打字成绩」页新开标签页，同上
   {

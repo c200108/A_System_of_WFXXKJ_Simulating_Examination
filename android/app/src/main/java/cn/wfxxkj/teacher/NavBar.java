@@ -57,11 +57,12 @@ class NavBar extends LinearLayout {
             FrameLayout iconBox = new FrameLayout(c);
             View pill = new View(c);
             pill.setBackground(V.round(c, p.primarySoft, 16));
-            iconBox.addView(pill, new FrameLayout.LayoutParams(Ui.dp(c, 56), Ui.dp(c, 32), Gravity.CENTER));
+            // 5.1.2 起底部六个标签（多了 API），360dp 宽的手机一格只有 60dp，选中底块收到 52dp 才放得下
+            iconBox.addView(pill, new FrameLayout.LayoutParams(Ui.dp(c, 52), Ui.dp(c, 32), Gravity.CENTER));
             ImageView iv = new ImageView(c);
             iv.setImageResource(t.icon);
             iconBox.addView(iv, new FrameLayout.LayoutParams(Ui.dp(c, 24), Ui.dp(c, 24), Gravity.CENTER));
-            item.addView(iconBox, new LayoutParams(Ui.dp(c, 64), Ui.dp(c, 32)));
+            item.addView(iconBox, new LayoutParams(Ui.dp(c, 56), Ui.dp(c, 32)));
             TextView label = new TextView(c);
             label.setText(t.title);
             label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);

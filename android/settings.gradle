@@ -21,4 +21,4 @@ dependencyResolutionManagement {
 rootProject.name = 'WfxxTeacher'
 include ':app'
 include ':core'
-include ':feature-paper', ':feature-bank', ':feature-exam', ':feature-typing', ':feature-student', ':feature-me'
+include ':feature-paper', ':feature-bank', ':feature-exam', ':feature-typing', ':feature-student', ':feature-api', ':feature-me'

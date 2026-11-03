@@ -363,6 +363,26 @@ export const api = {
     return http.post('/students/import', fd, { params: { class_id } })
   },
 
+  // 学生学情：考试、排名、打字、第三方网页数据
+  studentInsight: id => http.get(`/students/${id}/insight`),
+
+  // 教师端「API」板块：收第三方教学网页的数据（各老师互不相通，管理员看全部）
+  dataApis: params => http.get('/data-apis', { params }),
+  dataApiCreate: data => http.post('/data-apis', data),
+  dataApi: id => http.get(`/data-apis/${id}`),
+  dataApiUpdate: (id, data) => http.put(`/data-apis/${id}`, data),
+  dataApiDelete: id => http.delete(`/data-apis/${id}`),
+  dataApiRotate: (id, which, enable = true) => http.post(`/data-apis/${id}/rotate-token`, { which, enable }),
+  dataApiTransfer: (id, owner_id) => http.post(`/data-apis/${id}/transfer`, { owner_id }),
+  dataApiRecords: (id, params) => http.get(`/data-apis/${id}/records`, { params }),
+  dataApiFlag: (id, ids, flag) => http.patch(`/data-apis/${id}/records`, { ids, flag }),
+  dataApiDeleteRecords: (id, data) => http.post(`/data-apis/${id}/records/delete`, data),
+  dataApiSources: id => http.get(`/data-apis/${id}/sources`),
+  dataApiStats: (id, params, silent = false) => http.get(`/data-apis/${id}/stats`, { params, silent }),
+  dataApiTest: id => http.post(`/data-apis/${id}/test`),
+  dataApiExport: (id, params) =>
+    http.get(`/data-apis/${id}/export`, { params, responseType: 'blob' }),
+
   // 凭链接答题（不需要登录）
   takePaper: token => http.get(`/take/${token}`),
   takeLive: token => http.get(`/take/${token}/live`, { silent: true }),
