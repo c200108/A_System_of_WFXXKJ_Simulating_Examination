@@ -44,7 +44,7 @@ KIND_NAMES = {
     "exam": "考试", "submission": "答卷", "paper": "存档试卷", "question": "题目",
     "student": "学生", "class": "班级", "typing_record": "打字成绩", "typing_text": "练习文本",
     "typing_theme": "打字主题",
-    "sim": "仿真任务", "feedback": "反馈",
+    "sim": "仿真任务", "feedback": "反馈", "data_api": "API", "data_record": "API 数据",
 }
 
 # 这些表的东西不进快照：用户账号从来不在这里删（只停用），限流计数、本机状态是临时数据

@@ -68,7 +68,9 @@ final class StudentDetailScreen extends Screen {
 
     @Override
     public List<Action> actions() {
-        return Collections.singletonList(Action.icon(R.drawable.ic_edit, "编辑", this::edit));
+        return Arrays.asList(
+                Action.icon(R.drawable.ic_analytics, "学情", () -> push(new StudentInsightScreen(Kit.id(s), Json.str(s, "name")))),
+                Action.icon(R.drawable.ic_edit, "编辑", this::edit));
     }
 
     private void render() {
@@ -111,6 +113,14 @@ final class StudentDetailScreen extends Screen {
             toast("已复制学号");
         }));
         page.addView(info, V.matchWrap());
+
+        // 学情：考试成绩与排名、打字、第三方教学网页的数据（5.1.2）
+        LinearLayout ins = V.vbox(c);
+        ins.setBackground(V.stroke(c, p.surface, p.border, 16));
+        ins.setClipToOutline(true);
+        ins.addView(V.row(c, R.drawable.ic_analytics, Tone.VIOLET, "学情", "考试成绩与排名、打字、教学网页数据",
+                null, v -> push(new StudentInsightScreen(Kit.id(s), Json.str(s, "name")))));
+        V.addTop(page, ins, 12);
 
         // 操作
         page.addView(V.section(c, "操作", null, null));

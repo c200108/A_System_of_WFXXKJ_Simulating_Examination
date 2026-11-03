@@ -32,8 +32,14 @@ import cn.wfxxkj.teacher.core.net.Json;
  * <h3>查哪儿</h3>
  * 学生端 exe 和教师端 APP 发在同一个公开仓库里：学生端的 tag 是 {@code v4.12.0}，
  * APP 的 tag 是 {@code teacher-v5.1.0}。所以这里查的是 <b>Release 列表</b>（不是 latest ——
- * latest 多半是学生端那个），只挑 tag 以 {@code teacher-v} 开头、不是草稿也不是预发布的最新一个，
- * 附件取 .apk。不经过学校服务器，几十个老师一起升级也不占学校带宽。
+ * latest 多半是学生端那个），只挑 tag 以 {@code teacher-v} 开头、不是草稿、带 .apk 附件的。
+ * 不经过学校服务器，几十个老师一起升级也不占学校带宽。
+ *
+ * <h3>正式版和测试版（5.1.2 起）</h3>
+ * 5.1.0 只认正式版，而 5.1.0、5.1.1 发的时候都是「预发布」—— 结果一个都挑不出来，
+ * 还提示「还没有发布过安装包」，明明 Release 页上就挂着新版。现在两样分开挑：
+ * 有更新的正式版就提示正式版；没有、但有更新的预发布，就明说「有测试版，还没转成正式版」，
+ * 让老师自己决定装不装。Release 列表一页取 100 条：学生端每次发版也占一条，30 条迟早翻不到 APP。
  *
  * <h3>规矩</h3>
  * 只在点按钮时查；两次至少隔 60 秒；整次查询 5 秒封顶（超时就提示「无法获取更新」，不重试）。
@@ -52,7 +58,7 @@ final class AppUpdate {
     static final long INTERVAL_MS = 60_000;      // 两次检查至少隔这么久
     static final int QUERY_MS = 5_000;           // 整次查询封顶
     static final int DOWNLOAD_TIMEOUT_MS = 30_000;
-    private static final String API = "https://api.github.com/repos/" + REPO + "/releases?per_page=30";
+    private static final String API = "https://api.github.com/repos/" + REPO + "/releases?per_page=100";
     private static final Pattern VERSION = Pattern.compile("\\d+(?:\\.\\d+)*");
 
     /** 上次点检查的时刻（开机以来的毫秒）。只记在内存里：防连点，不是防作弊 */
@@ -62,6 +68,16 @@ final class AppUpdate {
     static final class Release {
         String version = "", notes = "", page = "", apkUrl = "", apkName = "", sha256 = "";
         long size;
+        boolean prerelease;
+    }
+
+    /** 一次检查的结果：最新正式版、最新测试版（预发布），都可能为 null */
+    static final class Found {
+        Release stable, beta;
+
+        boolean none() {
+            return stable == null && beta == null;
+        }
     }
 
     static final class UpdateException extends Exception {
@@ -112,13 +128,18 @@ final class AppUpdate {
 
     // ---------------------------------------------------------------- 查
 
-    /** 去 GitHub 查教师端最新的正式版。没有发布过返回 null。在后台线程调 */
-    static Release latest() throws UpdateException {
+    /** 去 GitHub 查教师端最新的正式版和测试版。在后台线程调 */
+    static Found latest() throws UpdateException {
         String body;
         try {
             body = get(API, QUERY_MS);
         } catch (SocketTimeoutException e) {
             throw new UpdateException("无法获取更新：网络太慢，5 秒内没有拿到更新信息");
+        } catch (HttpStatus e) {
+            // 不登录查 GitHub，同一个出口 IP 每小时只给 60 次 —— 学校整栋楼一个出口时会碰到
+            if (e.code == 403 || e.code == 429)
+                throw new UpdateException("无法获取更新：GitHub 暂时限制了这个网络的查询次数，请过一会儿再试");
+            throw new UpdateException("无法获取更新：GitHub 返回了错误（HTTP " + e.code + "）");
         } catch (IOException e) {
             throw new UpdateException("无法获取更新：连不上 GitHub，请检查网络");
         }
@@ -129,12 +150,14 @@ final class AppUpdate {
         }
     }
 
-    /** Release 列表里挑教师端最新的正式版（tag teacher-v…，有 apk 附件） */
-    static Release pick(JSONArray items) {
-        Release best = null;
+    /** Release 列表里挑教师端最新的正式版和最新的测试版（tag teacher-v…，有 apk 附件，不是草稿） */
+    static Found pick(JSONArray items) {
+        Found f = new Found();
         for (JSONObject r : Json.list(items)) {
             String tag = Json.str(r, "tag_name");
-            if (!tag.startsWith(TAG_PREFIX) || Json.bool(r, "draft") || Json.bool(r, "prerelease")) continue;
+            if (!tag.startsWith(TAG_PREFIX) || Json.bool(r, "draft")) continue;
+            boolean pre = Json.bool(r, "prerelease");
+            Release best = pre ? f.beta : f.stable;
             String v = tag.substring(TAG_PREFIX.length());
             if (parts(v).length == 0 || (best != null && compare(v, best.version) <= 0)) continue;
             for (JSONObject a : Json.list(Json.arr(r, "assets"))) {
@@ -150,11 +173,23 @@ final class AppUpdate {
                 rel.size = size == null ? 0 : size;
                 String digest = Json.str(a, "digest");
                 rel.sha256 = digest.startsWith("sha256:") ? digest.substring(7).toLowerCase() : "";
-                best = rel;
+                rel.prerelease = pre;
+                if (pre) f.beta = rel;
+                else f.stable = rel;
                 break;
             }
         }
-        return best;
+        return f;
+    }
+
+    /** GitHub 回了 200 以外的状态码 */
+    static final class HttpStatus extends IOException {
+        final int code;
+
+        HttpStatus(int code) {
+            super("HTTP " + code);
+            this.code = code;
+        }
     }
 
     private static String get(String url, int timeoutMs) throws IOException {
@@ -180,7 +215,7 @@ final class AppUpdate {
         int code = c.getResponseCode();
         if (code != 200) {
             c.disconnect();
-            throw new IOException("HTTP " + code);
+            throw new HttpStatus(code);
         }
         return c;
     }
