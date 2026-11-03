@@ -221,6 +221,21 @@ async function copy(text, what = '已复制') {
   }
   ElMessage.success(what)
 }
+// AI 专用提示词：后端统一生成（APP 也用这份），接收地址按学生能访问的地址拼
+const aiPrompt = ref('')
+const promptDlg = ref(false)
+async function loadPrompt() {
+  aiPrompt.value = (await api.dataApiPrompt(id.value, studentLink(''))).prompt
+}
+async function copyPrompt() {
+  if (!promptDlg.value) await loadPrompt() // 每次都取最新的：改了设置、换了密钥，提示词跟着变
+  copy(aiPrompt.value, '已复制 AI 提示词，在最后「老师的要求」里写上要做的网页，整段发给 AI')
+}
+async function showPrompt() {
+  await loadPrompt()
+  promptDlg.value = true
+}
+
 async function rotate(which, enable = true) {
   if (which === 'write') {
     await ElMessageBox.confirm('重新生成后旧密钥立刻失效，已经写进网页里的要换成新的。确定？', '重新生成写入密钥', { type: 'warning' })
@@ -299,6 +314,11 @@ async function transfer() {
 
 onMounted(async () => {
   await loadInfo()
+  if (route.query.prompt) {
+    // 刚建好：直接弹出提示词。去掉参数，刷新页面不再弹
+    router.replace({ query: { ...route.query, prompt: undefined } })
+    showPrompt()
+  }
   loadRecords()
   loadSources()
   try {
@@ -450,6 +470,20 @@ watch(tab, t => {
 
       <!-- ============================== 接入说明 -->
       <el-tab-pane label="接入说明" name="connect">
+        <div class="ai">
+          <div class="ai-text">
+            <b>AI 专用提示词</b>
+            <p class="muted small">
+              用 AI 做教学互动网页、问卷网页时，把这段提示词<b>完整</b>发给 AI，并在最后「老师的要求」里写上要做什么网页。
+              里面已经写好这个 API 的接收地址、写入密钥、提交代码、学生身份栏和这个用途的数据格式，
+              AI 做出的网页提交的数据能直接进数据表单、数据大图和学生学情。还没定接口也能用：把地址留空就是预留接口，以后填上即可。
+            </p>
+          </div>
+          <div class="tools">
+            <el-button type="primary" @click="copyPrompt">复制提示词</el-button>
+            <el-button @click="showPrompt">预览</el-button>
+          </div>
+        </div>
         <el-descriptions :column="1" border class="keys">
           <el-descriptions-item label="接收地址">
             <code>{{ info.endpoint }}</code>
@@ -577,6 +611,18 @@ watch(tab, t => {
       </el-tab-pane>
     </el-tabs>
 
+    <el-dialog v-model="promptDlg" title="AI 专用提示词" width="820px" top="6vh">
+      <p class="muted small" style="margin-top: 0">
+        复制后发给 AI（豆包、DeepSeek、Kimi、ChatGPT 等都行），在最后「老师的要求」里写上要做的网页。
+        改了设置（关联班级、来源网站、只算最新一条、网页可读汇总）或重新生成写入密钥后，要重新复制一次。
+      </p>
+      <pre class="prompt">{{ aiPrompt }}</pre>
+      <template #footer>
+        <el-button @click="promptDlg = false">关闭</el-button>
+        <el-button type="primary" @click="copyPrompt">复制提示词</el-button>
+      </template>
+    </el-dialog>
+
     <el-drawer :model-value="!!detail" :title="detail ? `数据 #${detail.id}` : ''" size="520px"
                @update:model-value="v => { if (!v) detail = null }">
       <template v-if="detail">
@@ -622,6 +668,13 @@ watch(tab, t => {
 .code pre, .raw { background: var(--el-fill-color-light); padding: 12px; border-radius: 6px; overflow: auto; font-size: 13px; line-height: 1.5; max-height: 460px; }
 .copy { position: absolute; right: 8px; top: 8px; }
 .spec { line-height: 1.9; font-size: 14px; }
+.ai { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 12px 16px; margin-bottom: 16px; border-radius: 8px; border: 1px solid var(--el-color-primary-light-7);
+  background: var(--el-color-primary-light-9); }
+.ai-text { flex: 1; min-width: 260px; }
+.ai-text p { margin: 4px 0 0; }
+.prompt { background: var(--el-fill-color-light); padding: 12px; border-radius: 6px; overflow: auto; font-size: 13px;
+  line-height: 1.6; max-height: 62vh; white-space: pre-wrap; word-break: break-word; margin: 0; }
 .settings { max-width: 900px; }
 .settings .el-checkbox { display: flex; }
 </style>

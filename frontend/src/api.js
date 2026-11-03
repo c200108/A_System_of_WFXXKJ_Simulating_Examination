@@ -380,6 +380,7 @@ export const api = {
   dataApiSources: id => http.get(`/data-apis/${id}/sources`),
   dataApiStats: (id, params, silent = false) => http.get(`/data-apis/${id}/stats`, { params, silent }),
   dataApiTest: id => http.post(`/data-apis/${id}/test`),
+  dataApiPrompt: (id, base) => http.get(`/data-apis/${id}/ai-prompt`, { params: { base } }),
   dataApiExport: (id, params) =>
     http.get(`/data-apis/${id}/export`, { params, responseType: 'blob' }),
 
