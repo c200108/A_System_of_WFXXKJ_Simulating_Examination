@@ -325,3 +325,71 @@ def test_学情里的考试和排名(client, auth, teacher_auth, kids):
     item = next(i for i in got["items"] if i["title"] == "学情小测")
     assert item["rank"] == 2 and item["takers"] == 3 and item["class_rank"] == 2 and item["rate"] == 80
     assert got["class_rank"] is not None
+
+
+# ---------------------------------------------------------------- AI 专用提示词（2.16.1）
+def _prompt(client, headers, api, **params):
+    res = client.get(f"/api/data-apis/{api['id']}/ai-prompt", params=params, headers=headers)
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+def _example(prompt):
+    """提示词第四节那份完整 JSON 例子。"""
+    return json.loads(prompt.split("```json\n", 1)[1].split("\n```", 1)[0])
+
+
+def test_AI提示词_只给自己的_不含读取密钥(client, teacher_auth, teacher2_auth):
+    api = _new(client, teacher_auth, "提示词-隔离")
+    assert client.get(f"/api/data-apis/{api['id']}/ai-prompt", headers=teacher2_auth).status_code == 404
+    on = client.post(f"/api/data-apis/{api['id']}/rotate-token", json={"which": "read"}, headers=teacher_auth).json()
+    got = _prompt(client, teacher_auth, api)
+    assert on["read_token"] and on["read_token"] not in got["prompt"], "读取密钥不能进提示词"
+    assert api["write_token"] in got["prompt"]
+    assert f"/api/hook/{api['key']}" in got["endpoint"] and got["endpoint"] in got["prompt"]
+    assert "wfxxSend" in got["prompt"] and "老师的要求" in got["prompt"]
+
+
+def test_AI提示词_按前端给的对外地址拼(client, teacher_auth):
+    api = _new(client, teacher_auth, "提示词-地址")
+    got = _prompt(client, teacher_auth, api, base="https://exam.example.cn:3315/")
+    assert got["endpoint"] == f"https://exam.example.cn:3315/api/hook/{api['key']}"
+    assert f"ENDPOINT: '{got['endpoint']}'" in got["prompt"]
+    bad = _prompt(client, teacher_auth, api, base="javascript:alert(1)")
+    assert bad["endpoint"].startswith("http://testserver/"), "不像网址的 base 不用"
+
+
+@pytest.mark.parametrize("template,typ,field", [
+    ("answer", "answer", "answers"), ("self_eval", "self_eval", "ratings"),
+    ("peer_eval", "peer_eval", "target"), ("survey", "survey", "answers"), ("custom", "experiment", "data"),
+])
+def test_AI提示词_各用途的例子能被平台认出来(client, teacher_auth, kids, template, typ, field):
+    api = _new(client, teacher_auth, f"提示词-{template}", template)
+    ex = _example(_prompt(client, teacher_auth, api)["prompt"])
+    assert ex["type"] == typ and field in ex
+    ex["student"] = {"no": "D1001", "name": "数据学生一", "class": "七年级1班"}
+    res = _send(client, api, ex)
+    assert res.status_code == 201 and res.json()["student_matched"], res.text
+    rec = client.get(f"/api/data-apis/{api['id']}/records", headers=teacher_auth).json()["items"][0]
+    assert rec["type"] == typ and rec["activity"]["name"] == ex["activity"]["name"]
+    if template == "peer_eval":
+        assert rec["target"]["name"] == "李四"
+    st = client.get(f"/api/data-apis/{api['id']}/stats", headers=teacher_auth).json()
+    if template in ("answer", "survey"):
+        assert {q["q"] for q in st["questions"]} == {a["q"] for a in ex["answers"]}
+    if template in ("self_eval", "peer_eval"):
+        assert {d["item"] for d in st["radar"]} == {r["item"] for r in ex["ratings"]}
+
+
+def test_AI提示词_跟着设置变(client, teacher_auth, kids):
+    api = _new(client, teacher_auth, "提示词-设置")
+    plain = _prompt(client, teacher_auth, api)["prompt"]
+    assert "wfxxSummary" not in plain and "下拉框" not in plain and "ORIGIN_DENIED）" not in plain
+    client.put(f"/api/data-apis/{api['id']}", headers=teacher_auth, json={
+        "public_summary": True, "class_ids": [kids["c1"]], "dedupe": "latest",
+        "allowed_origins": "https://teach.example.com"})
+    p = _prompt(client, teacher_auth, api)["prompt"]
+    assert "wfxxSummary" in p, "开了网页可读汇总才给汇总函数"
+    assert "「七年级1班」" in p and "下拉框" in p, "关联了班级就让学生从下拉里选"
+    assert "只算最新一条" in p
+    assert "https://teach.example.com" in p and "file://" in p

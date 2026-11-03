@@ -454,6 +454,23 @@ final class ApiDetailScreen extends Screen {
         connect.addView(V.notice(c, "把接收地址和写入密钥放进你的教学网页，学生提交时 POST 一条 JSON 过来就行。"
                 + "写入密钥只能往这个 API 里写，看不到任何数据。", Tone.INFO), V.matchWrap());
 
+        // AI 专用提示词：老师整段发给 AI，做出来的网页直接接上这个 API
+        LinearLayout ai = V.vbox(c);
+        Palette p = Palette.of(c);
+        ai.setBackground(V.stroke(c, p.surface, p.border, 16));
+        ai.setClipToOutline(true);
+        ai.addView(V.row(c, R.drawable.ic_content_copy, Tone.PRIMARY, "复制 AI 提示词",
+                "发给 AI 做教学网页、问卷网页，数据自动接进来", null, v ->
+                        runBusy("正在生成…", () -> DataApiClient.aiPrompt(id), text -> {
+                            Sys.copy(c, "AI 提示词", text);
+                            toast("已复制，在最后「老师的要求」里写上要做的网页");
+                        })));
+        ai.addView(V.divider(c));
+        ai.addView(V.row(c, R.drawable.ic_share, Tone.INFO, "分享 AI 提示词", "发到电脑上再交给 AI", null, v ->
+                runBusy("正在生成…", () -> DataApiClient.aiPrompt(id), text ->
+                        Sys.share(c, Json.str(info, "name") + " AI 提示词", text))));
+        V.addTop(connect, ai, 10);
+
         LinearLayout keys = V.card(c);
         keys.addView(V.kv(c, "接收地址", ep));
         keys.addView(V.kv(c, "写入密钥", wt));
@@ -461,7 +478,6 @@ final class ApiDetailScreen extends Screen {
         V.addTop(connect, keys, 10);
 
         LinearLayout ops = V.vbox(c);
-        Palette p = Palette.of(c);
         ops.setBackground(V.stroke(c, p.surface, p.border, 16));
         ops.setClipToOutline(true);
         ops.addView(V.row(c, R.drawable.ic_content_copy, Tone.PRIMARY, "复制接收地址", null, null, v -> {

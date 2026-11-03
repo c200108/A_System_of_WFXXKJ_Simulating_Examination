@@ -64,6 +64,11 @@ final class DataApiClient {
         return Http.postObj("/data-apis/" + id + "/test", null);
     }
 
+    /** AI 专用提示词（后端统一生成，和网页版同一份）。接收地址按 APP 连的服务器地址拼 */
+    static String aiPrompt(int id) throws ApiException {
+        return Json.str(Http.getObj("/data-apis/" + id + "/ai-prompt", Params.of("base", Http.absolute("/"))), "prompt");
+    }
+
     static Http.Download export(int id) throws ApiException {
         return Http.download("GET", "/data-apis/" + id + "/export", Params.of("format", "xlsx"), null);
     }
