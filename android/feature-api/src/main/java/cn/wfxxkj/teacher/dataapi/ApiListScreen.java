@@ -137,7 +137,7 @@ final class ApiListScreen extends Screen {
                     Dialogs.prompt(ctx(), "描述（可不填）", "用在哪节课、哪个网页", "", 3, "建好", desc ->
                             runBusy("正在新建…", () -> DataApiClient.create(name.trim(), desc.trim(), String.valueOf(t.value)), a -> {
                                 version++;
-                                toast("建好了，接收地址在「接入」里");
+                                toast("建好了，在「接入」里复制 AI 提示词交给 AI 做网页");
                                 push(new ApiDetailScreen(Json.num(a, "id"), Json.str(a, "name"), 3));
                             }));
                 }));
