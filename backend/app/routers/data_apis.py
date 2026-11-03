@@ -13,7 +13,7 @@ import csv
 import io
 import json
 from datetime import datetime, timedelta
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from openpyxl import Workbook
@@ -27,6 +27,7 @@ from ..database import get_db
 from ..deps import get_current_user, require_admin
 from ..models import DataApi, DataRecord, SchoolClass, User
 from ..services import dataapi as svc
+from ..services import dataapi_prompt as prompt_svc
 from ..services import recycle
 from .hook import record_out
 
@@ -257,6 +258,22 @@ def update_api(api_id: int, body: ApiUpdate, request: Request, me: User = Depend
     db.commit()
     db.refresh(api)
     return _detail(db, api, request)
+
+
+@router.get("/{api_id}/ai-prompt", summary="AI 专用提示词：交给 AI 生成接好这个 API 的教学网页")
+def ai_prompt(api_id: int, request: Request, base: str = "", me: User = Depends(get_current_user),
+              db: Session = Depends(get_db)):
+    """base 是前端按学生能访问的地址算出来的前缀（网页 studentLink、APP 连的服务器地址）：
+    后端在 nginx 后面看到的 Host 不带端口，自己拼会少了 :3315。不传或不像网址就用 _base_url。"""
+    api = _get(db, api_id, me)
+    root = _base_url(request)
+    p = urlsplit(base.strip())
+    if p.scheme in ("http", "https") and p.netloc:
+        root = f"{p.scheme}://{p.netloc}{p.path.rstrip('/')}"
+    cids = svc.class_ids_of(api)
+    classes = db.scalars(select(SchoolClass).where(SchoolClass.id.in_(cids))).all() if cids else []
+    endpoint = f"{root}/api/hook/{api.key}"
+    return {"prompt": prompt_svc.build(api, endpoint, [c.display for c in classes]), "endpoint": endpoint}
 
 
 @router.post("/{api_id}/rotate-token", summary="重新生成写入密钥／开关读取密钥")

@@ -59,8 +59,8 @@ async function create() {
   try {
     const res = await api.dataApiCreate(form.value)
     dlg.value = false
-    ElMessage.success('建好了，下面是接收地址和接入说明')
-    router.push({ path: `/js/api/${res.id}`, query: { tab: 'connect' } })
+    ElMessage.success('建好了，把下面的 AI 提示词交给 AI 就能做出接好数据的网页')
+    router.push({ path: `/js/api/${res.id}`, query: { tab: 'connect', prompt: '1' } })
   } finally {
     saving.value = false
   }
