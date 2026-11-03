@@ -10,6 +10,14 @@ import BrandLogo from '../components/BrandLogo.vue'
 const route = useRoute()
 const router = useRouter()
 
+// 子页面（某个 API、某个学生的学情）也让顶栏对应的菜单亮着
+const activeMenu = computed(() => {
+  const p = route.path
+  if (p.startsWith('/js/api')) return '/js/api'
+  if (p.startsWith('/js/students')) return '/js/students'
+  return p
+})
+
 // 平台名称、页脚、图标都在 siteConfig 里，main.js 启动时已经取回来了
 const title = computed(() => siteConfig.site?.title || '信息科技教学平台')
 const brand = computed(() => siteConfig.site?.brand || title.value)
@@ -72,12 +80,13 @@ function onUserCommand(cmd) {
         <BrandLogo :size="26" :radius="0.27" />
         <span>{{ brand }}</span>
       </div>
-      <el-menu :default-active="route.path" mode="horizontal" router :ellipsis="false" class="nav">
+      <el-menu :default-active="activeMenu" mode="horizontal" router :ellipsis="false" class="nav">
         <template v-if="user">
           <el-menu-item index="/js/paper">组卷</el-menu-item>
           <el-menu-item index="/js/bank">题库</el-menu-item>
           <el-menu-item index="/js/exams">考试</el-menu-item>
           <el-menu-item index="/js/students">学生</el-menu-item>
+          <el-menu-item index="/js/api">API</el-menu-item>
         </template>
         <el-menu-item index="/js/feedback">反馈</el-menu-item>
         <template v-if="user?.role === 'admin'">

@@ -7,6 +7,7 @@ import cn.wfxxkj.teacher.bank.BankFeature;
 import cn.wfxxkj.teacher.core.R;
 import cn.wfxxkj.teacher.core.nav.HubScreen;
 import cn.wfxxkj.teacher.core.nav.TabSpec;
+import cn.wfxxkj.teacher.dataapi.ApiFeature;
 import cn.wfxxkj.teacher.exam.ExamFeature;
 import cn.wfxxkj.teacher.me.MeFeature;
 import cn.wfxxkj.teacher.paper.PaperFeature;
@@ -14,9 +15,9 @@ import cn.wfxxkj.teacher.student.StudentFeature;
 import cn.wfxxkj.teacher.typing.TypingFeature;
 
 /**
- * 底部标签栏上的五个标签，和网页版教师端的顶部菜单一一对应：
+ * 底部标签栏上的六个标签，和网页版教师端的顶部菜单一一对应：
  * 组卷 / 题库（题库管理、批量导入、仿真操作题、练习文本）/ 考试（考试管理、打字学情）/
- * 学生（学生账号、班级）/ 我的。
+ * 学生（学生账号、班级）/ API（收第三方教学网页的数据，5.1.2）/ 我的。
  *
  * 各功能模块互不依赖，标签怎么拼在这里决定。加一个模块：新建 feature-xxx，
  * 在 settings.gradle 和 app/build.gradle 里登记，再在这里放到某个标签下。
@@ -42,6 +43,7 @@ final class Features {
                         () -> new HubScreen("学生", "students", Arrays.asList(
                                 HubScreen.page("学生账号", StudentFeature::students),
                                 HubScreen.page("班级", StudentFeature::classes)))),
+                new TabSpec("api", "API", R.drawable.ic_dns, R.drawable.ic_dns, ApiFeature::home),
                 new TabSpec("me", "我的", R.drawable.ic_person_outlined, R.drawable.ic_person,
                         MeFeature::home));
     }

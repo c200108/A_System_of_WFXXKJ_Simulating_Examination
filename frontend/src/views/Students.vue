@@ -348,6 +348,12 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
           <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
         </template>
       </el-table-column>
+      <!-- 学情：考试成绩与排名、打字、第三方教学网页的数据，汇总在一页 -->
+      <el-table-column label="学情" width="70" fixed="right" align="center">
+        <template #default="{ row }">
+          <el-button link type="primary" @click="$router.push(`/js/students/${row.id}/insight`)">学情</el-button>
+        </template>
+      </el-table-column>
     </el-table>
 
     <el-pagination

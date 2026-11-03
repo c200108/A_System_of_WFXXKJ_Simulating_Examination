@@ -244,14 +244,14 @@ public class MeHomeScreen extends Screen implements Session.Listener {
             Dialogs.alert(ctx(), "检查更新", "无法获取更新：5 秒内没有拿到更新信息，请检查网络后再试。");
         }, AppUpdate.QUERY_MS);
         io().execute(() -> {
-            AppUpdate.Release r = null;
+            AppUpdate.Found r = null;
             String err = null;
             try {
                 r = AppUpdate.latest();
             } catch (AppUpdate.UpdateException e) {
                 err = e.getMessage();
             }
-            final AppUpdate.Release got = r;
+            final AppUpdate.Found got = r;
             final String why = err;
             main().post(() -> {
                 if (isDestroyed() || token != checkSeq || !checking) return;
@@ -262,25 +262,38 @@ public class MeHomeScreen extends Screen implements Session.Listener {
         });
     }
 
-    private void onChecked(AppUpdate.Release r, String why) {
+    private void onChecked(AppUpdate.Found found, String why) {
         if (why != null) {
             Dialogs.alert(ctx(), "检查更新", why);
             return;
         }
         String cur = AboutScreen.appVersion(ctx());
-        if (r == null) {
+        if (found == null || found.none()) {
             Dialogs.alert(ctx(), "检查更新", "还没有发布过教师端 APP 的安装包。");
             return;
         }
-        if (AppUpdate.compare(r.version, cur) <= 0) {
-            Dialogs.alert(ctx(), "检查更新", "已经是最新版本（v" + cur + "）。");
+        AppUpdate.Release stable = found.stable, beta = found.beta;
+        if (stable != null && AppUpdate.compare(stable.version, cur) > 0) {
+            offer(stable, cur);
             return;
         }
+        // 没有更新的正式版，但有更新的测试版（预发布）：明说，让老师自己选
+        if (beta != null && AppUpdate.compare(beta.version, cur) > 0) {
+            offer(beta, cur);
+            return;
+        }
+        Dialogs.alert(ctx(), "检查更新", "已经是最新版本（v" + cur + "）。");
+    }
+
+    private void offer(AppUpdate.Release r, String cur) {
         String notes = r.notes.trim();
         if (notes.length() > 800) notes = notes.substring(0, 800) + "…";
         String size = r.size > 0 ? String.format("，约 %.1f MB", r.size / 1048576.0) : "";
-        Dialogs.confirm(ctx(), "发现新版本 v" + r.version,
-                "当前 v" + cur + size + "\n\n" + notes, "下载并安装", false, () -> download(r));
+        String title = (r.prerelease ? "发现测试版 v" : "发现新版本 v") + r.version;
+        String head = "当前 v" + cur + size;
+        if (r.prerelease) head += "\n\n这是测试版（预发布），还没转成正式版，可能还有问题。";
+        Dialogs.confirm(ctx(), title, head + (notes.isEmpty() ? "" : "\n\n" + notes),
+                "下载并安装", false, () -> download(r));
     }
 
     private void download(AppUpdate.Release r) {
