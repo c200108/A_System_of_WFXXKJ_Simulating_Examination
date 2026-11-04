@@ -43,6 +43,20 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+def is_root(user: User) -> bool:
+    """部署时 .env 里 ADMIN_USERNAME 建的那个管理员 —— 全校只有一个，权限最大。"""
+    from .config import settings
+
+    return user.role == "admin" and user.username == settings.admin_username
+
+
+def require_root(user: User = Depends(get_current_user)) -> User:
+    """备份还原、一键更新这种动整台服务器的事，只有这一个账号能做。"""
+    if not is_root(user):
+        raise HTTPException(status_code=403, detail="只有部署时建的系统管理员账号能做这件事")
+    return user
+
+
 def get_optional_user(
     token: str | None = Depends(oauth2_optional), db: Session = Depends(get_db)
 ) -> User | None:

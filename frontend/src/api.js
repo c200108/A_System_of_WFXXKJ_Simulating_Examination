@@ -158,6 +158,28 @@ export function safeName(name) {
 }
 
 export const api = {
+  // ---- 系统管理员：数据备份、一键更新（routers/system.py）
+  systemStatus: () => http.get('/system/status'),
+  systemJob: id => http.get(`/system/jobs/${id}`, { silent: true, timeout: 10000 }),
+  exportBackup: () => http.get('/system/backup/export', { responseType: 'blob', timeout: 0 }),
+  importBackup: (file, password, onUploadProgress) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('password', password)
+    return http.post('/system/backup/import', fd, { timeout: 0, onUploadProgress })
+  },
+  updateFromGithub: password => {
+    const fd = new FormData()
+    fd.append('password', password)
+    return http.post('/system/update/github', fd)
+  },
+  updateFromZip: (file, password, onUploadProgress) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('password', password)
+    return http.post('/system/update/upload', fd, { timeout: 0, onUploadProgress })
+  },
+
   // 前后端共用 config.yaml，这里取界面要用的那部分
   siteConfig: () => http.get('/config'),
   // 服务器自己的网卡地址（老师在服务器本机用 localhost 打开后台时拼学生链接用，要登录）

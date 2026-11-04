@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     client_updates_enabled: bool = False
     client_update_dir: str = "./data/client-updates"
 
+    # 「备份导入 / 一键更新」交给宿主机执行的任务放这里（2.18.0）。Docker 部署时挂到宿主机
+    # 项目目录的 data/host-jobs，宿主机上的「主机助手」（scripts/host-agent.sh，systemd 盯着）
+    # 接单执行 —— 重建容器、跑升级脚本这些事，容器里的后端自己做不了。见 routers/system.py
+    host_jobs_dir: str = "./data/host-jobs"
+
     admin_username: str = "admin"
     admin_password: str = "admin123"
     admin_name: str = "系统管理员"
