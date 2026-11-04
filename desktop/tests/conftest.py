@@ -175,12 +175,12 @@ def exam(server):
     # **每个用例用自己的学号**：同一学号只能交一次卷，两个用例共用一个，
     # 后跑的那个会撞上 409，而且报错看着像是别的毛病。
     #   26090101-07  test_flow 用
-    #   26090111-20  test_ui 用
+    #   26090111-22  test_ui 用（21、22 是 4.13.1 窗口那几条）
     for i, name in enumerate(["桌面甲", "桌面丙", "桌面丁", "桌面戊", "桌面己",
                               "桌面庚", "桌面辛"], start=1):
         call(server, "POST", "/api/students",
              {"student_no": f"260901{i:02d}", "name": name, "class_id": cid}, tk)
-    for i in range(11, 21):
+    for i in range(11, 23):
         call(server, "POST", "/api/students",
              {"student_no": f"260901{i}", "name": f"机房{i}", "class_id": cid}, tk)
     other = call(server, "POST", "/api/classes", {"grade": "九年级", "name": "2班"}, tk)["id"]

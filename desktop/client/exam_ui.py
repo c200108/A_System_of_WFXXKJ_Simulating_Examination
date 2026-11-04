@@ -29,7 +29,31 @@ def submit_needs(total_questions: int, total_seconds: int) -> tuple[int, int]:
     return -(-total_questions // 2), -(-total_seconds // 2)
 
 
+def exam_minsize(screen_w: int, screen_h: int) -> tuple[int, int]:
+    """答题窗口最小能拉到多大：宽 = 屏幕宽的 1/8，高 = 屏幕高的 1/3。
+
+    1920×1080 的屏幕是 240×360。再小内容就靠滚动条，「交卷」始终摆在最前面。
+    """
+    return max(1, screen_w // 8), max(1, screen_h // 3)
+
+
+# 一键收缩只给这两类题：学生要在真系统（资源管理器 / WPS）里照着题干做，
+# 窗口挡在前面碍事。网页、AI、拖拽题和客观题都在本窗口里作答，收起来反而没法答
+SHRINK_KINDS = ("win", "wps")
+
+
+def can_shrink(q: dict) -> bool:
+    return (q.get("type") not in ("选择题", "判断题", "填空题")
+            and (q.get("sim") or {}).get("kind") in SHRINK_KINDS)
+
+
 class ExamFrame(ttk.Frame):
+    FOLD_TEXT = "←"            # 答题卡展开着：点了往左收
+    UNFOLD_TEXT = "→"          # 答题卡收起了：点了往右展开
+    SHRINK_TEXT = "一键收缩"
+    RESTORE_TEXT = "还原"
+    SHRUNK_WIDTH = 460         # 收缩后的小窗口：只放题干，贴在屏幕右上角
+
     def __init__(self, app):
         super().__init__(app.root, padding=0)
         self.app = app
@@ -45,6 +69,14 @@ class ExamFrame(ttk.Frame):
         self.started = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.submitted = False
         self._build()
+        # 考试窗口允许拉得很小（学生要一边看题一边在 WPS 里做）：高到屏幕的 1/3、
+        # 宽到屏幕的 1/8。离开答题界面时换回原来的下限，主界面还是原来那个大小
+        root = app.root
+        self._shell_minsize = tuple(root.minsize())
+        self._exam_minsize = exam_minsize(root.winfo_screenwidth(),
+                                          root.winfo_screenheight())
+        root.minsize(*self._exam_minsize)
+        self.bind("<Destroy>", self._on_destroy, add="+")
         self.restore_draft()
         self.show(0)
         self.tick()
@@ -54,18 +86,20 @@ class ExamFrame(ttk.Frame):
         top = tk.Frame(self, bg=BLUE, height=54)
         top.pack(fill="x")
         top.pack_propagate(False)
-        tk.Label(top, text=self.app.package.title, bg=BLUE, fg="white",
-                 font=(FONT, 13, "bold")).pack(side="left", padx=16)
-        s = self.app.student
-        tk.Label(top, text=f"{s.get('cls', '')}　{s.get('name', '')}　{s.get('no', '')}",
-                 bg=BLUE, fg="#d8e6ff", font=(FONT, 10)).pack(side="left", padx=6)
-
+        self.topbar = top
+        # **「交卷」和倒计时先 pack**：窗口被拉窄时，pack 先满足先摆的，后摆的被挤掉。
+        # 原来标题先摆，窗口一窄「交卷」就被挤没了 —— 现在挤掉的是标题和姓名
         self.btn_submit = tk.Button(top, text="交 卷", bg="#ffffff", fg=BLUE,
                                     font=(FONT, 11, "bold"), relief="flat",
                                     cursor="hand2", command=self.confirm_submit)
-        self.btn_submit.pack(side="right", padx=16, pady=11)
+        self.btn_submit.pack(side="right", padx=(6, 12), pady=11)
         self.clock = tk.Label(top, text="", bg=BLUE, fg="white", font=(FONT, 13, "bold"))
-        self.clock.pack(side="right", padx=10)
+        self.clock.pack(side="right", padx=4)
+        tk.Label(top, text=self.app.package.title, bg=BLUE, fg="white",
+                 font=(FONT, 13, "bold")).pack(side="left", padx=(16, 6))
+        s = self.app.student
+        tk.Label(top, text=f"{s.get('cls', '')}　{s.get('name', '')}　{s.get('no', '')}",
+                 bg=BLUE, fg="#d8e6ff", font=(FONT, 10)).pack(side="left", padx=6)
 
         # **页脚先 pack，而且钉在底部。** 放在 body 后面 pack 的话，题干一长，
         # Tk 先把空间分给上面的内容，「上一题/下一题」就被挤扁甚至挤没了 ——
@@ -74,6 +108,7 @@ class ExamFrame(ttk.Frame):
                         highlightthickness=1)
         foot.pack(side="bottom", fill="x")
         foot.pack_propagate(False)
+        self.foot = foot
         tk.Button(foot, text="上一题", font=(FONT, 10), relief="groove", width=10,
                   command=lambda: self.show(self.index - 1)).pack(side="left", padx=16, pady=8)
         tk.Button(foot, text="下一题", font=(FONT, 10), relief="groove", width=10,
@@ -83,11 +118,17 @@ class ExamFrame(ttk.Frame):
 
         body = tk.Frame(self, bg=BG)
         body.pack(fill="both", expand=True)
+        self.body = body
+        # 窗口拉窄了，答题卡（196 宽）会把题目挤成一条缝 —— 窄到放不下就自动收起，
+        # 让出位置给题目；拉宽回来、而且是自动收的，再自动展开
+        self._auto_folded = False
+        body.bind("<Configure>", self._body_resized)
 
         side = tk.Frame(body, bg=CARD, width=196, highlightbackground=LINE,
                         highlightthickness=1)
         side.pack(side="left", fill="y")
         side.pack_propagate(False)
+        self.side = side
         tk.Label(side, text="答题卡", bg=CARD, font=(FONT, 11, "bold")).pack(pady=(10, 2))
         self.progress = tk.Label(side, text="", bg=CARD, fg=GRAY, font=(FONT, 9))
         self.progress.pack()
@@ -102,8 +143,20 @@ class ExamFrame(ttk.Frame):
         tk.Label(side, text="蓝=已答　白=未答", bg=CARD, fg=GRAY,
                  font=(FONT, 8)).pack(side="bottom", pady=6)
 
+        # 答题卡折叠按钮：一个小方块，贴在答题卡右边。收起后答题卡整条拿掉，
+        # 题目区占满宽度；按钮本身留着（箭头换个方向），再点就展开。
+        # 箭头用 ← →：Win7 的字体里有（实心三角那类箭头在 GBK 外，Win7 上是方框）
+        self.card_folded = False
+        self.fold_col = tk.Frame(body, bg=BG)
+        self.fold_col.pack(side="left", fill="y")
+        self.btn_fold = tk.Button(self.fold_col, text=self.FOLD_TEXT, width=2,
+                                  font=(FONT, 9), relief="groove", cursor="hand2",
+                                  command=self.toggle_card)
+        self.btn_fold.pack(side="top", padx=(2, 0), pady=(8, 0))
+
         main = tk.Frame(body, bg=BG)
         main.pack(side="left", fill="both", expand=True)
+        self.main = main
 
         # **题干可能很长**（真题里有三四百字的），加上配图和一排选项，一屏放不下。
         # 所以整块内容放进一个画布里，右边给一条滚动条 —— 不给的话下面的选项
@@ -120,8 +173,18 @@ class ExamFrame(ttk.Frame):
         self.canvas.bind_all("<MouseWheel>", self._wheel)
         self.bind("<Destroy>", lambda _e: self._drop_wheel())
 
-        self.head = tk.Label(self.page, text="", bg=BG, fg=GRAY, font=(FONT, 9), anchor="w")
-        self.head.pack(fill="x", padx=18, pady=(10, 0))
+        # 题目标题栏：左边「第几题 / 题型 / 分值」，右边空白处放「一键收缩」
+        # （只有 Windows 操作题、WPS 文字题才出现，见 show）
+        self.head_row = tk.Frame(self.page, bg=BG)
+        self.head_row.pack(fill="x", padx=(18, 12), pady=(8, 0))
+        self.head = tk.Label(self.head_row, text="", bg=BG, fg=GRAY, font=(FONT, 9),
+                             anchor="w")
+        self.head.pack(side="left", fill="x", expand=True)
+        self.btn_shrink = tk.Button(self.head_row, text=self.SHRINK_TEXT, font=(FONT, 9),
+                                    relief="groove", cursor="hand2",
+                                    command=self.toggle_shrink)
+        self.shrunk = False
+        self._before_shrink: dict = {}
         self.stem = tk.Message(self.page, text="", bg=BG, font=(FONT, 12), anchor="w",
                                justify="left", width=700)
         self.stem.pack(fill="x", padx=16, pady=(4, 6))
@@ -149,7 +212,12 @@ class ExamFrame(ttk.Frame):
         """画布宽了窄了，里面那页跟着宽窄 —— 不跟的话题干按 700 像素硬换行，
         窗口再宽也挤在左边一条。"""
         self.canvas.itemconfigure(self._page_id, width=event.width)
-        self.stem.configure(width=max(360, event.width - 60))
+        # 下限放到 160：窗口现在能拉到屏幕宽的 1/8，按 360 硬换行的话右半截题干直接被裁掉
+        self.stem.configure(width=max(160, event.width - 40))
+        wrap = max(140, event.width - 60)
+        for w in self.area.winfo_children():
+            if isinstance(w, tk.Radiobutton):
+                w.configure(wraplength=wrap)
 
     def _wheel(self, event):
         try:
@@ -163,12 +231,131 @@ class ExamFrame(ttk.Frame):
         except tk.TclError:
             pass
 
+    def _option_wrap(self) -> int:
+        """选项文字按画布宽度换行；画布还没量出来（刚建、隐藏）就按 680。"""
+        w = self.canvas.winfo_width()
+        return 680 if w <= 1 else max(140, w - 60)
+
+    # ---------------- 答题卡折叠 ----------------
+    AUTO_FOLD_WIDTH = 520       # 答题区比这窄就自动收起答题卡
+
+    def _body_resized(self, event):
+        if self.shrunk or event.width <= 1:      # 还没显示出来（自检里窗口是隐藏的）不算
+            return
+        narrow = event.width < self.AUTO_FOLD_WIDTH
+        if narrow and not self.card_folded:
+            self.toggle_card()
+            self._auto_folded = True
+        elif not narrow and self.card_folded and self._auto_folded:
+            self.toggle_card()
+
+    def toggle_card(self):
+        """收起 / 展开答题卡。收起后题目区占满宽度，按钮箭头换成朝右。"""
+        self._auto_folded = False           # 学生自己点过，就按学生的来
+        if self.card_folded:
+            self.side.pack(side="left", fill="y", before=self.fold_col)
+            self.btn_fold.config(text=self.FOLD_TEXT)
+        else:
+            self.side.pack_forget()
+            self.btn_fold.config(text=self.UNFOLD_TEXT)
+        self.card_folded = not self.card_folded
+
+    # ---------------- 一键收缩 ----------------
+    def toggle_shrink(self):
+        if self.shrunk:
+            self.unshrink()
+        else:
+            self.shrink()
+
+    def shrink(self):
+        """只留题干，窗口缩成一小条贴在屏幕右上角并且置顶 —— 学生在资源管理器 /
+        WPS 里做题时，题目要求一直看得见，又不挡着操作。
+
+        收缩前的大小、位置、最大化与否、答题卡折没折都记下来，还原时原样放回。
+        """
+        if self.shrunk or self.submitted or not can_shrink(self.paper[self.index]):
+            return
+        root = self.app.root
+        self._before_shrink = {"geometry": root.geometry(), "state": root.state()}
+        self.shrunk = True
+        self.topbar.pack_forget()
+        self.foot.pack_forget()
+        self.side.pack_forget()
+        self.fold_col.pack_forget()
+        self.pic_label.pack_forget()
+        self.area.pack_forget()
+        self.btn_shrink.config(text=self.RESTORE_TEXT)
+
+        # 临时放开最小尺寸：不放开的话缩不到这么小
+        root.minsize(1, 1)
+        if root.state() == "zoomed":
+            root.state("normal")
+        self.update_idletasks()
+        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+        w = min(self.SHRUNK_WIDTH, max(240, sw // 3))
+        self.stem.configure(width=max(160, w - 40))
+        self.update_idletasks()
+        need = self.head_row.winfo_reqheight() + self.stem.winfo_reqheight() + 30
+        h = max(120, min(need, sh // 2))
+        x, y = max(0, sw - w - 16), 40
+        root.geometry(f"{w}x{h}+{x}+{y}")
+        # 位置再设一遍：刚拆掉一堆控件、刚改完最小尺寸，Windows 上第一次的位置
+        # 会被吞掉（大小变了、窗口还停在原地）—— 本机实测撞上过
+        self.update_idletasks()
+        root.geometry(f"+{x}+{y}")
+        root.attributes("-topmost", True)
+        self.canvas.yview_moveto(0)
+        self.after_idle(self._page_resized)
+
+    def unshrink(self):
+        """还原：大小、位置、答题卡折叠状态放回去，取消置顶，最小尺寸恢复。"""
+        if not self.shrunk:
+            return
+        self.shrunk = False
+        root = self.app.root
+        try:
+            root.attributes("-topmost", False)
+        except tk.TclError:
+            pass
+        root.minsize(*self._exam_minsize)
+        before = self._before_shrink or {}
+        if before.get("geometry"):
+            root.geometry(before["geometry"])
+        if before.get("state") == "zoomed":
+            root.state("zoomed")
+
+        self.topbar.pack(fill="x", before=self.body)
+        self.foot.pack(side="bottom", fill="x", before=self.body)
+        self.fold_col.pack(side="left", fill="y", before=self.main)
+        if not self.card_folded:
+            self.side.pack(side="left", fill="y", before=self.fold_col)
+        self.area.pack(fill="both", expand=True, padx=18)
+        if self.pic is not None:
+            self.pic_label.pack(anchor="w", padx=18, pady=(0, 6), before=self.area)
+        self.btn_shrink.config(text=self.SHRINK_TEXT)
+        self.update_idletasks()
+        self.after_idle(self._page_resized)
+
+    def _on_destroy(self, event):
+        """答题界面没了（交完卷换屏、退出）：置顶取消、最小尺寸换回主界面那个。"""
+        if event.widget is not self:
+            return
+        try:
+            self.app.root.attributes("-topmost", False)
+            self.app.root.minsize(*self._shell_minsize)
+        except tk.TclError:
+            pass
+
     # ---------------- 渲染 ----------------
     def show(self, i: int):
         if not (0 <= i < len(self.paper)):
             return
-        self.index = i
         q = self.paper[i]
+        # 收缩着切到一道不能收缩的题（网页 / AI / 拖拽 / 客观题）：先还原，
+        # 不然学生面对一个只剩题干的小窗口，没地方作答。切到另一道 win/wps 题就接着缩着
+        if self.shrunk and not can_shrink(q):
+            self.unshrink()
+        self.index = i
         qid = str(q["id"])
         self.head.config(text=f"第 {i + 1} / {len(self.paper)} 题　"
                               f"{q.get('section') or q['type']}　{q.get('score', 0)} 分")
@@ -187,6 +374,13 @@ class ExamFrame(ttk.Frame):
         else:
             self._render_operation(q, qid)
             self.tip.config(text="")
+        if can_shrink(q):
+            self.btn_shrink.pack(side="right", before=self.head)   # 窗口窄了先挤标题，别挤按钮
+        else:
+            self.btn_shrink.pack_forget()
+        if self.shrunk:                 # 缩着换了一道 win/wps 题：照样只留题干
+            self.pic_label.pack_forget()
+            self.area.pack_forget()
         # 换一题从头看起：上一题要是拉到了底，这一题的题干会被藏在上面看不见
         self.canvas.yview_moveto(0)
         self.after_idle(self._page_resized)
@@ -211,7 +405,10 @@ class ExamFrame(ttk.Frame):
             self.pic_label.pack_forget()
             return
         self.pic_label.config(image=self.pic)
-        self.pic_label.pack(anchor="w", padx=18, pady=(0, 6))
+        if self.shrunk:                 # 收缩时只留题干，图等还原了再摆
+            return
+        # before=area：不写的话图会排到作答区下面去，离题干隔着一整块选项
+        self.pic_label.pack(anchor="w", padx=18, pady=(0, 6), before=self.area)
 
     # 「没作答」在界面上用的值。**不能用空串**：Tk 的 Radiobutton 有个"第三态"
     # —— 绑定变量正好等于 `tristatevalue`（默认就是空串）时，它画成"值未定"的
@@ -239,7 +436,7 @@ class ExamFrame(ttk.Frame):
             tk.Radiobutton(
                 self.area, text=f"{o['label']}．{o['content']}", value=o["label"],
                 variable=var, bg=BG, font=(FONT, 11), anchor="w", justify="left",
-                wraplength=680, tristatevalue="\x01",
+                wraplength=self._option_wrap(), tristatevalue="\x01",
                 command=lambda v=var, k=qid: self._picked(k, v.get()),
             ).pack(fill="x", pady=3)
 
@@ -430,6 +627,7 @@ class ExamFrame(ttk.Frame):
     def open_target(self, path: Path, qid: str | None):
         err = open_in_system(path)
         if err:
+            self.unshrink()
             messagebox.showwarning("打不开", err)
             return
         if qid:
@@ -479,6 +677,7 @@ class ExamFrame(ttk.Frame):
         if self.submitted:
             return
         if self.left <= 0:
+            self.unshrink()             # 弹窗、交卷之前先还原：缩着的小窗口里看不全
             messagebox.showinfo("时间到", "考试时间结束，系统将自动交卷。")
             self.do_submit(auto=True)
             return
@@ -556,6 +755,7 @@ class ExamFrame(ttk.Frame):
         in_thread(self, lambda: api.exam_live(server, pack.token), done)
 
     def confirm_submit(self):
+        self.unshrink()
         why = self.gate_reason()
         if why and not getattr(self, "_asked_live", False):
             # 被门槛拦住时当场再问一次：老师刚打开「允许提前交卷」，不用等下一个 60 秒
@@ -583,6 +783,7 @@ class ExamFrame(ttk.Frame):
     def do_submit(self, auto: bool = False):
         if self.submitted:
             return
+        self.unshrink()
         self.submitted = True
         self.btn_submit.config(state="disabled", text="交卷中…")
         self.tip.config(text="正在检查考试文件夹，请稍候…")
