@@ -1211,6 +1211,7 @@ class ExamApp:
 
     def on_close(self):
         if isinstance(self.frame, ExamFrame) and not self.frame.submitted:
+            self.frame.unshrink()       # 缩着的置顶小窗口会把确认框挡在后面
             if not messagebox.askyesno("退出", "考试还没交卷，确定要退出吗？\n"
                                                "（答案已存草稿，重开可以接着考）"):
                 return
