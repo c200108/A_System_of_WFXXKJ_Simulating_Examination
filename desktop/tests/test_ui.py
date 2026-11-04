@@ -277,7 +277,13 @@ def start_exam(app, server, exam, no):
     shell.body.start(next(e for e in shell.body.exams
                           if e["id"] == exam["exam"]["id"]))
     assert settle(app, until=on(app, exam_ui.ExamFrame)), shell.body.msg.cget("text")
-    return app.frame
+    # 自检里的窗口是隐藏的，量出来的宽度忽大忽小（看前面的用例把它摆成了什么样），
+    # 「窗口窄了自动收起答题卡」会随机触发。默认关掉，专门测它的用例自己打开
+    frame = app.frame
+    frame.AUTO_FOLD_WIDTH = 0
+    if frame._auto_folded:
+        frame.toggle_card()
+    return frame
 
 
 # ================================================================ 答题
@@ -1126,3 +1132,16 @@ def test_关窗口的确认框前先还原(app, server, exam, monkeypatch):
     monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: seen.append(frame.shrunk) or False)
     app.on_close()
     assert seen == [False]
+
+
+def test_窗口窄了自动收起答题卡_让出位置给题目(app, server, exam):
+    frame = start_exam(app, server, exam, "26090121")
+    frame.AUTO_FOLD_WIDTH = exam_ui.ExamFrame.AUTO_FOLD_WIDTH
+    frame._body_resized(type("E", (), {"width": 300})())
+    assert frame.card_folded and frame.side.winfo_manager() == ""
+    frame._body_resized(type("E", (), {"width": 900})())
+    assert not frame.card_folded and frame.side.winfo_manager() == "pack"
+    # 学生自己收起的，拉宽了也不替他展开
+    frame.toggle_card()
+    frame._body_resized(type("E", (), {"width": 900})())
+    assert frame.card_folded
