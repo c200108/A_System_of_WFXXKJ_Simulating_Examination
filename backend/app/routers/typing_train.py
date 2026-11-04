@@ -276,7 +276,52 @@ def submit_record(
     return TypingResultOut(
         module=body.module, speed=speed, accuracy=accuracy,
         duration=secs, stars=stars, difficulty=body.difficulty,
+        **school_rank(db, rec),
     )
+
+
+def school_rank(db: Session, rec: TypingRecord) -> dict:
+    """这次速度在「同模块 + 同难度」里排全校第几（2.17.2）。
+
+    **排行榜上一个学生只算他最好的那一次**：有人练了 20 遍，也只占一个名次，
+    名次不会超过总人数。只是排名时这样算 —— 每一次练习照样原样入库，
+    成绩页、学情分析看到的还是全部记录。
+
+    一个学生怎么认：挂了账号的按账号（改名、转班也是同一个人）；
+    没挂账号的（免登录页校外来的）按「班级 + 姓名」。同一个班级姓名既有
+    挂账号的、又有没挂上的老记录时，算到账号那个人头上，不拆成两个人。
+
+    名次 = 最好成绩比**这次速度**快的人数 + 1（一样快的并列）；自己算在总人数里，
+    只是不和自己比。顺带给出自己的最好成绩和那个成绩的名次。
+    键盘模块没有速度，不排。
+    """
+    if rec.module == "键盘":
+        return {}
+    rows = db.execute(
+        select(TypingRecord.student_id, TypingRecord.student_class, TypingRecord.student_name,
+               func.max(TypingRecord.speed))
+        .where(TypingRecord.module == rec.module, TypingRecord.difficulty == rec.difficulty)
+        .group_by(TypingRecord.student_id, TypingRecord.student_class, TypingRecord.student_name)
+    ).all()
+    # 班级姓名 -> 账号：没挂账号的老记录据此并到账号上
+    owner = {(c, n): sid for sid, c, n, _ in rows if sid is not None}
+    best: dict = {}
+    for sid, cls, name, top in rows:
+        if sid is None:
+            sid = owner.get((cls, name))
+        key = ("id", sid) if sid is not None else ("cn", cls, name)
+        best[key] = max(best.get(key, 0), top or 0)
+
+    me = rec.student_id if rec.student_id is not None else owner.get((rec.student_class, rec.student_name))
+    my_key = ("id", me) if me is not None else ("cn", rec.student_class, rec.student_name)
+    my_best = best.get(my_key, rec.speed)
+    others = [v for k, v in best.items() if k != my_key]
+    return {
+        "rank": sum(1 for v in others if v > rec.speed) + 1,
+        "rank_total": len(others) + 1,
+        "best_speed": my_best,
+        "best_rank": sum(1 for v in others if v > my_best) + 1,
+    }
 
 
 # ---------------------------------------------------------------- 教师端（要登录）

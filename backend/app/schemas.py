@@ -607,6 +607,11 @@ class TypingResultOut(BaseModel):
     accuracy: int
     duration: int
     stars: int
+    # 全校排名（同模块 + 同难度，每人只算最好的一次）；键盘模块没有，为空
+    rank: int | None = None
+    rank_total: int | None = None
+    best_speed: int | None = None
+    best_rank: int | None = None
 
 
 class TypingRecordOut(ORMModel):
