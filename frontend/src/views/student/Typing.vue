@@ -518,7 +518,19 @@ onUnmounted(() => {
             <span>评价</span>
             <b class="stars">{{ '★'.repeat(result.stars) + '☆'.repeat(3 - result.stars) }}</b>
           </div>
+          <div v-if="result.rank">
+            <span>全校排名 · {{ result.module }} · {{ result.difficulty }}</span>
+            <b class="rank">第 {{ result.rank }} 名<small> / {{ result.rank_total }} 人</small></b>
+          </div>
         </div>
+        <p v-if="result.rank" class="rank-note">
+          这次 {{ result.speed }} 字/分，在全校练过「{{ result.module }} · {{ result.difficulty }}」的
+          {{ result.rank_total }} 个同学里排第 {{ result.rank }}。
+          <template v-if="result.best_speed > result.speed">
+            你最好的一次是 {{ result.best_speed }} 字/分，排第 {{ result.best_rank }}。
+          </template>
+          <span class="muted">（每人只按自己最好的一次排名）</span>
+        </p>
         <p class="ok-note">✓ 成绩已提交给老师</p>
       </div>
     </div>
@@ -837,6 +849,22 @@ h1 small {
 .stars {
   color: #e6a23c;
   letter-spacing: 3px;
+}
+.rank {
+  color: var(--el-color-primary);
+}
+.rank small {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--el-text-color-secondary);
+}
+.rank-note {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.rank-note .muted {
+  color: var(--el-text-color-secondary);
 }
 .ok-note {
   margin: 14px 0 0;
