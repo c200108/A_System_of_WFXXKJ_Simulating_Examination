@@ -17,6 +17,7 @@ from .models import AppMeta, DictItem, ExamSubmission, User
 from .security import hash_password
 from .changelog_seed import seed_changelog
 from .services.exam import settle_submission
+from .services.supplement import seed_supplement
 from .services.typing_texts import ensure_default_theme, seed_from_config
 from .siteconfig import site
 
@@ -50,7 +51,8 @@ def _settle_old_submissions(db) -> int:
     return n
 
 
-def seed() -> None:
+def seed(supplement: bool = True) -> None:
+    """supplement=False 不补补充题：测试要从一个空题库起步，组卷才算得准。"""
     db = SessionLocal()
     try:
         # 最先做：服务器时钟校正值改了，已有记录的时间一起挪（见 app/clock.py）。
@@ -86,6 +88,12 @@ def seed() -> None:
         if n:
             print(f"[seed] 打字文本已导入 {n} 段")
         ensure_default_theme(db)  # 内置主题「信息生活」，没归主题的文本归它
+
+        # 补充题跟着代码走：库里没有就补上（按题干查重，老师删了的不会再冒出来）
+        n = seed_supplement(db) if supplement else 0
+        db.commit()
+        if n:
+            print(f"[seed] 补充题新增 {n} 道")
 
         # 更新日志按内容去重，可反复执行；新版本追加到 changelog_seed.py 即可
         n = seed_changelog(db)

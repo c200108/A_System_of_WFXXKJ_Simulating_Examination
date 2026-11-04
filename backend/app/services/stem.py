@@ -621,6 +621,12 @@ def _seed_mentioned(stem: str, base: str, fs: dict, checks: list) -> None:
 
 
 def parse_win(stem: str) -> dict:
+    """Windows 题：win_bank 里逐题写死的（补充题）按表来，别的题走通用规则。"""
+    from . import win_bank
+    return win_bank.lookup(stem) or parse_win_generic(stem)
+
+
+def parse_win_generic(stem: str) -> dict:
     base = _base_dir(stem)
     fs: dict = {}
     checks: list = []
@@ -1175,8 +1181,9 @@ def auto_sim(stem_text: str, scope: str = "") -> dict | None:
     out_checks = []
     for c in checks:
         a = dict(c.get("assert") or {})
-        if "path" in a:
-            a["path"] = f"{ROOT}/{a['path']}"
+        for key in ("path", "from"):            # from：copied 检查点的原位置
+            if key in a:
+                a[key] = f"{ROOT}/{a[key]}"
         out_checks.append({**c, "assert": a})
     return {"kind": got["kind"], "env": env, "checks": out_checks}
 

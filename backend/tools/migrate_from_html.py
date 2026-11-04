@@ -25,6 +25,7 @@ from app.models import Option, Question
 from app.services.difficulty import estimate
 from app.services.difficulty_table import level_for
 from app.services.importer import stem_hash
+from app.services.supplement import SOURCE as SUPPLEMENT
 
 DATA_URL_RE = re.compile(r"^data:image/(?P<ext>[a-zA-Z0-9.+-]+);base64,(?P<body>.+)$", re.S)
 
@@ -68,7 +69,9 @@ def main() -> None:
     if if_empty:
         db = SessionLocal()
         try:
-            n = db.query(Question).count()
+            # 补充题不算：app.seed 比这一步先跑，全新部署时库里已经有那几道补充题了，
+            # 算上它们的话原题库就永远灌不进来
+            n = db.query(Question).filter(Question.source != SUPPLEMENT).count()
         finally:
             db.close()
         if n:
