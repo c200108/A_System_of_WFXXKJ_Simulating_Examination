@@ -162,6 +162,9 @@ def test_全体_各项指标(scored_exam, client, auth):
     assert r["ranking"][0]["rank"] == 1
     op = r["operations"][0]
     assert len(op["checks"]) == 2 and all(0 <= c["pass_rate"] <= 100 for c in op["checks"])
+    # 每一步带上通过人数：成绩分析页的小题排名表要显示「几/几 人通过」
+    assert all(c["total"] == 4 and 0 <= c["passed"] <= c["total"] for c in op["checks"])
+    assert all(c["pass_rate"] == round(c["passed"] / c["total"] * 100, 1) for c in op["checks"])
     assert sum(b["count"] for b in r["bands"]) == 4
     assert r["options"]["classes"] == ["七年级1班", "七年级2班"] and len(r["options"]["students"]) == 4
     text = "".join(r["conclusions"])
