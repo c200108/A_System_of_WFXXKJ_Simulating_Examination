@@ -52,6 +52,8 @@ r"""桌面客户端（desktop/）和网页后台之间的那条线。
 import io
 import json
 import zipfile
+from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import Response
@@ -123,6 +125,22 @@ def _common_dir(dirs) -> str:
     return "/".join(parts or [])
 
 
+ASSET_DIR = Path(__file__).resolve().parent.parent / "assets"
+
+
+def _asset_bytes(rel) -> Optional[bytes]:
+    """app/assets/ 下的一个素材文件。路径不在 assets 里、文件不存在，都返回 None
+    （退回按 content 落盘），不让一个坏路径把整场考试的包打不出来。"""
+    if not rel:
+        return None
+    try:
+        path = (ASSET_DIR / str(rel)).resolve()
+        path.relative_to(ASSET_DIR.resolve())
+        return path.read_bytes() if path.is_file() else None
+    except (ValueError, OSError):
+        return None
+
+
 def _files_of(kind: str, env: dict, folder: str = "", root: str = "") -> dict:
     """把仿真环境变成"要铺到考场机器上的文件"。
 
@@ -153,6 +171,10 @@ def _files_of(kind: str, env: dict, folder: str = "", root: str = "") -> dict:
                 continue
             if (node or {}).get("type") == "dir":
                 out[rel] = None
+            elif _asset_bytes((node or {}).get("asset")) is not None:
+                # 写死的题（services/win_bank.py）带真素材：图片铺成真图片，
+                # 学生在真机上双击打得开
+                out[rel] = _asset_bytes(node["asset"])
             else:
                 # 文本内容按 GBK 落盘：考场是 XP/Win7，记事本默认就是 ANSI，
                 # 这样学生打开看到的和老师出题时看到的才一致

@@ -160,7 +160,8 @@ def _move_workdir(item: dict, old: str, new: str) -> None:
     checks = []
     for c in item.get("sim_checks") or []:
         a_ = c.get("assert") or {}
-        checks.append({**c, "assert": {**a_, "path": mv(a_["path"])}} if "path" in a_ else c)
+        a_ = {**a_, **{k: mv(a_[k]) for k in ("path", "from") if k in a_}}   # from：copied 的原位置
+        checks.append({**c, "assert": a_})
     item["sim_checks"] = checks
     item["stem"] = stem_rules.rename_workdir(item["stem"], old, new)
     if item["sim"].get("title"):
