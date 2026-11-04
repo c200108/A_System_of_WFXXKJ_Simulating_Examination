@@ -32,7 +32,7 @@ const numbering = computed(() => {
 })
 
 const answered = computed(() => Object.values(answers).filter(v => String(v || '').trim()).length)
-// 交卷门槛：考试时间过三分之二、且答完三分之二的题
+// 交卷门槛：考试时间过一半、且答完一半的题
 const gate = useSubmitGate(`take-${token}`, paper, answered, () => api.takeLive(token))
 
 /** 交卷结果的标题。操作题要老师评阅，所以交卷当场报的是**客观题**那一段，

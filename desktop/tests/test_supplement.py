@@ -73,7 +73,7 @@ def test_win_room_has_the_real_files(win):
 def test_win_untouched_scores_zero(win):
     got, box = win
     ran = _judge("win", got, box)
-    assert ran["full"] == 50
+    assert ran["full"] == 100
     assert ran["score"] == 0, [r["desc"] for r in ran["results"] if r["ok"]]
 
 
@@ -93,7 +93,7 @@ def test_win_done_right_scores_full(win):
     got, box = win
     _do_win(box)
     ran = _judge("win", got, box)
-    assert ran["score"] == ran["full"] == 50, [r for r in ran["results"] if not r["ok"]]
+    assert ran["score"] == ran["full"] == 100, [r for r in ran["results"] if not r["ok"]]
 
 
 def test_win_move_instead_of_copy_loses_part3(win):
@@ -101,7 +101,7 @@ def test_win_move_instead_of_copy_loses_part3(win):
     _do_win(box, copy_pics=False)
     ran = _judge("win", got, box)
     lost = [r["desc"] for r in ran["results"] if not r["ok"]]
-    assert ran["score"] == 40 and all(d.startswith("③") for d in lost), lost
+    assert ran["score"] == 80 and all(d.startswith("③") for d in lost), lost
 
 
 # ================================================================ B002 WPS 文字
@@ -127,7 +127,7 @@ def test_wps_document_is_the_teachers_text(wps):
 def test_wps_untouched_scores_zero(wps):
     got, box = wps
     ran = _judge("wps", got, box)
-    assert ran["full"] == 50
+    assert ran["full"] == 100
     assert ran["score"] == 0, [r["desc"] for r in ran["results"] if r["ok"]]
 
 
@@ -154,7 +154,7 @@ def test_wps_done_right_scores_full(wps):
     got, box = wps
     (box / "人工智能改变生活.docx").write_bytes(docx_io.build_docx(_do_wps(got["env"])))
     ran = _judge("wps", got, box)
-    assert ran["score"] == ran["full"] == 50, [r for r in ran["results"] if not r["ok"]]
+    assert ran["score"] == ran["full"] == 100, [r for r in ran["results"] if not r["ok"]]
 
 
 def test_wps_not_saved_scores_zero(wps):

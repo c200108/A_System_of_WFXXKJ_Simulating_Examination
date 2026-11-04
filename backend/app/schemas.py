@@ -387,7 +387,7 @@ class ExamCreate(BaseModel):
     allow_retake: bool = Field(default_factory=lambda: site.exam.defaults.allow_retake)
     show_score: bool = Field(default_factory=lambda: site.exam.defaults.show_score)
     show_answer: bool = Field(default_factory=lambda: site.exam.defaults.show_answer)
-    early_submit: bool = False      # 允许提前交卷（不受三分之二门槛限制）
+    early_submit: bool = False      # 允许提前交卷（不受一半门槛限制）
 
 
 class ExamUpdate(BaseModel):

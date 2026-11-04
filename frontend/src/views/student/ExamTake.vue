@@ -51,7 +51,7 @@ const numbering = computed(() => {
 })
 
 const answered = computed(() => Object.values(answers).filter(v => String(v || '').trim()).length)
-// 交卷门槛：考试时间过三分之二、且答完三分之二的题
+// 交卷门槛：考试时间过一半、且答完一半的题
 const gate = useSubmitGate(`student-${examId}`, paper, answered, () => api.studentExamLive(examId))
 
 /** 交卷后按题号取回判分明细（老师开了「显示答案」才有） */

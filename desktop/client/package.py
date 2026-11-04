@@ -71,7 +71,7 @@ class ExamPackage:
 
     @property
     def early_submit(self) -> bool:
-        """老师开了「允许提前交卷」：交卷不设三分之二门槛。旧考试包没有这一项，照旧拦。"""
+        """老师开了「允许提前交卷」：交卷不设一半门槛。旧考试包没有这一项，照旧拦。"""
         return bool(self.manifest.get("early_submit"))
 
     @property

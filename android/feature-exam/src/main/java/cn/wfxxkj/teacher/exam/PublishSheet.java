@@ -91,7 +91,7 @@ final class PublishSheet {
                 creating ? ExamApi.defShowScore : Json.bool(exam, "show_score"));
         Form.Toggle showAnswer = f.toggle("交卷看答案", "正式考试建议关，否则先考的学生能把答案带出去",
                 creating ? ExamApi.defShowAnswer : Json.bool(exam, "show_answer"));
-        Form.Toggle early = f.toggle("允许提前交卷", "默认要考试时间过三分之二、并且答完三分之二的题才能交卷；打开后全程随时能交",
+        Form.Toggle early = f.toggle("允许提前交卷", "默认要考试时间过一半、并且答完一半的题才能交卷；打开后全程随时能交",
                 !creating && Json.bool(exam, "early_submit"));
         Form.Toggle retake = f.toggle("允许重考", "默认同一学号只能交一次",
                 creating ? ExamApi.defRetake : Json.bool(exam, "allow_retake"));

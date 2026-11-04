@@ -1,5 +1,5 @@
 /**
- * 交卷门槛：考试时间过了三分之二、**并且**答完三分之二的题，才放行交卷。
+ * 交卷门槛：考试时间过了一半、**并且**答完一半的题，才放行交卷。
  *
  * 学生端 exe（desktop/client/exam_ui.py）是同一条规矩，改一边记得改另一边。
  *
@@ -8,7 +8,7 @@
  */
 import { computed, onBeforeUnmount, ref } from 'vue'
 
-export const GATE_RATIO = 2 / 3
+export const GATE_RATIO = 1 / 2
 
 /** 卷面上的「40」「40分钟」都变成 40；写不出数字的按 45 分钟算（和学生端一致）。 */
 export function durationMinutes(duration) {
@@ -16,7 +16,7 @@ export function durationMinutes(duration) {
   return digits ? parseInt(digits, 10) : 45
 }
 
-/** 至少要答几题 / 至少要考几秒。向上取整：30 题要答满 20 题，45 分钟要考满 30 分钟。 */
+/** 至少要答几题 / 至少要考几秒。向上取整：30 题要答满 15 题，45 分钟要考满 22 分 30 秒。 */
 export function gateNeeds(totalQuestions, minutes) {
   return {
     questions: Math.ceil(totalQuestions * GATE_RATIO),
@@ -114,7 +114,7 @@ export function useSubmitGate(key, paper, answered, live = null) {
     if (moreQuestions.value > 0) parts.push(`还要再答 ${moreQuestions.value} 题`)
     if (waitSeconds.value > 0) parts.push(`还要再等 ${fmt(waitSeconds.value)}`)
     return (
-      `考试时间过了三分之二、并且答完三分之二的题（至少 ${needs.value.questions} 题）才能交卷：` +
+      `考试时间过了一半、并且答完一半的题（至少 ${needs.value.questions} 题）才能交卷：` +
       parts.join('，')
     )
   })
