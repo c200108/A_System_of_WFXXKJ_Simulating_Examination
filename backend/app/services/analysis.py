@@ -195,8 +195,10 @@ def analyze(items: list, subs: list, pass_score: int, scope: dict | None = None,
         if tally:
             q = by_id[it["id"]]
             operations.append({
-                "no": q["no"], "id": it["id"], "stem": q["stem"], "rate": q["rate"],
-                "checks": [{"desc": desc, "pass_rate": _pct(ok / n) if n else 0}
+                # 题干给全文：成绩分析页上鼠标停在小题上要看完整题干（每题得分率那张图只要前 80 字）
+                "no": q["no"], "id": it["id"], "stem": it.get("stem") or "", "rate": q["rate"],
+                "checks": [{"desc": desc, "pass_rate": _pct(ok / n) if n else 0,
+                            "passed": ok, "total": n}
                            for desc, (ok, n) in tally.items()],
             })
 
