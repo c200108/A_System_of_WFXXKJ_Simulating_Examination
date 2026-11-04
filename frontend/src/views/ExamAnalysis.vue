@@ -221,6 +221,7 @@ function hbar(rows, labelOf, valueOf, color) {
     tooltip: tooltip({ formatter: p => `${p.name}：${p.value}%` }),
     xAxis: pctAxis(),
     yAxis: { type: 'category', inverse: true, data: rows.map(labelOf), ...axisStyle(), splitLine: { show: false },
+      triggerEvent: true,     // 文字被截断：鼠标停在文字上也弹完整提示框（见 EChart.vue）
       axisLabel: { color: ink.value.text, width: 150, overflow: 'truncate' } },
     series: [{
       type: 'bar', data: rows.map(valueOf), barMaxWidth: 18,
@@ -235,8 +236,49 @@ const scopeOpt = computed(() => hbar((data.value?.scopes || []).filter(g => g.ra
 const sectionOpt = computed(() => hbar((data.value?.sections || []).filter(g => g.rate !== null),
   g => g.name, g => g.rate, palette.value[0]))
 const opsRows = computed(() => (data.value?.operations || []).flatMap(o =>
-  o.checks.map(c => ({ label: `第${o.no}题 · ${c.desc}`, value: c.pass_rate }))))
-const opsOpt = computed(() => hbar(opsRows.value, r => r.label, r => r.value, palette.value[0]))
+  o.checks.map(c => ({ label: `第${o.no}题 · ${c.desc}`, value: c.pass_rate, op: o, check: c }))))
+const escapeHtml = t => String(t ?? '').replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]))
+const opsOpt = computed(() => {
+  const opt = hbar(opsRows.value, r => r.label, r => r.value, palette.value[0])
+  const rows = opsRows.value
+  // 左边的文字只放得下 150 像素，鼠标停上去在框里看完整的：哪道题、题干、这一步、几个人过了
+  opt.tooltip = tooltip({
+    extraCssText: 'max-width: 420px; white-space: normal; line-height: 1.6;',
+    formatter: p => {
+      const r = rows[p.dataIndex]
+      if (!r) return ''
+      const c = r.check
+      const who = c.total != null ? `（${c.total} 人中 ${c.passed} 人通过）` : ''
+      return `<b>第${r.op.no}题</b>　${escapeHtml(r.op.stem)}<br/>` +
+        `<b>${escapeHtml(c.desc)}</b><br/>通过率 ${c.pass_rate}%${who}`
+    }
+  })
+  return opt
+})
+
+// 分题排名：每道操作题单独排，不和别的题混在一起。
+// 「小题」一列：得分点描述以 ①②③ 开头的（补充题这样写），就用它 —— 一道小题可能拆成好几个
+// 得分点，几行共用一个 ③；没写的按得分点的先后编号
+const opsOrder = ref('worst')        // worst = 从差到好（先看最该讲的），best = 从好到差
+const CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳'
+const opsRanked = computed(() => (data.value?.operations || []).map(o => {
+  const rows = o.checks.map((c, i) => {
+    const m = String(c.desc || '').match(/^\s*([①-⑳])\s*/)
+    return m ? { ...c, step: m[1], text: c.desc.slice(m[0].length) }
+      : { ...c, step: CIRCLED[i] || `(${i + 1})`, text: c.desc }
+  })
+  // 名次一律按通过率从高到低定（第 1 名 = 这道题里做得最好的一步），并列同名次、下一个跳过
+  // （1、2、2、4）；「从差到好」只是倒过来摆，名次不变
+  rows.sort((a, b) => b.pass_rate - a.pass_rate)
+  let last = null
+  let rank = 0
+  rows.forEach((r, i) => {
+    if (r.pass_rate !== last) { rank = i + 1; last = r.pass_rate }
+    r.rank = rank
+  })
+  if (opsOrder.value === 'worst') rows.reverse()
+  return { no: o.no, stem: o.stem, rate: o.rate, rows }
+}))
 
 const questionOpt = computed(() => {
   const q = (data.value?.questions || []).filter(x => x.rate !== null)
@@ -529,6 +571,37 @@ function printPage() {
           <h2>操作题每一步的通过率</h2>
           <EChart :option="opsOpt" :height="Math.max(220, opsRows.length * 30 + 40) + 'px'"
             label="操作题各检查点的通过率" />
+          <p class="note">左边的文字放不下时，鼠标停在文字或柱子上能看完整的题干和这一步。</p>
+
+          <div class="ops-rank-head">
+            <h3>每道题里各步的排名</h3>
+            <el-radio-group v-model="opsOrder" size="small" class="no-print">
+              <el-radio-button value="worst">从差到好</el-radio-button>
+              <el-radio-button value="best">从好到差</el-radio-button>
+            </el-radio-group>
+          </div>
+          <p class="note">每道大题单独排，不同题之间不比。通过率一样的名次并列。</p>
+          <div class="ops-rank">
+            <div v-for="o in opsRanked" :key="o.no" class="ops-rank-q">
+              <h4>
+                第{{ o.no }}题<span v-if="o.rate !== null && o.rate !== undefined" class="muted">（整题得分率 {{ o.rate }}%）</span>
+              </h4>
+              <p class="ops-stem">{{ o.stem }}</p>
+              <el-table :data="o.rows" size="small" border>
+                <el-table-column prop="rank" label="名次" width="64" align="center" />
+                <el-table-column prop="step" label="小题" width="58" align="center" />
+                <el-table-column prop="text" label="得分点" min-width="220" />
+                <el-table-column label="通过率" width="96" align="right">
+                  <template #default="{ row }">{{ row.pass_rate }}%</template>
+                </el-table-column>
+                <el-table-column label="通过 / 作答" width="104" align="right">
+                  <template #default="{ row }">
+                    <span v-if="row.total !== undefined">{{ row.passed }} / {{ row.total }}</span>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+          </div>
         </section>
 
         <section class="card">
@@ -685,6 +758,38 @@ function printPage() {
 }
 .loading {
   height: 300px;
+}
+.ops-rank-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+}
+.ops-rank-head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.ops-rank {
+  display: grid;
+  gap: 16px;
+  margin-top: 10px;
+}
+.ops-rank-q h4 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+.ops-rank-q .muted {
+  color: var(--el-text-color-secondary);
+  font-weight: normal;
+}
+.ops-stem {
+  margin: 0 0 6px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-line;
 }
 @media (max-width: 520px) {
   .grid2 {

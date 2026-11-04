@@ -427,11 +427,84 @@ final class AnalysisScreen extends Screen {
         if (!ops.isEmpty()) {
             LinearLayout oc = card(c, "操作题每一步的通过率", null);
             oc.addView(new Charts.HBars(c).setMax(100).setData(ops), V.matchWrap());
+            V.addTop(oc, V.text(c, "左边的文字放不下时，完整的题干和得分点看下面的排名表。", V.CAPTION), 6);
+            addOpsRanking(c, oc);
             V.addTop(content, oc, 12);
         }
 
         // 名次
         V.addTop(content, rankingCard(c), 12);
+    }
+
+    /** 分题排名的摆法：true = 从差到好（先看最该讲的那一步），false = 从好到差 */
+    private boolean opsWorstFirst = true;
+    private static final String CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
+
+    /**
+     * 操作题每道题单独给各步排名（和网页版一样）：不同题之间不比。
+     * 名次一律按通过率从高到低定、并列同名次（1、2、2、4）；「从差到好」只是倒过来摆。
+     * 「小题」：得分点描述以 ①②③ 开头的就用它（一道小题可能拆成好几个得分点），没写的按先后编号。
+     */
+    private void addOpsRanking(Context c, LinearLayout oc) {
+        LinearLayout head = V.hbox(c);
+        head.addView(V.text(c, "每道题里各步的排名", V.H3), V.fill());
+        V.addTop(oc, head, 16);
+        ChipRow order = new ChipRow(c);
+        order.setOptions(Option.pairs("worst", "从差到好", "best", "从好到差"), opsWorstFirst ? "worst" : "best");
+        order.setOnPicked(o -> {
+            opsWorstFirst = "worst".equals(String.valueOf(o.value));
+            int y = scroll.getScrollY();
+            render();
+            scroll.post(() -> scroll.scrollTo(0, y));
+        });
+        V.addTop(oc, order, 6);
+        V.addTop(oc, V.text(c, "每道大题单独排，不同题之间不比。通过率一样的名次并列。", V.CAPTION), 4);
+
+        for (JSONObject o : Json.list(Json.arr(data, "operations"))) {
+            List<JSONObject> cks = Json.list(Json.arr(o, "checks"));
+            List<String[]> rows = new ArrayList<>();
+            List<Double> rates = new ArrayList<>();
+            for (int i = 0; i < cks.size(); i++) {
+                JSONObject ck = cks.get(i);
+                String desc = Json.str(ck, "desc");
+                String step = i < CIRCLED.length() ? String.valueOf(CIRCLED.charAt(i)) : "(" + (i + 1) + ")";
+                String t = desc.trim();
+                if (!t.isEmpty() && CIRCLED.indexOf(t.charAt(0)) >= 0) {
+                    step = String.valueOf(t.charAt(0));
+                    desc = t.substring(1).trim();
+                }
+                String who = ck.has("total") ? Json.num(ck, "passed") + " / " + Json.num(ck, "total") : "";
+                rows.add(new String[]{"", step, desc, ExamUi.pct(Json.dbl(ck, "pass_rate")), who});
+                rates.add(Json.dbl(ck, "pass_rate"));
+            }
+            // 按通过率从高到低排出名次
+            List<Integer> idx = new ArrayList<>();
+            for (int i = 0; i < rows.size(); i++) idx.add(i);
+            idx.sort((a, b) -> Double.compare(rates.get(b), rates.get(a)));
+            Double last = null;
+            int rank = 0;
+            for (int k = 0; k < idx.size(); k++) {
+                double r = rates.get(idx.get(k));
+                if (last == null || r != last) {
+                    rank = k + 1;
+                    last = r;
+                }
+                rows.get(idx.get(k))[0] = String.valueOf(rank);
+            }
+            if (opsWorstFirst) java.util.Collections.reverse(idx);
+
+            Double whole = Json.dblOrNull(o, "rate");
+            V.addTop(oc, V.text(c, "第" + Json.num(o, "no") + "题" + (whole != null ? "（整题得分率 " + ExamUi.pct(whole) + "）" : ""),
+                    V.BODY2), 14);
+            V.addTop(oc, V.text(c, Json.str(o, "stem"), V.CAPTION), 2);
+            DataTable t = new DataTable(c, new String[]{"名次", "小题", "得分点", "通过率", "通过 / 作答"},
+                    new int[]{52, 52, 220, 72, 90});
+            for (int i : idx) {
+                String[] r = rows.get(i);
+                t.add(r, new int[]{0, 0, 0, ExamUi.rateColor(c, rates.get(i)), 0});
+            }
+            V.addTop(oc, t, 6);
+        }
     }
 
     /** 带标题的卡片；tableKey 非空时标题右边有「看数据 / 收起数据」 */

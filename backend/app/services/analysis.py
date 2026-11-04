@@ -196,7 +196,9 @@ def analyze(items: list, subs: list, pass_score: int, scope: dict | None = None,
             q = by_id[it["id"]]
             operations.append({
                 "no": q["no"], "id": it["id"], "stem": q["stem"], "rate": q["rate"],
-                "checks": [{"desc": desc, "pass_rate": _pct(ok / n) if n else 0}
+                # passed / total：通过人数、作答人数，分题排名里要写「30 人里 12 人过」
+                "checks": [{"desc": desc, "pass_rate": _pct(ok / n) if n else 0,
+                            "passed": ok, "total": n}
                            for desc, (ok, n) in tally.items()],
             })
 
