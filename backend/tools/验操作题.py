@@ -63,6 +63,18 @@ def from_db() -> list[dict]:
                 Question.is_deleted.is_(False), Question.type == "操作题"))]
 
 
+def _set_fmt(para: dict, a: dict) -> None:
+    """把一条 para/paras 检查点要求的格式写进这一段。"""
+    for key, value in a.items():
+        if key in ("op", "at", "has"):
+            continue
+        # 学生在 WPS 里点的是调色板，存进 .docx 的是十六进制；
+        # 检查点写的是「红色」，这里替他挑一个真红色
+        if key == "color" and value in sim.COLOR_ALIASES:
+            value = "#" + sorted(sim.COLOR_ALIASES[value])[0]
+        para[key] = value
+
+
 def do_the_work(kind: str, env: dict, checks: list, box: Path, logical: str) -> None:
     """一个照着检查点把题做对的"学生"。这就是这道题的标准答案。"""
     if kind == "win":
@@ -78,6 +90,11 @@ def do_the_work(kind: str, env: dict, checks: list, box: Path, logical: str) -> 
                     target.parent.mkdir(parents=True, exist_ok=True)
                     if not target.exists():
                         target.write_text("学生新建的", encoding="gbk")
+            elif a.get("op") == "copied":
+                src = str(a.get("from") or "")
+                src = box / (src[len(logical) + 1:] if logical and src.startswith(logical) else src)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(src, target)
             elif a.get("op") == "missing" and target.exists():
                 target.unlink() if target.is_file() else shutil.rmtree(target)
             elif a.get("op") == "content":
@@ -123,27 +140,26 @@ def do_the_work(kind: str, env: dict, checks: list, box: Path, logical: str) -> 
     for chk in checks:
         a = chk.get("assert") or {}
         op = a.get("op")
-        if op == "para":
-            at = a.get("at")
-            idx = None
-            if isinstance(at, dict):
-                key = str(at.get("has") or "")
-                idx = next((j for j, p in enumerate(paras)
-                            if key and key in str(p.get("text") or "")), None)
-            elif isinstance(at, int) and 0 <= at < len(paras):
-                idx = at
-            if idx is None:
-                continue                      # 找不到那一段，判分时会报出来
-            for key, value in a.items():
-                if key in ("op", "at"):
-                    continue
-                # 学生在 WPS 里点的是调色板，存进 .docx 的是十六进制；
-                # 检查点写的是「红色」，这里替他挑一个真红色
-                if key == "color" and value in sim.COLOR_ALIASES:
-                    value = "#" + sorted(sim.COLOR_ALIASES[value])[0]
-                paras[idx][key] = value
+        if op in ("para", "paras"):
+            # 「paras」是一组段落一起判（has 列出每段里的几个字），逐段照做
+            spots = ([{"has": k} for k in a.get("has") or []] if op == "paras"
+                     else [a.get("at")])
+            for at in spots:
+                if isinstance(at, dict) and "any" in at:   # 哪段对都算：做第一种
+                    at = (at["any"] or [None])[0]
+                idx = None
+                if isinstance(at, dict):
+                    key = str(at.get("has") or "")
+                    idx = next((j for j, p in enumerate(paras)
+                                if key and key in str(p.get("text") or "")), None)
+                elif isinstance(at, int) and 0 <= at < len(paras):
+                    idx = at
+                if idx is None:
+                    continue                  # 找不到那一段，判分时会报出来
+                _set_fmt(paras[idx], a)
         elif op == "text":
-            old, new = a.get("absent"), a.get("present")
+            # to = 真正替换成什么（补充题写了）；没写就拿 present 顶上，老题都这么凑的
+            old, new = a.get("absent"), a.get("to") or a.get("present")
             if old:
                 for p in paras:
                     p["text"] = str(p["text"]).replace(old, new or "")

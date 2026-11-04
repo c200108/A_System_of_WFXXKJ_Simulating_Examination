@@ -113,7 +113,7 @@ def server():
     command.upgrade(cfg, "head")
 
     from app.seed import seed
-    seed()
+    seed(supplement=False)  # 补充题会挤进组卷，测试从空题库起步（补充题另有 test_supplement）
 
     from app.main import app
     port = free_port()

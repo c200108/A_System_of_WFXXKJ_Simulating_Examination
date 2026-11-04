@@ -206,6 +206,16 @@ def _check_win(a: dict, state: dict):
             return False, f"「{name}」是{got}，要求是{'文件夹' if want == 'dir' else '文件'}"
         return True, f"「{name}」在"
 
+    if op == "copied":
+        # 复制 = 目标位置有、原位置也还在。分成两条判的话，学生什么都不做
+        # 「原文件还在」那条也白拿分；一条判，做成移动的也拿不到
+        src = norm_path(a.get("from") or "")
+        if not node:
+            return False, f"找不到「{name}」"
+        if not _find(fs, src):
+            return False, f"原位置的「{src.rsplit('/', 1)[-1]}」不在了，应该是复制不是移动"
+        return True, f"「{name}」复制过去了，原文件也在"
+
     if op == "missing":
         return (False, f"「{name}」还在，应该删掉") if node else (True, f"「{name}」已经不在了")
 

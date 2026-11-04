@@ -37,7 +37,7 @@ def client():
     # 指向 MySQL 时表会留在库里，先清干净再建，保证每次都是同样的起点
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
-    seed()
+    seed(supplement=False)  # 补充题会挤进组卷，测试从空题库起步（补充题另有 test_supplement）
     with TestClient(app) as c:
         yield c
 
