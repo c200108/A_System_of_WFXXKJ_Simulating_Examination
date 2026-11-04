@@ -910,9 +910,12 @@ def test_离线名单按班级姓名找人的规矩():
 
 
 # ================================================================ 交卷门槛
-def test_交卷门槛_三分之二向上取整():
-    assert exam_ui.submit_needs(30, 45 * 60) == (20, 30 * 60)
-    assert exam_ui.submit_needs(10, 40 * 60) == (7, 1600)
+def test_交卷门槛_一半向上取整():
+    assert exam_ui.submit_needs(30, 45 * 60) == (15, 1350)
+    assert exam_ui.submit_needs(10, 40 * 60) == (5, 20 * 60)
+    assert exam_ui.submit_needs(7, 61) == (4, 31)
+    assert exam_ui.submit_needs(31, 40 * 60) == (16, 1200)
+    assert exam_ui.submit_needs(1, 1) == (1, 1)
     assert exam_ui.submit_needs(0, 0) == (0, 0)
 
 
@@ -925,21 +928,29 @@ def test_交卷门槛_时间和题数都够了才放行(app, server, exam, monke
 
     total = app.package.duration_min * 60
     need_q, need_sec = exam_ui.submit_needs(len(frame.paper), total)
+    # 被门槛拦住时客户端先在后台问一次教师端最新设置（老师可能刚打开「允许提前交卷」），
+    # 问完才弹提示 —— 所以点完要等提示真的弹出来，不能当场就看
+    def press():
+        n = len(shown)
+        frame.confirm_submit()
+        settle(app, 10, lambda: len(shown) > n or submitted_)
+
     # 刚开考、一题没答：两样都不够
-    frame.confirm_submit()
+    press()
     assert not submitted_ and "才能交卷" in shown[-1] and "再答" in shown[-1]
     assert "才能交卷" in (frame.tick() or frame.tip.cget("text"))
 
     # 题答够了、时间还不够
     for q in frame.paper[:need_q]:
         frame.answers[str(q["id"])] = "A"
-    frame.confirm_submit()
+    press()
     assert not submitted_ and "再等" in shown[-1] and "再答" not in shown[-1]
 
     # 时间也够了
     frame.left = total - need_sec
     assert frame.gate_reason() == ""
-    frame.confirm_submit()
+    monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: True)   # 「确定交卷吗？」点是
+    press()
     assert submitted_ == [1]
 
 

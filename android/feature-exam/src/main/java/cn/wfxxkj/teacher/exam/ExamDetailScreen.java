@@ -202,7 +202,7 @@ final class ExamDetailScreen extends Screen {
         card.addView(toggleRow(c, "开放答题", "关掉后学生打不开链接", "is_open"));
         card.addView(toggleRow(c, "交卷看分数", "关掉则只提示交卷成功，成绩由老师公布", "show_score"));
         card.addView(toggleRow(c, "交卷看答案", "正式考试建议关，否则先考的学生能把答案带出去", "show_answer"));
-        card.addView(toggleRow(c, "允许提前交卷", "不受「考试时间过三分之二、答完三分之二的题」限制，随时能交",
+        card.addView(toggleRow(c, "允许提前交卷", "不受「考试时间过一半、答完一半的题」限制，随时能交",
                 "early_submit"));
         card.addView(toggleRow(c, "允许重考", "默认同一学号只能交一次", "allow_retake"));
         return card;
