@@ -335,6 +335,13 @@ else
     warn "登录验证没通过，但服务已经起来了，可以先手动打开页面看看。"
 fi
 
+# 主机助手：系统管理员能在网页上导入备份、一键更新（要 root + systemd，装不上不影响使用）
+if [ "$(id -u)" = "0" ]; then
+    bash "$ROOT/scripts/host-agent-install.sh" || warn "主机助手没装上，网页上的导入、一键更新用不了（命令行照旧）"
+else
+    warn "没用 sudo 跑，主机助手没装：要用网页上的导入、一键更新，跑一次 sudo bash scripts/host-agent-install.sh"
+fi
+
 # ---------------------------------------------------------------- 完成
 PUBLIC_URL="$(echo "${CORS_ORIGINS:-$BASE}" | cut -d, -f1)"
 echo

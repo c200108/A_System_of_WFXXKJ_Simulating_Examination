@@ -64,6 +64,8 @@ services:
       DATABASE_URL: mysql+pymysql://${MYSQL_USER:-exam}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE:-exam}?charset=utf8mb4
       JWT_SECRET: ${JWT_SECRET:?请先在 .env 里设置 JWT_SECRET}
       UPLOAD_DIR: /app/data/uploads
+      # 网页上「导入备份」「一键更新」交给宿主机主机助手的任务目录（scripts/host-agent.sh）
+      HOST_JOBS_DIR: /app/data/host-jobs
       # 学生端「检查更新」的自建更新源：预留，默认关着（学生端现在查 GitHub）。要启用就把下面两行、
       # 以及 volumes 里那条 client-updates 的注释去掉，见 desktop/README.md「自建更新源」
       # CLIENT_UPDATES_ENABLED: "true"
@@ -76,6 +78,8 @@ services:
     volumes:
       # 上传的图片和 Excel 原件挂到宿主机，容器重建数据不丢
       - ./data/uploads:/app/data/uploads
+      # 网页派给宿主机的活（导入备份、一键更新）和执行日志，见 scripts/host-agent-install.sh
+      - ./data/host-jobs:/app/data/host-jobs
       # 学生端 exe 的更新清单和安装包（自建更新源，预留）：启用后 scp 到宿主机这个目录就生效，不用重启
       # - ./data/client-updates:/app/data/client-updates:ro
       # 改完 config.yaml 只要 docker compose restart backend，不用重新构建
