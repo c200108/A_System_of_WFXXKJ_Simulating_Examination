@@ -277,7 +277,13 @@ def start_exam(app, server, exam, no):
     shell.body.start(next(e for e in shell.body.exams
                           if e["id"] == exam["exam"]["id"]))
     assert settle(app, until=on(app, exam_ui.ExamFrame)), shell.body.msg.cget("text")
-    return app.frame
+    # 自检里的窗口是隐藏的，量出来的宽度忽大忽小（看前面的用例把它摆成了什么样），
+    # 「窗口窄了自动收起答题卡」会随机触发。默认关掉，专门测它的用例自己打开
+    frame = app.frame
+    frame.AUTO_FOLD_WIDTH = 0
+    if frame._auto_folded:
+        frame.toggle_card()
+    return frame
 
 
 # ================================================================ 答题
@@ -960,3 +966,182 @@ def test_交卷门槛_时间到了照样自动交(app, server, exam):
     frame.left = 0
     frame.tick()
     assert settle(app, 20, on(app, exam_ui.DoneFrame))
+
+
+# ================================================================ 窗口：答题卡折叠、最小尺寸、一键收缩（4.13.1）
+def mixed_paper(frame):
+    """六种题各一道：win / wps 能收缩，html / AI / 拖拽 / 客观题不能。"""
+    frame.paper = [
+        {"id": "6001", "no": 1, "type": "操作题", "score": 5, "stem": "在 win02 里新建文件夹。",
+         "sim": {"kind": "win", "open": "win02"}},
+        {"id": "6002", "no": 2, "type": "操作题", "score": 5, "stem": "把标题设为黑体二号。",
+         "sim": {"kind": "wps", "open": ""}},
+        {"id": "6003", "no": 3, "type": "操作题", "score": 5, "stem": "修改网页标题。",
+         "sim": {"kind": "html", "open": ""}},
+        {"id": "6004", "no": 4, "type": "选择题", "score": 3, "stem": "保存的快捷键是（ ）",
+         "options": [{"label": "A", "content": "Ctrl+S"}, {"label": "B", "content": "Ctrl+P"}]},
+        {"id": "6005", "no": 5, "type": "操作题", "score": 5, "stem": "让 AI 写一首诗。",
+         "sim": {"kind": "ai"}},
+        {"id": "6006", "no": 6, "type": "操作题", "score": 5, "stem": "把设备拖到区域里。",
+         "sim": {"kind": "drag"}},
+    ]
+    frame.num_btns = frame.num_btns[:len(frame.paper)]
+    frame.show(0)
+    frame.app.root.update()
+
+
+def shrink_shown(frame) -> bool:
+    return frame.btn_shrink.winfo_manager() == "pack"
+
+
+def test_最小窗口按屏幕算_宽八分之一高三分之一():
+    assert exam_ui.exam_minsize(1920, 1080) == (240, 360)
+    assert exam_ui.exam_minsize(1366, 768) == (170, 256)
+    assert exam_ui.exam_minsize(1024, 768) == (128, 256)
+    assert exam_ui.exam_minsize(0, 0) == (1, 1)
+
+
+def test_答题时最小尺寸放宽_离开答题换回来(app, server, exam):
+    before = tuple(app.root.minsize())
+    frame = start_exam(app, server, exam, "26090121")
+    want = exam_ui.exam_minsize(app.root.winfo_screenwidth(), app.root.winfo_screenheight())
+    assert tuple(app.root.minsize()) == want
+    frame.destroy()
+    app.frame = None
+    assert tuple(app.root.minsize()) == before
+
+
+def test_窗口窄了交卷按钮也不会被挤掉(app, server, exam):
+    """pack 先满足先摆的：「交卷」得在标题前面摆，窗口一窄被挤掉的是标题。"""
+    frame = start_exam(app, server, exam, "26090121")
+    kids = frame.topbar.pack_slaves()
+    assert kids[0] is frame.btn_submit and kids[1] is frame.clock
+
+
+def test_答题卡能折叠_再点展开(app, server, exam):
+    frame = start_exam(app, server, exam, "26090121")
+    assert frame.side.winfo_manager() == "pack" and frame.btn_fold.cget("text") == "←"
+    frame.btn_fold.invoke()
+    app.root.update()
+    assert frame.card_folded and frame.side.winfo_manager() == ""
+    assert frame.btn_fold.cget("text") == "→"
+    assert frame.fold_col.winfo_manager() == "pack", "收起后按钮本身得留着"
+    frame.btn_fold.invoke()
+    app.root.update()
+    assert not frame.card_folded and frame.side.winfo_manager() == "pack"
+    # 展开后还在按钮左边，不能跑到题目区右边去
+    assert frame.body.pack_slaves()[:2] == [frame.side, frame.fold_col]
+    assert frame.btn_fold.cget("text") == "←"
+
+
+def test_一键收缩只在win和wps题出现(app, server, exam):
+    frame = start_exam(app, server, exam, "26090121")
+    mixed_paper(frame)
+    seen = []
+    for i in range(len(frame.paper)):
+        frame.show(i)
+        app.root.update()
+        seen.append(shrink_shown(frame))
+    assert seen == [True, True, False, False, False, False]
+    frame.show(0)
+    assert frame.btn_shrink.master is frame.head_row, "放在题目标题栏右侧"
+
+
+def test_一键收缩只留题干_还原放回原样(app, server, exam):
+    frame = start_exam(app, server, exam, "26090121")
+    mixed_paper(frame)
+    frame.toggle_card()                       # 先把答题卡收起来，还原后也得是收起的
+    app.root.geometry("1000x680+30+20")
+    app.root.update()
+    geo = app.root.geometry()
+
+    frame.btn_shrink.invoke()
+    app.root.update()
+    assert frame.shrunk and frame.btn_shrink.cget("text") == "还原"
+    for w in (frame.topbar, frame.foot, frame.side, frame.fold_col, frame.area):
+        assert w.winfo_manager() == "", f"{w} 收缩时该藏起来"
+    assert frame.stem.winfo_manager() == "pack" and frame.head_row.winfo_manager() == "pack"
+    assert app.root.attributes("-topmost") in (1, True, "1")
+    # 收缩时临时放开最小尺寸（设的是 1×1；Windows 自己给带标题栏的窗口留了一百来像素宽的下限）
+    mw, mh = app.root.minsize()
+    assert mh == 1 and mw <= 200, f"收缩时得临时放开最小尺寸，现在是 {mw}×{mh}"
+    # 贴到屏幕右上角（Windows 上第一次设的位置会被吞掉，撞过）
+    x = int(app.root.geometry().split("+")[1])
+    assert x > app.root.winfo_screenwidth() // 2, f"收缩后该在屏幕右边，现在 x={x}"
+
+    frame.btn_shrink.invoke()
+    app.root.update()
+    assert not frame.shrunk and frame.btn_shrink.cget("text") == "一键收缩"
+    assert app.root.attributes("-topmost") in (0, False, "0")
+    assert tuple(app.root.minsize()) == frame._exam_minsize
+    assert app.root.geometry() == geo
+    assert frame.card_folded and frame.side.winfo_manager() == ""
+    for w in (frame.topbar, frame.foot, frame.fold_col, frame.area):
+        assert w.winfo_manager() == "pack"
+    assert frame.pack_slaves() == [frame.topbar, frame.foot, frame.body]
+
+
+def test_收缩中切到win或wps题保持收缩_切到别的题自动还原(app, server, exam):
+    frame = start_exam(app, server, exam, "26090121")
+    mixed_paper(frame)
+    frame.shrink()
+    frame.show(1)                             # win -> wps：接着缩着，题干换成新题
+    app.root.update()
+    assert frame.shrunk and frame.stem.cget("text") == "把标题设为黑体二号。"
+    assert frame.area.winfo_manager() == "", "换了题也只留题干"
+    frame.show(2)                             # -> 网页题：自动还原
+    app.root.update()
+    assert not frame.shrunk and frame.area.winfo_manager() == "pack"
+    assert frame.topbar.winfo_manager() == "pack" and not shrink_shown(frame)
+    for i in (3, 4, 5):                       # 客观题、AI、拖拽一样
+        frame.show(0)
+        frame.shrink()
+        frame.show(i)
+        assert not frame.shrunk, f"第 {i + 1} 题不该缩着"
+
+
+def test_交卷前先还原(app, server, exam, monkeypatch):
+    frame = start_exam(app, server, exam, "26090121")
+    mixed_paper(frame)
+    frame.shrink()
+    seen = []
+    monkeypatch.setattr(messagebox, "showinfo", lambda *a, **k: seen.append(frame.shrunk))
+    frame._asked_live = True                  # 别去问教师端，直接弹门槛提示
+    frame.confirm_submit()
+    assert not frame.shrunk and seen == [False]
+
+
+def test_时间到自动交卷前先还原(app, server, exam, monkeypatch):
+    frame = start_exam(app, server, exam, "26090122")
+    mixed_paper(frame)
+    frame.shrink()
+    seen = []
+    monkeypatch.setattr(messagebox, "showinfo", lambda *a, **k: seen.append(frame.shrunk))
+    frame.left = 0
+    frame.tick()
+    assert seen == [False]
+    assert settle(app, 20, on(app, exam_ui.DoneFrame))
+    assert app.root.attributes("-topmost") in (0, False, "0")
+
+
+def test_关窗口的确认框前先还原(app, server, exam, monkeypatch):
+    frame = start_exam(app, server, exam, "26090121")
+    mixed_paper(frame)
+    frame.shrink()
+    seen = []
+    monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: seen.append(frame.shrunk) or False)
+    app.on_close()
+    assert seen == [False]
+
+
+def test_窗口窄了自动收起答题卡_让出位置给题目(app, server, exam):
+    frame = start_exam(app, server, exam, "26090121")
+    frame.AUTO_FOLD_WIDTH = exam_ui.ExamFrame.AUTO_FOLD_WIDTH
+    frame._body_resized(type("E", (), {"width": 300})())
+    assert frame.card_folded and frame.side.winfo_manager() == ""
+    frame._body_resized(type("E", (), {"width": 900})())
+    assert not frame.card_folded and frame.side.winfo_manager() == "pack"
+    # 学生自己收起的，拉宽了也不替他展开
+    frame.toggle_card()
+    frame._body_resized(type("E", (), {"width": 900})())
+    assert frame.card_folded
