@@ -119,6 +119,10 @@ class ExamFrame(ttk.Frame):
         body = tk.Frame(self, bg=BG)
         body.pack(fill="both", expand=True)
         self.body = body
+        # 窗口拉窄了，答题卡（196 宽）会把题目挤成一条缝 —— 窄到放不下就自动收起，
+        # 让出位置给题目；拉宽回来、而且是自动收的，再自动展开
+        self._auto_folded = False
+        body.bind("<Configure>", self._body_resized)
 
         side = tk.Frame(body, bg=CARD, width=196, highlightbackground=LINE,
                         highlightthickness=1)
@@ -233,8 +237,21 @@ class ExamFrame(ttk.Frame):
         return 680 if w <= 1 else max(140, w - 60)
 
     # ---------------- 答题卡折叠 ----------------
+    AUTO_FOLD_WIDTH = 520       # 答题区比这窄就自动收起答题卡
+
+    def _body_resized(self, event):
+        if self.shrunk or event.width <= 1:      # 还没显示出来（自检里窗口是隐藏的）不算
+            return
+        narrow = event.width < self.AUTO_FOLD_WIDTH
+        if narrow and not self.card_folded:
+            self.toggle_card()
+            self._auto_folded = True
+        elif not narrow and self.card_folded and self._auto_folded:
+            self.toggle_card()
+
     def toggle_card(self):
         """收起 / 展开答题卡。收起后题目区占满宽度，按钮箭头换成朝右。"""
+        self._auto_folded = False           # 学生自己点过，就按学生的来
         if self.card_folded:
             self.side.pack(side="left", fill="y", before=self.fold_col)
             self.btn_fold.config(text=self.FOLD_TEXT)
