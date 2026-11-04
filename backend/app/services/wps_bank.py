@@ -399,6 +399,9 @@ def _s_wps_ai_life() -> dict:
     原文照老师给的「人工智能改变生活.docx」逐字抄。原件没排过版，按规矩 2 把起点
     挪开：标题先是宋体三号左对齐，正文先是楷体小四、单倍行距 —— 不然「正文设成
     宋体」一问学生什么都不做也得分。
+
+    检查点分值是占本题的百分比（合计 100），本题在卷面上占几分由组卷时定，
+    判分按比例折算（exam.scale_sim）。
     """
     title = "人工智能改变生活"
     first = ("从智彗家居到自动驾驶，从语音助手到人脸识别，人工智能正在走进我们生活的每一个角落。"
@@ -420,25 +423,25 @@ def _s_wps_ai_life() -> dict:
     one = at("家居到自动驾驶")
     keys = ["课堂让学习更高效", "人工智能同样无处不在", "人工智能并不是万能的"]
     checks = [
-        C("① 「智彗」全部改为「智慧」", 4, op="text", absent="智彗", to="智慧", present="智慧课堂让学习"),
-        C("① 「深渡」全部改为「深度」", 4, op="text", absent="深渡", to="深度", present="深度学习技术"),
-        C("① 「科计」全部改为「科技」", 4, op="text", absent="科计", to="科技", present="科技节上"),
-        C("② 标题字体为黑体", 3, op="para", at=at(title), font="黑体"),
-        C("② 标题字号为二号", 3, op="para", at=at(title), size="二号"),
-        C("② 标题居中对齐", 2, op="para", at=at(title), align="center"),
-        C("③ 第一段左缩进（文本之前）2 字符", 3, op="para", at=one, left=2),
-        C("③ 第一段右缩进（文本之后）2 字符", 3, op="para", at=one, right=2),
-        C("③ 第一段段前 1 行", 2, op="para", at=one, before=1),
-        C("③ 第一段段后 0.5 行", 2, op="para", at=one, after=0.5),
-        C("③ 第一段行距 1.5 倍", 2, op="para", at=one, line={"type": "multiple", "value": 1.5}),
-        C("④ 其余正文为宋体", 2, op="paras", has=keys, font="宋体"),
-        C("④ 其余正文为四号字", 3, op="paras", has=keys, size="四号"),
-        C("④ 其余正文首行缩进 2 字符", 2, op="paras", has=keys, indent=2),
-        C("④ 其余正文行距固定值 24 磅", 3, op="paras", has=keys, line={"type": "fixed", "value": 24}),
-        C("⑤ 文章最后另起一段输入了要求的文字", 2, op="order", last="作为新时代的中学生"),
-        C("⑤ 输入的文字和要求一字不差", 3, op="order", last=last),
+        C("① 「智彗」全部改为「智慧」", 8, op="text", absent="智彗", to="智慧", present="智慧课堂让学习"),
+        C("① 「深渡」全部改为「深度」", 8, op="text", absent="深渡", to="深度", present="深度学习技术"),
+        C("① 「科计」全部改为「科技」", 8, op="text", absent="科计", to="科技", present="科技节上"),
+        C("② 标题字体为黑体", 6, op="para", at=at(title), font="黑体"),
+        C("② 标题字号为二号", 6, op="para", at=at(title), size="二号"),
+        C("② 标题居中对齐", 4, op="para", at=at(title), align="center"),
+        C("③ 第一段左缩进（文本之前）2 字符", 6, op="para", at=one, left=2),
+        C("③ 第一段右缩进（文本之后）2 字符", 6, op="para", at=one, right=2),
+        C("③ 第一段段前 1 行", 4, op="para", at=one, before=1),
+        C("③ 第一段段后 0.5 行", 4, op="para", at=one, after=0.5),
+        C("③ 第一段行距 1.5 倍", 4, op="para", at=one, line={"type": "multiple", "value": 1.5}),
+        C("④ 其余正文为宋体", 4, op="paras", has=keys, font="宋体"),
+        C("④ 其余正文为四号字", 6, op="paras", has=keys, size="四号"),
+        C("④ 其余正文首行缩进 2 字符", 4, op="paras", has=keys, indent=2),
+        C("④ 其余正文行距固定值 24 磅", 6, op="paras", has=keys, line={"type": "fixed", "value": 24}),
+        C("⑤ 文章最后另起一段输入了要求的文字", 4, op="order", last="作为新时代的中学生"),
+        C("⑤ 输入的文字和要求一字不差", 6, op="order", last=last),
         # 没按原名原位置存盘，交卷时读到的还是原件：上面全是 0，这一问也是 0
-        C("⑥ 以原文件名、原位置保存（交卷时原文件里读得到修改）", 3, op="text",
+        C("⑥ 以原文件名、原位置保存（交卷时原文件里读得到修改）", 6, op="text",
           present="从智慧家居到自动驾驶"),
     ]
     return {"name": "人工智能改变生活.docx", "paras": paras, "checks": checks}

@@ -910,9 +910,12 @@ def test_离线名单按班级姓名找人的规矩():
 
 
 # ================================================================ 交卷门槛
-def test_交卷门槛_三分之二向上取整():
-    assert exam_ui.submit_needs(30, 45 * 60) == (20, 30 * 60)
-    assert exam_ui.submit_needs(10, 40 * 60) == (7, 1600)
+def test_交卷门槛_一半向上取整():
+    assert exam_ui.submit_needs(30, 45 * 60) == (15, 1350)
+    assert exam_ui.submit_needs(10, 40 * 60) == (5, 20 * 60)
+    assert exam_ui.submit_needs(7, 61) == (4, 31)
+    assert exam_ui.submit_needs(31, 40 * 60) == (16, 1200)
+    assert exam_ui.submit_needs(1, 1) == (1, 1)
     assert exam_ui.submit_needs(0, 0) == (0, 0)
 
 

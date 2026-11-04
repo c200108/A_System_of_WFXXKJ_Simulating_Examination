@@ -47,7 +47,11 @@ NOTE_TEXT = ("人工智能学习笔记\n\n1. 人工智能简称 AI。\n2. 人脸
 
 
 def _s_win_ai_life() -> dict:
-    """补充题·Windows：2026 潍坊中考操作题专项「课堂操作综合例题_人工智能」第一部分。"""
+    """补充题·Windows：2026 潍坊中考操作题专项「课堂操作综合例题_人工智能」第一部分。
+
+    检查点分值是占本题的百分比（合计 100），本题在卷面上占几分由组卷时定，
+    判分按比例折算（exam.scale_sim）。
+    """
     w = "win"
     fs = {
         w: D(),
@@ -60,22 +64,22 @@ def _s_win_ai_life() -> dict:
     }
     pic, doc = f"{w}/图片资料", f"{w}/文档资料"
     checks = [
-        C("① 新建文件夹「图片资料」", 5, op="exists", path=pic, is_="dir"),
-        C("② 新建文件夹「文档资料」", 5, op="exists", path=doc, is_="dir"),
+        C("① 新建文件夹「图片资料」", 10, op="exists", path=pic, is_="dir"),
+        C("② 新建文件夹「文档资料」", 10, op="exists", path=doc, is_="dir"),
         # 复制要两头都看（copied）：目标有、原文件也在。拆成两条，什么都不做也白拿「原文件在」的分
-        C("③ 「智慧课堂.jpg」复制到「图片资料」（原文件保留）", 5, op="copied",
+        C("③ 「智慧课堂.jpg」复制到「图片资料」（原文件保留）", 10, op="copied",
           path=f"{pic}/智慧课堂.jpg", **{"from": f"{w}/智慧课堂.jpg"}),
-        C("③ 「机器人比赛.png」复制到「图片资料」（原文件保留）", 5, op="copied",
+        C("③ 「机器人比赛.png」复制到「图片资料」（原文件保留）", 10, op="copied",
           path=f"{pic}/机器人比赛.png", **{"from": f"{w}/机器人比赛.png"}),
-        C("④ 「文档资料」里有「学习笔记.txt」", 4, op="exists", path=f"{doc}/学习笔记.txt", is_="file"),
-        C("④ 移过去的是原来那份笔记（内容没变）", 2, op="content", path=f"{doc}/学习笔记.txt",
+        C("④ 「文档资料」里有「学习笔记.txt」", 8, op="exists", path=f"{doc}/学习笔记.txt", is_="file"),
+        C("④ 移过去的是原来那份笔记（内容没变）", 4, op="content", path=f"{doc}/学习笔记.txt",
           has="人脸识别属于计算机视觉"),
-        C("④ 是移动：原位置不再有「学习笔记.txt」", 4, op="missing", path=f"{w}/学习笔记.txt"),
-        C("⑤ 「文档资料」里新建「人工智能学习心得.docx」", 8, op="exists",
+        C("④ 是移动：原位置不再有「学习笔记.txt」", 8, op="missing", path=f"{w}/学习笔记.txt"),
+        C("⑤ 「文档资料」里新建「人工智能学习心得.docx」", 16, op="exists",
           path=f"{doc}/人工智能学习心得.docx", is_="file"),
-        C("⑥ 「图片资料」里新建「科技节汇报.pptx」", 7, op="exists",
+        C("⑥ 「图片资料」里新建「科技节汇报.pptx」", 14, op="exists",
           path=f"{pic}/科技节汇报.pptx", is_="file"),
-        C("⑦ 删除「废弃文件.txt」", 5, op="missing", path=f"{w}/废弃文件.txt"),
+        C("⑦ 删除「废弃文件.txt」", 10, op="missing", path=f"{w}/废弃文件.txt"),
     ]
     return {"fs": fs, "checks": checks}
 
