@@ -12,10 +12,45 @@
  * 例外是**上机座次表**：每个班自己的事，班主任（名下的老师）和管理员都能传、换、删。
  * 图片点开在新页面直接看，Excel 点了下载。
  */
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download } from '../api'
 import { currentUser } from '../auth'
+
+// 在线座次：表格库（Jspreadsheet CE + ExcelJS）几百 KB，只有点开「查看」才下载
+const SeatSheet = defineAsyncComponent(() => import('../components/SeatSheet.vue'))
+const seatSheet = ref(null)
+const panelFull = ref(false)
+const panelFolded = ref(false)
+const winH = ref(window.innerHeight)
+const onResize = () => (winH.value = window.innerHeight)
+window.addEventListener('resize', onResize)
+onBeforeUnmount(() => window.removeEventListener('resize', onResize))
+const sheetHeight = computed(() => Math.max(260, winH.value - (panelFull.value ? 150 : 200)))
+
+async function closeDetail() {
+  if (seatSheet.value?.dirty) {
+    try {
+      await ElMessageBox.confirm('座次表改了还没保存，先保存吗？', '关闭在线座次', {
+        type: 'warning',
+        confirmButtonText: '保存后关闭',
+        cancelButtonText: '不保存',
+        distinguishCancelAndClose: true
+      })
+      await seatSheet.value.save()
+    } catch (action) {
+      if (action !== 'cancel') return          // 点了右上角 ×：哪儿也不去
+    }
+  }
+  detail.value = null
+  panelFolded.value = false
+}
+
+function onSeatSaved(got) {
+  const row = rows.value.find(c => c.id === got.id)
+  if (row) Object.assign(row, got)
+  if (detail.value) Object.assign(detail.value, got)
+}
 
 // ---------- 上机座次表 ----------
 const seatInput = ref()
@@ -428,94 +463,43 @@ async function doBulkOwner() {
     </div>
   </el-card>
 
-  <!-- 班级详情：这个班都有谁，加上一块总览的位置 -->
-  <el-drawer
-    :model-value="!!detail"
-    :title="detail ? detail.display : ''"
-    size="min(760px, 94vw)"
-    @update:model-value="detail = null"
-  >
-    <template v-if="detail">
-      <div class="dmeta">
-        <span>班主任：<b>{{ detail.owner_name || '未分配' }}</b></span>
-        <span>学生：<b>{{ detailStats.total }}</b> 人</span>
-        <span>
-          男 <b>{{ detailStats.male }}</b> · 女 <b>{{ detailStats.female }}</b>
-          <template v-if="detailStats.unknown"> · 未填 <b>{{ detailStats.unknown }}</b></template>
+  <!-- 班级「查看」：可浮动、可折叠的面板，主要区域给「在线座次」（2.20.0）。
+       名单列表挪走了：人在「学生管理」里管，班长 / 组长也在那儿设 -->
+  <teleport to="body">
+    <section v-if="detail" v-show="!panelFolded" class="seatpanel" :class="{ full: panelFull }">
+      <header class="phead">
+        <b class="ptitle">{{ detail.display }} · 在线座次</b>
+        <span class="pmeta">
+          班主任 <b>{{ detail.owner_name || '未分配' }}</b>　学生 <b>{{ detailStats.total }}</b> 人
+          （男 {{ detailStats.male }} · 女 {{ detailStats.female }}<template v-if="detailStats.unknown"> · 未填 {{ detailStats.unknown }}</template>）
+          <template v-if="monitor">　班长 <b>{{ monitor.name }}</b></template>
+          <template v-if="leaders.length">　组长 <b>{{ leaders.map(s => s.name).join('、') }}</b></template>
         </span>
-        <span v-if="detailStats.inactive" class="muted">停用 {{ detailStats.inactive }} 人</span>
-      </div>
-      <div class="dmeta">
-        <span>上机座次表：</span>
+        <div class="flex-1" />
         <template v-if="detail.seat_kind">
-          <el-button link type="primary" @click="openSeat(detail)">
-            {{ detail.seat_kind === 'image' ? '🖼 在新页面查看' : '📊 下载' }}「{{ detail.seat_name }}」
+          <el-button link size="small" type="primary" @click="openSeat(detail)">
+            {{ detail.seat_kind === 'image' ? '看原来上传的图片' : '下载原来上传的表格' }}
           </el-button>
         </template>
-        <span v-else class="muted">未上传</span>
         <el-button v-if="canSeat(detail)" link size="small" @click="pickSeat(detail)">
-          {{ detail.seat_kind ? '更换' : '上传（图片或 xls/xlsx）' }}
+          {{ detail.seat_kind ? '更换上传的座次表' : '上传座次表文件' }}
         </el-button>
-      </div>
-      <div class="dmeta">
-        <span>班长：<b>{{ monitor ? monitor.name : '未设' }}</b></span>
-        <span>
-          组长：<b>{{ leaders.length ? leaders.map(s => s.name).join('、') : '未设' }}</b>
-        </span>
-        <span class="muted">在下面名单的「班干部」一栏里设，一个班一位班长，组长可以有多位</span>
-      </div>
-
-      <div class="soon">
-        <b>班级总览</b>
-        <span>考试均分、及格率、打字训练情况这些还没做，先占个位置。</span>
-      </div>
-
-      <div class="dsearch">
-        <el-input
-          v-model="detailKeyword"
-          size="small"
-          clearable
-          placeholder="按学号或姓名找人"
-          style="width: 220px"
-        />
-        <span class="muted">共 {{ detailShown.length }} 人</span>
-      </div>
-
-      <el-table v-loading="detailLoading" :data="detailShown" size="small" height="calc(100vh - 300px)">
-        <el-table-column prop="student_no" label="学号" width="130" />
-        <el-table-column prop="name" label="姓名" min-width="110" />
-        <el-table-column prop="gender" label="性别" width="70">
-          <template #default="{ row }">{{ row.gender || '—' }}</template>
-        </el-table-column>
-        <el-table-column label="班干部" width="110">
-          <template #default="{ row }">
-            <el-select
-              :model-value="row.class_role || ''"
-              size="small"
-              placeholder="—"
-              style="width: 90px"
-              @change="v => setRole(row, v)"
-            >
-              <el-option label="—" value="" />
-              <el-option label="班长" value="班长" />
-              <el-option label="组长" value="组长" />
-            </el-select>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="80">
-          <template #default="{ row }">
-            <el-tag v-if="!row.is_active" size="small" type="info">停用</el-tag>
-            <span v-else class="muted">正常</span>
-          </template>
-        </el-table-column>
-        <template #empty>
-          <span class="muted">
-            {{ detailKeyword ? '没找到这个人' : '这个班还没有学生，去「学生管理」导入名单' }}
-          </span>
-        </template>
-      </el-table>
-    </template>
-  </el-drawer>
+        <el-button size="small" @click="panelFull = !panelFull">{{ panelFull ? '还原大小' : '全屏' }}</el-button>
+        <el-button size="small" @click="panelFolded = true">收起</el-button>
+        <el-button size="small" type="danger" plain @click="closeDetail">关闭</el-button>
+      </header>
+      <SeatSheet
+        ref="seatSheet"
+        :key="detail.id"
+        :cls="detail"
+        :height="sheetHeight"
+        @saved="onSeatSaved"
+      />
+    </section>
+    <button v-if="detail && panelFolded" type="button" class="seatpill" @click="panelFolded = false">
+      ▲ {{ detail.display }} 在线座次（点开）
+    </button>
+  </teleport>
 
   <!-- 新建 / 改名 -->
   <el-dialog v-model="dialog" :title="editing ? '修改班级' : '新建班级'" width="420px">
@@ -599,6 +583,64 @@ async function doBulkOwner() {
 </template>
 
 <style scoped>
+.seatpanel {
+  position: fixed;
+  top: 64px;
+  right: 16px;
+  bottom: 16px;
+  width: min(1100px, calc(100vw - 32px));
+  z-index: 1900;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 14px;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+.seatpanel.full {
+  top: 8px;
+  right: 8px;
+  bottom: 8px;
+  width: calc(100vw - 16px);
+}
+.phead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+.phead :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+.ptitle {
+  font-size: 15px;
+}
+.pmeta {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.flex-1 {
+  flex: 1;
+}
+.seatpill {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 1900;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 20px;
+  background: var(--el-color-primary);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+}
 .seat {
   display: flex;
   align-items: center;

@@ -24,7 +24,7 @@ from ..config import settings
 from ..database import get_db
 from ..deps import get_current_user, require_admin
 from ..models import SchoolClass, Student, User
-from ..services import recycle
+from ..services import recycle, seating
 from ..schemas import (
     ClassBatchIn,
     ClassBulkIn,
@@ -32,6 +32,8 @@ from ..schemas import (
     ClassIn,
     ClassOut,
     ClassUpdate,
+    SeatPlanIn,
+    SeatSheetIn,
 )
 
 router = APIRouter(prefix="/api/classes", tags=["班级"])
@@ -50,6 +52,7 @@ def _out(row: SchoolClass, student_count: int = 0) -> ClassOut:
         seat_kind=seat_kind(row.seat_file),
         seat_name=row.seat_name or "",
         seat_url=f"/uploads/seats/{row.seat_file}" if row.seat_file else "",
+        has_seat_sheet=bool(row.seat_sheet),
     )
 
 
@@ -399,3 +402,83 @@ def download_seat(cid: int, _: User = Depends(get_current_user), db: Session = D
     name = row.seat_name or f"{row.display}座次表{os.path.splitext(path)[1]}"
     return FileResponse(path, headers={
         "Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
+
+
+# ================================================================ 在线座次（2.20.0）
+SEAT_SHEET_MAX = 2 * 1024 * 1024     # 一个班的座次表 JSON 最大 2 MB，正常一张表几十 KB
+
+
+def _class_or_404(db: Session, cid: int) -> SchoolClass:
+    row = db.get(SchoolClass, cid)
+    if not row:
+        raise HTTPException(status_code=404, detail="班级不存在")
+    return row
+
+
+@router.get("/{cid}/seat-sheet", summary="取本班的在线座次")
+def get_seat_sheet(cid: int, me: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """表格谁都能看（发考试的老师也想知道谁坐哪）；编辑、排座位、看学困生只给
+    本班老师和管理员。学生名单（含学困生标记）只在 can_edit 时给。"""
+    import json
+
+    row = _class_or_404(db, cid)
+    can_edit = me.role == "admin" or row.owner_id == me.id
+    out = {"class_id": row.id, "display": row.display, "can_edit": can_edit,
+           "sheet": json.loads(row.seat_sheet) if row.seat_sheet else None,
+           "students": []}
+    if can_edit:
+        rows = db.scalars(select(Student).where(Student.class_id == row.id,
+                                                Student.is_active.is_(True))
+                          .order_by(Student.student_no))
+        out["students"] = [{"id": s.id, "student_no": s.student_no, "name": s.name,
+                            "gender": s.gender or "", "struggling": bool(s.struggling)}
+                           for s in rows]
+    return out
+
+
+@router.put("/{cid}/seat-sheet", response_model=ClassOut, summary="保存本班的在线座次")
+def save_seat_sheet(cid: int, body: SeatSheetIn, me: User = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    import json
+
+    row = _class_or_404(db, cid)
+    _can_seat(row, me)
+    raw = json.dumps(body.sheet, ensure_ascii=False)
+    if len(raw.encode("utf-8")) > SEAT_SHEET_MAX:
+        raise HTTPException(status_code=413, detail="座次表太大了（超过 2 MB），删掉一些空行空列再存")
+    row.seat_sheet = raw
+    db.commit()
+    db.refresh(row)
+    n = db.scalar(select(func.count()).select_from(Student).where(Student.class_id == row.id)) or 0
+    return _out(row, n)
+
+
+@router.delete("/{cid}/seat-sheet", response_model=ClassOut, summary="清掉本班的在线座次")
+def delete_seat_sheet(cid: int, me: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    row = _class_or_404(db, cid)
+    _can_seat(row, me)
+    row.seat_sheet = None
+    db.commit()
+    db.refresh(row)
+    return _out(row)
+
+
+@router.post("/{cid}/seat-plan", summary="一键导入本班学生：按区域和选项排座位")
+def seat_plan(cid: int, body: SeatPlanIn, me: User = Depends(get_current_user),
+              db: Session = Depends(get_db)):
+    """只算不存：返回「哪个格子放谁」，前端填进表格、老师看过再点保存。"""
+    row = _class_or_404(db, cid)
+    _can_seat(row, me)
+    rows = db.scalars(select(Student).where(Student.class_id == row.id,
+                                            Student.is_active.is_(True)))
+    people = [{"id": s.id, "student_no": s.student_no, "name": s.name,
+               "gender": s.gender or "", "struggling": bool(s.struggling)} for s in rows]
+    if not people:
+        raise HTTPException(status_code=400, detail="这个班还没有学生，先去「学生管理」导入名单")
+    try:
+        return seating.plan(people, body.ranges, zone=body.zone,
+                            alternate=body.alternate_gender,
+                            struggling_zone=body.struggling_zone, shuffle=body.shuffle,
+                            seed=body.seed, content=body.content, skip=body.skip)
+    except seating.RangeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None

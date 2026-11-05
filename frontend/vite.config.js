@@ -20,6 +20,9 @@ export default defineConfig({
           // 图表库只有「成绩分析」页用，单独一块、跟着那一页按需加载 ——
           // 混进 vendor 的话每个页面（包括五十台机器同时打开的考试页）都得先下它
           if (id.includes('echarts') || id.includes('zrender')) return 'charts'
+          // 在线座次的表格库（2.20.0）：只有打开「在线座次」才下载，别混进 vendor
+          if (id.includes('exceljs')) return 'excel'
+          if (id.includes('jspreadsheet') || id.includes('jsuites')) return 'sheet'
           if (id.includes('vue') || id.includes('pinia')) return 'vue'
           return 'vendor'
         }

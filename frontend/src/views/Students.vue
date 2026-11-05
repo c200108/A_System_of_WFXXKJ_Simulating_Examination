@@ -36,7 +36,8 @@ const paged = computed(() => {
 
 const dialog = ref(false)
 const editing = ref(null)
-const form = reactive({ student_no: '', name: '', class_id: null, gender: '', password: '' })
+// struggling 学困生、class_role 班干部：都是老师这边的信息，学生自己看不到学困生标记
+const form = reactive({ student_no: '', name: '', class_id: null, gender: '', password: '', struggling: false, class_role: '' })
 
 const batchDlg = ref(false)
 const batch = reactive({ class_id: null, text: '' })
@@ -83,7 +84,9 @@ function openEdit(row) {
     name: row.name,
     class_id: row.class_id,
     gender: row.gender || '',
-    password: ''
+    password: '',
+    struggling: !!row.struggling,
+    class_role: row.class_role || ''
   })
   dialog.value = true
 }
@@ -102,7 +105,13 @@ async function resetOne() {
 
 async function save() {
   if (editing.value) {
-    const data = { name: form.name, class_id: form.class_id, gender: form.gender }
+    const data = {
+      name: form.name,
+      class_id: form.class_id,
+      gender: form.gender,
+      struggling: form.struggling,
+      class_role: form.class_role
+    }
     if (form.password) data.password = form.password
     await api.studentUpdate(editing.value.id, data)
   } else {
@@ -162,7 +171,7 @@ const className = id => classes.value.find(c => c.id === id)?.display || '全部
 
 async function downloadTemplate() {
   await download(api.studentTemplate(), '学生导入模板.xlsx')
-  ElMessage.success('模板已下载，四列：学号、姓名、班级、性别；可用班级见表格第三页')
+  ElMessage.success('模板已下载，五列：学号、姓名、班级、性别、学困生；可用班级见表格第三页')
 }
 
 async function exportList() {
@@ -243,7 +252,11 @@ async function bulk(action) {
     delete: '删除',
     disable: '停用',
     enable: '启用',
-    reset_password: '重置密码'
+    reset_password: '重置密码',
+    mark_struggling: '设为学困生',
+    unmark_struggling: '取消学困生',
+    set_male: '设为男生',
+    set_female: '设为女生'
   }[action]
   ElMessage.success(
     action === 'reset_password'
@@ -306,6 +319,17 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
       <span class="names">{{ pickedNames }}</span>
       <span class="grow" />
       <el-button size="small" @click="bulk('reset_password')">重置密码</el-button>
+      <el-dropdown size="small" @command="bulk">
+        <el-button size="small">性别 / 学困生 ▾</el-button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="set_male">设为男生</el-dropdown-item>
+            <el-dropdown-item command="set_female">设为女生</el-dropdown-item>
+            <el-dropdown-item command="mark_struggling" divided>设为学困生</el-dropdown-item>
+            <el-dropdown-item command="unmark_struggling">取消学困生</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
       <el-button size="small" @click="bulk('enable')">启用</el-button>
       <el-button size="small" type="warning" @click="bulk('disable')">停用</el-button>
       <el-button size="small" type="danger" @click="bulk('delete')">删除</el-button>
@@ -349,6 +373,11 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
         <template #default="{ row }">
           <span v-if="row.gender">{{ row.gender }}</span>
           <span v-else class="blank">—</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="学困生" width="76" align="center">
+        <template #default="{ row }">
+          <el-tag v-if="row.struggling" size="small" type="danger" effect="plain">学困生</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="状态" width="80">
@@ -406,6 +435,17 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
           <el-radio value="">不填</el-radio>
         </el-radio-group>
       </el-form-item>
+      <el-form-item label="学困生">
+        <el-switch v-model="form.struggling" />
+        <span class="blank" style="margin-left: 8px">只有本班老师和管理员看得到；在线座次「学困生分配固定区域」按它排</span>
+      </el-form-item>
+      <el-form-item v-if="editing" label="班干部">
+        <el-select v-model="form.class_role" style="width: 120px">
+          <el-option label="不设" value="" />
+          <el-option label="班长" value="班长" />
+          <el-option label="组长" value="组长" />
+        </el-select>
+      </el-form-item>
       <el-form-item :label="editing ? '重置密码' : '初始密码'">
         <div class="pwd-row">
           <el-input v-model="form.password" :placeholder="editing ? '留空则不改密码，或填一个新密码' : '留空则用初始密码 123456'" />
@@ -430,7 +470,7 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
     </el-form>
 
     <div class="tip">
-      表格<b>四列：学号、姓名、班级、性别</b>，第一行写表头会自动跳过。<br />
+      表格<b>五列：学号、姓名、班级、性别、学困生</b>（后三列选填，学困生填「是」），第一行写表头会自动跳过。<br />
       <b>工作簿里每一张表都会读</b> —— 一个年级一张表、按班分表都行，
       报错会指明是哪张表的第几行。模板自带的「填写说明」「可用班级」两页会自动跳过。<br />
       <b>班级要和「班级」页面里的名称完全一致</b>（如「七年级1班」）；写错的那一行会被跳过并报出来，
@@ -463,9 +503,9 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
     </el-form>
 
     <div class="tip">
-      一行一个学生，四列：<b>学号、姓名、班级、性别</b>，后两列选填 ——
+      一行一个学生，五列：<b>学号、姓名、班级、性别、学困生</b>，后三列选填（学困生填「是」） ——
       和「导入 Excel/CSV」认的是同一套。<br />
-      <b>从 Excel 直接复制粘贴即可</b>，那样自带制表符分隔，四列都能认出来。
+      <b>从 Excel 直接复制粘贴即可</b>，那样自带制表符分隔，每一列都能认出来。
       手打的话「学号 姓名」中间用空格隔开就行。<br />
       <b>单个空格不当列分隔</b>，所以姓名里带空格（如「钱 七」）不会被拆散；
       要粘多列请用 Excel 复制、或者用逗号隔开。<br />

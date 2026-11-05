@@ -108,6 +108,9 @@ class SchoolClass(Base):
     # seat_name 是老师上传时的原名（下载时还叫这个名字）
     seat_file: Mapped[str] = mapped_column(String(255), default="", server_default="")
     seat_name: Mapped[str] = mapped_column(String(128), default="", server_default="")
+    # 在线座次（2.20.0）：表格 JSON（数据、合并单元格、样式、列宽行高、学困生区域）。
+    # 空 = 还没做过在线座次
+    seat_sheet: Mapped[str | None] = mapped_column(LONG_TEXT, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
 
     owner: Mapped["User | None"] = relationship(back_populates="classes")
@@ -148,6 +151,9 @@ class Student(Base):
     gender: Mapped[str] = mapped_column(String(8), default="")
     # 班干部：班长 / 组长 / 空。一个班只有一位班长，组长可以有好几位
     class_role: Mapped[str] = mapped_column(String(8), default="")
+    # 学困生（2.20.0）：在线座次「学困生分配固定区域」用。**学生隐私**：
+    # 只在老师 / 管理员的学生接口里出现，学生自己的 /api/student/* 一律不带
+    struggling: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     password_hash: Mapped[str] = mapped_column(String(128))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)

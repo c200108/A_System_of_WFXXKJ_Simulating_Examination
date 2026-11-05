@@ -219,6 +219,11 @@ export const api = {
   },
   classSeatDelete: id => http.delete(`/classes/${id}/seat`),
   classSeatFile: id => http.get(`/classes/${id}/seat/file`, { responseType: 'blob' }),
+  // 在线座次（2.20.0）：每班一份表格 JSON；排座位只算不存
+  classSeatSheet: id => http.get(`/classes/${id}/seat-sheet`),
+  classSeatSheetSave: (id, sheet) => http.put(`/classes/${id}/seat-sheet`, { sheet }),
+  classSeatSheetDelete: id => http.delete(`/classes/${id}/seat-sheet`),
+  classSeatPlan: (id, body) => http.post(`/classes/${id}/seat-plan`, body),
 
   // 数据回收站：删掉的东西放 7 天，可还原
   recycleList: (kind = '') => http.get('/recycle', { params: { kind } }),
