@@ -11,6 +11,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import { optionText } from '../../optionText'
+import { applyShuffle } from '../../shuffle'
 import { currentStudent } from '../../auth'
 import { useSubmitGate } from '../../submitGate'
 import SimHost from '../../components/sim/SimHost.vue'
@@ -63,7 +64,9 @@ const detailOf = computed(() => {
 
 onMounted(async () => {
   try {
-    paper.value = await api.studentPaper(examId)
+    // 选择判断题乱序：按「考试 + 学号」打乱，刷新、换台电脑登录都是同一套顺序
+    paper.value = applyShuffle(await api.studentPaper(examId),
+      `exam-${examId}-${me.value?.student_no || ''}`)
     gate.start()
   } catch (e) {
     loadError.value = e.response?.data?.detail || '打不开这场考试，回列表看看还在不在'
@@ -220,7 +223,8 @@ function back() {
                 :checked="answers[q.id] === o.label"
                 @change="answers[q.id] = o.label"
               />
-              <span class="L">{{ o.label }}</span><span>{{ o.content }}</span>
+              <!-- 乱序时显示新位置的字母（o.show），交的仍是原字母（o.label） -->
+              <span class="L">{{ o.show || o.label }}</span><span>{{ o.content }}</span>
             </label>
           </div>
 

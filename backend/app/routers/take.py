@@ -19,6 +19,7 @@ from ..services.exam import (
     load_items,
     strip_answers,
     submission_scores,
+    wants_shuffle,
 )
 
 router = APIRouter(prefix="/api/take", tags=["学生答题"])
@@ -89,6 +90,7 @@ def take_paper(token: str, db: Session = Depends(get_db)):
         total=len(items),
         full_score=sum(int(it.get("score") or 0) for it in items),
         early_submit=bool(exam.early_submit),
+        shuffle=wants_shuffle(exam.paper),
         groups=groups,
     )
 

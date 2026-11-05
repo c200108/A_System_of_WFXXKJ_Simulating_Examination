@@ -314,8 +314,19 @@ class PaperGenerateIn(BaseModel):
     scopes: list[str] | None = None       # 为空表示全部知识范围
     use_pinned: bool = Field(default_factory=lambda: site.paper.use_pinned)
     require_answer: bool = Field(default_factory=lambda: site.paper.require_answer)
-    shuffle_options: bool = Field(default_factory=lambda: site.paper.shuffle_options)
+    # 选择判断题乱序（含选项乱序）。不传就用 config.yaml 的 paper.shuffle_objective
+    shuffle_objective: bool | None = None
+    # 老字段：原来的「打乱选择题的选项顺序」。老版本教师端 APP 还会传它，
+    # 只传了它的按它算（见 wants_shuffle）
+    shuffle_options: bool | None = None
     seed: str | None = None               # 填了就可复现同一套卷子
+
+    def wants_shuffle(self) -> bool:
+        if self.shuffle_objective is not None:
+            return self.shuffle_objective
+        if self.shuffle_options is not None:
+            return self.shuffle_options
+        return site.paper.shuffle_objective
     save: bool = False
 
 
@@ -355,6 +366,7 @@ class PaperGenerateOut(BaseModel):
     total: int
     full_score: int = 0                   # 卷面总分，0 = 这份卷子没设分
     by_sections: bool = False
+    shuffle: bool = False                 # 选择判断题乱序：学生取卷时各自打乱
     tally: dict[str, int]                 # 各知识范围实际抽了几题
     warnings: list[str] = []
     groups: list[PaperGroupOut] = []      # 按大题分组，前端照着排版
@@ -458,6 +470,9 @@ class TakePaperOut(BaseModel):
     total: int
     full_score: int = 0
     early_submit: bool = False      # 老师开了「允许提前交卷」：前端不拦交卷
+    # 选择判断题乱序：答题页按「考试 + 学生」各自打乱（题号顺序、选择题选项），
+    # 交上来的仍是原选项字母
+    shuffle: bool = False
     groups: list[TakeGroupOut]
 
 

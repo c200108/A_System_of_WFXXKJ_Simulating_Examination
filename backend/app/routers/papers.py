@@ -45,6 +45,8 @@ def _persist(db: Session, paper: dict, user: User) -> int:
             {
                 "seed": paper["seed"],
                 "by_sections": paper.get("by_sections", False),
+                # 选择判断题乱序：学生取卷时各自打乱（services/exam.wants_shuffle）
+                "shuffle": bool(paper.get("shuffle")),
                 "full_score": paper.get("full_score", 0),
                 # 大题的顺序也存一份：config.yaml 以后改了顺序，
                 # 重新打开这份历史试卷仍然按当初的顺序排
@@ -99,7 +101,7 @@ def generate(
         scopes=body.scopes,
         require_answer=body.require_answer,
         use_pinned=body.use_pinned,
-        shuffle_opts=body.shuffle_options,
+        shuffle=body.wants_shuffle(),
         seed=body.seed,
         title=body.title,
         school=body.school,
@@ -296,6 +298,7 @@ def get_paper(paper_id: int, _: User = Depends(get_current_user), db: Session = 
         "total": total,
         "full_score": sum(g["score"] for g in groups),
         "by_sections": bool(conf.get("by_sections")),
+        "shuffle": bool(conf.get("shuffle")),
         "tally": tally,
         "warnings": [],
         "groups": groups,

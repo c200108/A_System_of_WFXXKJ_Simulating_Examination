@@ -10,7 +10,8 @@ export function optionText(options, letters) {
   const picked = raw.replace(/[\s,，、]/g, '').toUpperCase().split('')
   const parts = picked.map(l => {
     const o = options.find(x => String(x.label).toUpperCase() === l)
-    return o ? `${o.label}. ${o.content}` : null
+    // 乱序的卷子：答案存的是原字母，显示成学生屏幕上看到的那个字母（o.show）
+    return o ? `${o.show || o.label}. ${o.content}` : null
   })
   return parts.every(Boolean) ? parts.join('；') : raw
 }

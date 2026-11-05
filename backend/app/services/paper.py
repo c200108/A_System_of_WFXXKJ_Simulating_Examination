@@ -1,4 +1,11 @@
-"""组卷：抽题 → 打乱选项（答案跟着走）→ 按题型分大题 → 生成卷号。
+"""组卷：抽题 → 按题型分大题 → 生成卷号。
+
+**卷子里的题序和选项按原样存。** 「选择判断题乱序」（2.19.0）不在组卷这一步打乱，
+只在卷子上记一笔 shuffle，每个学生取卷时由答题端按「考试 + 学生」做种子各自打乱
+（见 frontend/src/shuffle.js、desktop/client/shuffle.py）。选项换了位置，交上来的
+仍是原来的选项字母，所以判分、成绩分析、答案卷都不用管顺序。
+
+shuffle_options() 留着：老版本组的卷子是在这一步打乱后存的快照，测试也还在用。
 
 打乱逻辑与原 HTML 的 makePaper() 一致：选项内容重排，标签仍按 A/B/C/D 顺序，
 正确答案换成它落到的新标签。只对有 A~D 单选答案的选择题生效。
@@ -52,7 +59,7 @@ def build_paper(
     scopes: list[str] | None,
     require_answer: bool,
     use_pinned: bool,
-    shuffle_opts: bool,
+    shuffle: bool,
     seed: str | None,
     title: str,
     school: str,
@@ -93,8 +100,6 @@ def build_paper(
         for q in chosen:
             opts = [(o.label, o.content) for o in q.options]
             ans = q.answer or ""
-            if shuffle_opts and qtype == "选择题":
-                opts, ans = shuffle_options(opts, ans, rnd)
             items.append(
                 {
                     "id": q.id,
@@ -128,6 +133,7 @@ def build_paper(
         "total": len(flat),
         "full_score": 0,
         "by_sections": False,
+        "shuffle": bool(shuffle),
         "tally": tally,
         "warnings": warnings,
         "groups": groups,
@@ -152,7 +158,7 @@ def build_by_sections(
     scopes: list[str] | None,
     require_answer: bool,
     use_pinned: bool,
-    shuffle_opts: bool,
+    shuffle: bool,
     seed: str | None,
     title: str,
     school: str,
@@ -185,8 +191,6 @@ def build_by_sections(
         for q in sec["items"]:
             opts = [(o.label, o.content) for o in q.options]
             ans = q.answer or ""
-            if shuffle_opts and q.type == "选择题":
-                opts, ans = shuffle_options(opts, ans, rnd)
             items.append(
                 {
                     "id": q.id,
@@ -228,6 +232,7 @@ def build_by_sections(
         "total": len(flat),
         "full_score": sum(g["score"] for g in groups),
         "by_sections": True,
+        "shuffle": bool(shuffle),
         "tally": tally,
         "warnings": warnings,
         "groups": groups,

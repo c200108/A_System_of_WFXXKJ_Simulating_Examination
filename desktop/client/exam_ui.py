@@ -18,6 +18,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from . import api, cleanup, package, snapshot, states, store
+from .shuffle import shuffle_paper
 from .dragboard import DragBoard, IpBox
 from .shell import (AMBER, APP_NAME, BG, BLUE, CARD, CLIENT_VER, FONT, GRAY,
                     GREEN, LINE, RED, ai_reply, in_thread, open_in_system)
@@ -58,6 +59,11 @@ class ExamFrame(ttk.Frame):
         super().__init__(app.root, padding=0)
         self.app = app
         self.paper = app.package.paper
+        # 选择判断题乱序：按「考试 + 学号」打乱，重开程序、接着考都是同一套顺序。
+        # 只换显示的位置，交上去的还是原选项字母（见 client/shuffle.py）
+        if getattr(app.package, "shuffle", False):
+            self.paper = shuffle_paper(
+                self.paper, f"{app.package.exam_id}-{app.student.get('no', '')}")
         self.answers: dict[str, str] = {}
         # AI 工具题的对话记录，一题一份。交卷时当作那道题的"终态"交上去
         self.chats: dict[str, list] = {}
@@ -433,8 +439,10 @@ class ExamFrame(ttk.Frame):
                                      {"label": "B", "content": "错误"}]
                                     if q["type"] == "判断题" else [])
         for o in opts:
+            # 乱序时显示新位置的字母（show），交的仍是原字母（label）
             tk.Radiobutton(
-                self.area, text=f"{o['label']}．{o['content']}", value=o["label"],
+                self.area, text=f"{o.get('show') or o['label']}．{o['content']}",
+                value=o["label"],
                 variable=var, bg=BG, font=(FONT, 11), anchor="w", justify="left",
                 wraplength=self._option_wrap(), tristatevalue="\x01",
                 command=lambda v=var, k=qid: self._picked(k, v.get()),

@@ -77,7 +77,8 @@ final class Blueprint {
         defaultSchool = Json.str(config, "school");
         defaultTitle = Json.str(p, "default_title", defaultTitle);
         defaultDuration = Json.str(p, "default_duration");
-        defShuffle = p.optBoolean("shuffle_options", true);
+        // 选择判断题乱序（服务端 2.19.0）；老服务端只回 shuffle_options，退回读它
+        defShuffle = p.optBoolean("shuffle_objective", p.optBoolean("shuffle_options", true));
         defRequire = p.optBoolean("require_answer", true);
         defPinned = p.optBoolean("use_pinned", true);
         numerals.addAll(Json.strings(Json.arr(p, "section_numerals")));
@@ -180,6 +181,9 @@ final class Blueprint {
         Json.put(o, "scopes", pickedScopes.isEmpty() ? null : new ArrayList<>(pickedScopes));
         Json.put(o, "use_pinned", usePinned);
         Json.put(o, "require_answer", requireAnswer);
+        // 新服务端认 shuffle_objective（选择判断题乱序，含选项乱序）；
+        // shuffle_options 一起带上，连老服务端时照旧只管选项乱序
+        Json.put(o, "shuffle_objective", shuffleOptions);
         Json.put(o, "shuffle_options", shuffleOptions);
         Json.put(o, "seed", seed == null || seed.trim().isEmpty() ? null : seed.trim());
         Json.put(o, "save", save);
