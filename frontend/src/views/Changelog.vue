@@ -42,18 +42,25 @@ const isTeacher = computed(() => !!currentUser.value)
  * 把几边的改动混在一条时间线里，看的人得自己分辨哪条跟自己有关。
  *
  * 大版本号就是线的标记，所以这里按它分组，不用再往库里加字段。
- * **3.x 以上每个大版本都单独成一个折叠块**：以后再开 6.x、7.x，不在 TRACKS 里
- * 登记也会自动单列（标题用「x.x」兜底），不会因为漏写而整代从页面上消失。
+ * **每个大版本都单独成一个折叠块**（2.x 服务端与网页、1.x 早期版本也一样，2.20.0 起）：
+ * 以后再开 6.x、7.x，不在 TRACKS 里登记也会自动单列（标题用「x.x」兜底），
+ * 不会因为漏写而整代从页面上消失。
  */
 const TRACKS = {
   5: { title: '教师端安卓 APP', hint: '老师手机上装的那个 APP', color: 'var(--el-color-warning)' },
   4: { title: '学生桌面端', hint: '机房里发的那个 exe', color: 'var(--el-color-primary)' },
-  3: { title: '仿真环境', hint: '网页里的操作题仿真器与判分', color: 'var(--el-color-success)' }
+  3: { title: '仿真环境', hint: '网页里的操作题仿真器与判分', color: 'var(--el-color-success)' },
+  2: {
+    title: '服务端与网页',
+    hint: '服务器、教师网页、学生网页；2.8.0 及以前是各端分线前的共同记录',
+    color: 'var(--el-color-danger)'
+  },
+  1: { title: '早期版本', hint: '最早的组卷台', color: 'var(--el-text-color-secondary)' }
 }
 const majorOf = v => String(v.version || '').split('.')[0]
 const tracks = computed(() => {
   const majors = [...new Set(versions.value.map(majorOf))]
-    .filter(m => Number(m) >= 3)
+    .filter(m => Number(m) >= 1)
     .sort((a, b) => Number(b) - Number(a))
   return majors.map(key => ({
     key,
@@ -64,8 +71,6 @@ const tracks = computed(() => {
     items: versions.value.filter(v => majorOf(v) === key)
   }))
 })
-// 2.8.0 及更早是两条线共同的历史
-const trunk = computed(() => versions.value.filter(v => Number(majorOf(v)) <= 2))
 
 /**
  * 每个大版本一个折叠块。
@@ -140,13 +145,16 @@ async function removeItem(item) {
           <a href="https://keepachangelog.com/zh-CN/1.1.0/" target="_blank" rel="noopener">Keep a Changelog</a>
           规范与语义化版本。
         </p>
+        <p class="sub lines-note">
+          各端分线编号：<b>服务端与网页</b> 2.x，<b>仿真环境</b> 3.x，<b>学生桌面端</b> 4.x，<b>教师端安卓 APP</b> 5.x，点标题展开。
+        </p>
       </div>
       <el-button v-if="isTeacher" type="primary" @click="openAdd">添加记录</el-button>
     </header>
 
     <el-empty v-if="!versions.length && !loading" description="还没有更新记录" />
 
-    <!-- 每条产品线（3.x 及以上每个大版本）各自成一个折叠块，别混在一条时间线里 -->
+    <!-- 每条产品线（每个大版本）各自成一个折叠块，别混在一条时间线里 -->
     <div v-for="t in tracks" :key="t.key" class="track" :style="{ '--track': t.color }">
       <button class="thead" type="button" @click="toggle(t.key)">
         <span class="caret" :class="{ open: isOpen(t.key) }">▸</span>
@@ -188,48 +196,6 @@ async function removeItem(item) {
         </div>
       </section>
     </div>
-
-    <div v-if="tracks.length && trunk.length" class="fork">
-      从 2.8.0 起按产品线分开：<b>仿真环境</b>走 3.x，<b>学生桌面端</b>走 4.x，
-      <b>教师端安卓 APP</b>走 5.x。下面是分线之前的共同记录。
-    </div>
-
-    <section v-for="(v, vi) in trunk" :key="v.version" class="ver">
-      <div class="rail">
-        <span class="dot" :class="{ latest: !tracks.length && vi === 0 }" />
-        <span v-if="vi < trunk.length - 1" class="line" />
-      </div>
-
-      <div class="body">
-        <div class="vhead">
-          <h2>{{ v.version }}</h2>
-          <span v-if="!tracks.length && vi === 0" class="latest-tag">最新</span>
-          <time>{{ v.released_on }}</time>
-        </div>
-
-        <div v-for="g in v.groups" :key="g.type" class="grp">
-          <div class="gtitle" :style="{ color: styleOf(g.type).color }">
-            <span class="gicon" :style="{ background: styleOf(g.type).bg }">
-              {{ styleOf(g.type).icon }}
-            </span>
-            {{ g.label }}
-            <span class="gen">{{ g.type }}</span>
-          </div>
-          <ul>
-            <li v-for="it in g.items" :key="it.id">
-              <span>{{ it.content }}</span>
-              <el-button
-                v-if="isTeacher"
-                link
-                type="danger"
-                class="del"
-                @click="removeItem(it)"
-              >删除</el-button>
-            </li>
-          </ul>
-        </div>
-      </div>
-    </section>
 
     <el-dialog v-model="dialog" title="添加更新记录" width="560px">
       <el-form label-width="90px">
@@ -327,8 +293,8 @@ h1 {
   align-self: center;
 }
 .thint { font-size: 12px; color: var(--el-text-color-secondary); }
-.fork {
-  margin: 26px 0 14px;
+.lines-note {
+  margin: 4px 0 0;
   padding: 10px 14px;
   border-left: 3px solid var(--el-border-color);
   background: var(--el-fill-color-lighter);
