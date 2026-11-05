@@ -2,6 +2,7 @@
 # 把 data-export.sh 导出的数据还原到本机。
 #
 #   sudo bash scripts/data-import.sh /路径/exam-data
+#   DATA_IMPORT_YES=1 sudo -E bash scripts/data-import.sh /路径/exam-data   # 不问确认（网页导入用）
 #
 # 【前提】本机已经正常部署好了：git clone + ./deploy.sh 跑通、能打开页面。
 #         这个脚本只往现成的系统里填数据，不负责把系统装起来。
@@ -119,7 +120,14 @@ step "[4/6] 确认操作..."
 echo "      即将用上面这份数据**覆盖**本机数据库里的同名表。"
 echo "      本机的 .env、端口、口令都不会动；表结构也不会动。"
 echo
-read -r -p "      确认请输入「还原」两个字：" ANSWER
+# 网页上「导入数据」走主机助手（host-agent.sh）来跑，没人在终端前敲字：
+# 它带 DATA_IMPORT_YES=1，网页那边已经让系统管理员输过密码、点过确认了
+if [ "${DATA_IMPORT_YES:-}" = "1" ]; then
+    ANSWER="还原"
+    echo "      （网页上已确认，自动继续）"
+else
+    read -r -p "      确认请输入「还原」两个字：" ANSWER
+fi
 [ "$ANSWER" = "还原" ] || {
     docker compose exec -T backend rm -rf /tmp/data-import >/dev/null 2>&1
     die "已取消，什么都没动"

@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps import get_current_user, require_admin
+from ..deps import get_current_user, is_root, require_admin
 from ..models import (
     Exam,
     FeedbackReply,
@@ -36,6 +36,7 @@ def _user_out(user: User) -> UserOut:
     item = UserOut.model_validate(user)
     item.class_ids = [c.id for c in user.classes]
     item.class_names = [c.display for c in user.classes]
+    item.is_root = is_root(user)
     return item
 
 

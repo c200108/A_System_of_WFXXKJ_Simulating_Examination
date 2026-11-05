@@ -23,6 +23,8 @@ class UserOut(ORMModel):
     class_ids: list[int] = []          # 名下的班，管理员分配
     class_names: list[str] = []
     created_at: datetime | None = None
+    # 部署时建的那个系统管理员（ADMIN_USERNAME）：只有它能备份还原、一键更新
+    is_root: bool = False
 
 
 class UserCreate(BaseModel):

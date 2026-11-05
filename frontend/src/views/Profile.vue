@@ -1,6 +1,7 @@
 <script setup>
 /**
  * 我的账号：看账号信息、改个人资料、改密码，以及数据回收站。
+ * 部署时建的系统管理员还多一块「数据备份与系统更新」（components/SystemMaintenance.vue）。
  *
  * 能改的只有姓名、任教年级班级、联系方式三项 —— 用户名、角色、启停
  * 都得管理员来，接口那边也是这么限的，不是光靠这里不显示。
@@ -11,6 +12,7 @@ import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { currentUser, setUser } from '../auth'
 import RecycleBin from '../components/RecycleBin.vue'
+import SystemMaintenance from '../components/SystemMaintenance.vue'
 
 const route = useRoute()
 const binCard = ref()
@@ -168,6 +170,12 @@ async function savePassword() {
         <p class="note">改完当前登录不会掉线，但下次登录要用新密码。</p>
       </el-card>
     </div>
+
+    <!-- 只有部署时建的系统管理员看得到：动整台服务器的事 -->
+    <el-card v-if="user?.is_root" shadow="never" class="bincard">
+      <template #header><span class="ch">🛠 数据备份与系统更新</span></template>
+      <SystemMaintenance />
+    </el-card>
 
     <el-card ref="binCard" shadow="never" class="bincard">
       <template #header><span class="ch">🗑 数据回收站</span></template>

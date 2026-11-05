@@ -289,6 +289,14 @@ if [ -n "$BEFORE_Q" ]; then
 fi
 [ -d data/uploads ] && ok "上传文件 $(find data/uploads -type f | wc -l) 个，原地没动"
 
+# 主机助手（网页上导入备份、一键更新靠它）：用新版本的安装脚本装一遍，可以反复装。
+# 网页上点的一键更新本身就是主机助手在跑这个脚本 —— 安装脚本只碰 .path，不打断它
+if [ -f scripts/host-agent-install.sh ]; then
+    bash scripts/host-agent-install.sh >/dev/null 2>&1 \
+        && ok "主机助手已就绪（网页上能导入备份、一键更新）" \
+        || warn "主机助手没装上（没有 systemd？）：网页上的导入、一键更新用不了，命令行照旧"
+fi
+
 echo
 echo "=================================================="
 echo "  升级完成"
