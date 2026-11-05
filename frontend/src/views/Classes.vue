@@ -12,7 +12,7 @@
  * 例外是**上机座次表**：每个班自己的事，班主任（名下的老师）和管理员都能传、换、删。
  * 图片点开在新页面直接看，Excel 点了下载。
  */
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, defineAsyncComponent, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download } from '../api'
 import { currentUser } from '../auth'
@@ -22,11 +22,16 @@ const SeatSheet = defineAsyncComponent(() => import('../components/SeatSheet.vue
 const seatSheet = ref(null)
 const panelFull = ref(false)
 const panelFolded = ref(false)
-const winH = ref(window.innerHeight)
-const onResize = () => (winH.value = window.innerHeight)
-window.addEventListener('resize', onResize)
-onBeforeUnmount(() => window.removeEventListener('resize', onResize))
-const sheetHeight = computed(() => Math.max(260, winH.value - (panelFull.value ? 150 : 200)))
+
+/**
+ * 点班级卡片的空白处就打开在线座次（2.20.1 起取代「查看」按钮）。
+ * 点在勾选框、下拉框、按钮、链接上是在做别的事，不跳。
+ */
+function onCardClick(e, c) {
+  if (e.target.closest('button, a, input, label, .el-checkbox, .el-select, .el-button')) return
+  if (window.getSelection?.().toString()) return      // 在选字，别打断
+  openDetail(c)
+}
 
 async function closeDetail() {
   if (seatSheet.value?.dirty) {
@@ -350,11 +355,11 @@ async function doBulkOwner() {
 
     <el-alert v-if="isAdmin" type="info" :closable="false">
       班级决定<b>谁能给谁发考试</b>：老师只能给自己名下的班发，管理员发的考试全体学生都收得到。
-      老师名下一个班都没有时，发不出考试。点班级名片可以看这个班都有谁。
+      老师名下一个班都没有时，发不出考试。点班级卡片任意空白处打开这个班的在线座次。
     </el-alert>
     <el-alert v-else type="info" :closable="false">
       这里显示全校班级，<b>带「我的班」标记的是你带的班</b>。发考试时只能选这些班。
-      点班级名片可以看这个班都有谁；班级的增删改和分配由管理员操作。
+      点班级卡片任意空白处打开这个班的在线座次；班级的增删改和分配由管理员操作。
     </el-alert>
 
     <div v-if="isAdmin && noOwner" class="warn">
@@ -393,11 +398,14 @@ async function doBulkOwner() {
         {{ g.grade }}<span class="gcount">{{ g.list.length }} 个班</span>
       </h3>
       <div class="grid">
+        <!-- 整张卡片可点（空白处、班名、人数），打开在线座次；勾选框、下拉、按钮各管各的 -->
         <article
           v-for="c in g.list"
           :key="c.id"
           class="cls"
           :class="{ mine: c.owner_id === currentUser?.id, orphan: !c.owner_id, on: isPicked(c.id) }"
+          :title="`点击打开 ${c.display} 的在线座次`"
+          @click="onCardClick($event, c)"
         >
           <div class="top">
             <el-checkbox
@@ -405,16 +413,13 @@ async function doBulkOwner() {
               :model-value="isPicked(c.id)"
               @change="togglePick(c.id, $event)"
             />
-            <!-- 班名可点，进班级详情。勾选框在它外面，点勾不会顺带打开详情 -->
-            <button type="button" class="cname" @click="openDetail(c)">{{ c.name }}</button>
+            <span class="cname">{{ c.name }}</span>
             <el-tag v-if="c.owner_id === currentUser?.id" size="small" type="success" effect="light">
               我的班
             </el-tag>
           </div>
 
-          <button type="button" class="stu" @click="openDetail(c)">
-            {{ c.student_count }} 名学生 <span class="go">查看 ›</span>
-          </button>
+          <span class="stu">{{ c.student_count }} 名学生</span>
 
           <div class="owner">
             <el-select
@@ -443,7 +448,7 @@ async function doBulkOwner() {
             <span class="seatlbl">座次表</span>
             <template v-if="c.seat_kind">
               <el-button link size="small" type="primary" :title="c.seat_name" @click="openSeat(c)">
-                {{ c.seat_kind === 'image' ? '🖼 查看' : '📊 下载' }}
+                {{ c.seat_kind === 'image' ? '🖼 看图片' : '📊 下载' }}
               </el-button>
               <el-button v-if="canSeat(c)" link size="small" @click="pickSeat(c)">更换</el-button>
               <el-button v-if="canSeat(c)" link size="small" type="danger" @click="removeSeat(c)">删</el-button>
@@ -463,7 +468,7 @@ async function doBulkOwner() {
     </div>
   </el-card>
 
-  <!-- 班级「查看」：可浮动、可折叠的面板，主要区域给「在线座次」（2.20.0）。
+  <!-- 班级在线座次（点卡片打开）：可浮动、可折叠的面板，主要区域给「在线座次」（2.20.0）。
        名单列表挪走了：人在「学生管理」里管，班长 / 组长也在那儿设 -->
   <teleport to="body">
     <section v-if="detail" v-show="!panelFolded" class="seatpanel" :class="{ full: panelFull }">
@@ -488,13 +493,7 @@ async function doBulkOwner() {
         <el-button size="small" @click="panelFolded = true">收起</el-button>
         <el-button size="small" type="danger" plain @click="closeDetail">关闭</el-button>
       </header>
-      <SeatSheet
-        ref="seatSheet"
-        :key="detail.id"
-        :cls="detail"
-        :height="sheetHeight"
-        @saved="onSeatSaved"
-      />
+      <SeatSheet ref="seatSheet" :key="detail.id" :cls="detail" @saved="onSeatSaved" />
     </section>
     <button v-if="detail && panelFolded" type="button" class="seatpill" @click="panelFolded = false">
       ▲ {{ detail.display }} 在线座次（点开）
@@ -599,11 +598,15 @@ async function doBulkOwner() {
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
   overflow: hidden;
 }
+/* 「全屏」= 放大成居中的大浮窗，四周留边、不贴满屏幕；高度跟窗口走，
+   里面的表格自己量剩下的空间（SeatSheet 的 ResizeObserver），不会撑出窗外 */
 .seatpanel.full {
-  top: 8px;
-  right: 8px;
-  bottom: 8px;
-  width: calc(100vw - 16px);
+  top: 4vh;
+  bottom: 4vh;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  width: min(1600px, 92vw);
 }
 .phead {
   display: flex;
@@ -683,16 +686,35 @@ async function doBulkOwner() {
 .allbar {
   margin-bottom: 10px;
 }
+/* 年级之间：每个年级一块浅底色区域 + 年级名左侧色条，两块之间再隔一条粗分界线，一眼分得开 */
 .gradeblock {
-  margin-bottom: 24px;
+  padding: 14px 16px 18px;
+  border-radius: 10px;
+  background: var(--el-fill-color-light);
+  border: 1px solid var(--el-border-color-lighter);
+}
+.gradeblock + .gradeblock {
+  margin-top: 26px;
+  position: relative;
+}
+.gradeblock + .gradeblock::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -14px;
+  border-top: 2px dashed var(--el-border-color-darker);
 }
 .gname {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 15px;
-  font-weight: 600;
-  margin: 0 0 12px;
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0 0 14px;
+  padding-left: 10px;
+  border-left: 4px solid var(--el-color-primary);
+  line-height: 1.3;
 }
 .gcount {
   margin-left: 10px;
@@ -706,13 +728,24 @@ async function doBulkOwner() {
   gap: 12px;
 }
 .cls {
-  border: 1px solid var(--el-border-color-lighter);
+  border: 1.5px solid var(--el-border-color);
   border-radius: 10px;
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
   gap: 8px;
   background: var(--el-bg-color);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.cls:hover {
+  border-color: var(--el-color-primary-light-3);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+}
+.cls :deep(.el-select),
+.cls :deep(.el-checkbox) {
+  cursor: default;
 }
 .cls.mine {
   border-color: var(--el-color-success-light-5);
@@ -731,38 +764,15 @@ async function doBulkOwner() {
   gap: 8px;
 }
 .cname {
-  border: none;
-  background: none;
-  padding: 0;
-  font-family: inherit;
-  font-size: 15px;
-  font-weight: 600;
-  color: inherit;
-  cursor: pointer;
-  text-align: left;
+  font-size: 17px;
+  font-weight: 700;
 }
-.cname:hover {
+.cls:hover .cname {
   color: var(--el-color-primary);
 }
 .stu {
-  border: none;
-  background: none;
-  padding: 0;
-  font-family: inherit;
   font-size: 12px;
   color: var(--el-text-color-secondary);
-  cursor: pointer;
-  text-align: left;
-}
-.stu:hover {
-  color: var(--el-color-primary);
-}
-.stu .go {
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-.cls:hover .stu .go {
-  opacity: 1;
 }
 .ownername {
   font-size: 13px;
