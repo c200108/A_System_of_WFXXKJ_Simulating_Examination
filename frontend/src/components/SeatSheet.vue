@@ -11,16 +11,16 @@
  * services/seating.py），这里只负责把「哪个格子放谁」填进表格。学困生标记是学生隐私，
  * 表格里**不标**谁是学困生，导出、打印也就不会带出去。
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import jspreadsheet from 'jspreadsheet-ce'
 import 'jsuites/dist/jsuites.css'
 import 'jspreadsheet-ce/dist/jspreadsheet.css'
 import { api, download } from '../api'
+import { cellName, coveredCells, parseCell, sheetFromWorkbook } from './seatExcel'
 
 const props = defineProps({
-  cls: { type: Object, required: true },        // 班级行（id / display / seat_kind / seat_name）
-  height: { type: Number, default: 520 }         // 表格区域高度（像素），面板全屏时会变
+  cls: { type: Object, required: true }         // 班级行（id / display / seat_kind / seat_name）
 })
 const emit = defineEmits(['saved'])
 
@@ -36,29 +36,11 @@ let ws = null                     // 当前工作表实例
 
 const DEFAULT_COLS = 12
 const DEFAULT_ROWS = 14
-
-// ---------------- 单元格名 ----------------
-function colLetters(i) {
-  let out = ''
-  i += 1
-  while (i) {
-    const rem = (i - 1) % 26
-    out = String.fromCharCode(65 + rem) + out
-    i = Math.floor((i - 1) / 26)
-  }
-  return out
-}
-const cellName = (x, y) => `${colLetters(x)}${y + 1}`
-function parseCell(name) {
-  const m = /^([A-Z]+)(\d+)$/.exec(String(name).toUpperCase())
-  if (!m) return null
-  let x = 0
-  for (const ch of m[1]) x = x * 26 + (ch.charCodeAt(0) - 64)
-  return [x - 1, Number(m[2]) - 1]
-}
+const tableH = ref(400)           // 表格可见高度：跟着面板实际剩下的空间走（ResizeObserver）
 
 // ---------------- 建表 ----------------
-function blankSheet() {
+/** 读不到默认空表时的兜底：一行讲台 + 空格子 */
+function fallbackSheet() {
   const data = Array.from({ length: DEFAULT_ROWS }, () => Array(DEFAULT_COLS).fill(''))
   data[0][0] = '讲　台'
   return {
@@ -66,19 +48,42 @@ function blankSheet() {
     mergeCells: { A1: [DEFAULT_COLS, 1] },
     style: { A1: 'text-align:center;font-weight:bold;background-color:#eef3ff;' },
     colWidths: Array(DEFAULT_COLS).fill(90),
-    rowHeights: {},
-    seatRanges: '',
-    zoneRanges: ''
+    rowHeights: {}
   }
+}
+
+/**
+ * 没画过座次表的班默认用 public/seat-default.xlsx（学校给的空表，2.20.1）。
+ * 打包进前端，局域网版不联网也有；读一次缓存下来。
+ */
+let templateCache = null
+async function defaultSheet() {
+  if (!templateCache) {
+    try {
+      const res = await fetch(`${import.meta.env.BASE_URL}seat-default.xlsx`, { cache: 'no-cache' })
+      if (!res.ok) throw new Error(res.status)
+      templateCache = await fromExcel(await res.arrayBuffer())
+    } catch {
+      templateCache = fallbackSheet()
+    }
+  }
+  return JSON.parse(JSON.stringify(templateCache))
 }
 
 function build(sheet) {
   destroy()
-  const s = sheet || blankSheet()
-  const cols = Math.max(DEFAULT_COLS, ...(s.data || []).map(r => r.length), (s.colWidths || []).length)
-  const rows = Math.max(DEFAULT_ROWS, (s.data || []).length)
+  const s = sheet || fallbackSheet()
+  // 行列数照表格本身来，不再硬凑 12 × 14：导入的表几行几列就是几行几列
+  const cols = Math.max(1, ...(s.data || []).map(r => r.length), (s.colWidths || []).length)
+  const rows = Math.max(1, (s.data || []).length)
   const rowsCfg = {}
   Object.entries(s.rowHeights || {}).forEach(([i, h]) => (rowsCfg[i] = { height: h }))
+  // 合并区域里被盖住的格子的样式会被表格库叠到左上角那格上，去掉
+  const covered = coveredCells(s.mergeCells)
+  const style = {}
+  Object.entries(s.style || {}).forEach(([k, v]) => {
+    if (!covered.has(k)) style[k] = v
+  })
   const sheets = jspreadsheet(host.value, {
     tabs: false,
     // 自带工具栏的图标走 Google 的 Material Icons 字体（要联网），局域网版显示成一串英文 ——
@@ -89,7 +94,7 @@ function build(sheet) {
         data: s.data && s.data.length ? s.data : [['']],
         minDimensions: [cols, rows],
         mergeCells: s.mergeCells || {},
-        style: s.style || {},
+        style,
         columns: Array.from({ length: cols }, (_, i) => ({
           width: (s.colWidths || [])[i] || 90,
           align: 'center',
@@ -99,7 +104,7 @@ function build(sheet) {
         editable: canEdit.value,
         tableOverflow: true,
         tableWidth: '100%',
-        tableHeight: `${props.height}px`,
+        tableHeight: `${tableH.value}px`,
         defaultColAlign: 'center'
       }
     ],
@@ -122,6 +127,19 @@ function build(sheet) {
   form.ranges = s.seatRanges || form.ranges
   form.zone = s.zoneRanges || form.zone
   dirty.value = false
+  fitHeight()
+}
+
+/** 表格可见高度 = 外框剩下的高度。面板拉大缩小、全屏还原都会触发 */
+function fitHeight() {
+  const h = host.value?.clientHeight
+  if (!h) return
+  tableH.value = Math.max(160, h)
+  const box = host.value.querySelector('.jss_content')
+  if (box) {
+    box.style.maxHeight = `${tableH.value}px`
+    box.style.height = 'auto'
+  }
 }
 
 function destroy() {
@@ -144,7 +162,7 @@ function snapshot() {
   const rowHeights = {}
   ;(heights || []).forEach((h, i) => {
     const n = parseInt(h, 10)
-    if (n && n !== 26) rowHeights[i] = n
+    if (n) rowHeights[i] = n
   })
   const style = {}
   Object.entries(ws.getStyle() || {}).forEach(([k, v]) => {
@@ -170,7 +188,7 @@ async function load() {
     canEdit.value = got.can_edit
     students.value = got.students || []
     await nextTick()
-    build(got.sheet)
+    build(got.sheet || (await defaultSheet()))
   } finally {
     loading.value = false
   }
@@ -190,87 +208,30 @@ async function save() {
 }
 
 async function clearAll() {
-  await ElMessageBox.confirm('清空整张座次表，重新从空白开始？（保存之后才生效）', '清空', { type: 'warning' })
-  build(blankSheet())
+  await ElMessageBox.confirm('清空整张座次表，换回默认空表重新开始？（保存之后才生效）', '清空', { type: 'warning' })
+  build(await defaultSheet())
   dirty.value = true
 }
 
 // ---------------- 导入 Excel 座次样式 ----------------
-function argb(c) {
-  const v = c && c.argb
-  return v && /^[0-9A-Fa-f]{8}$/.test(v) ? '#' + v.slice(2) : ''
-}
-
-/** Excel（ExcelJS 读出来的第一张表）→ 我们的表格 JSON：值、合并、填充色、字体、对齐、边框、列宽行高。 */
+/** Excel → 表格 JSON。逐格照搬，规则全在 seatExcel.js */
 async function fromExcel(buffer) {
   const ExcelJS = (await import('exceljs')).default
   const wb = new ExcelJS.Workbook()
   await wb.xlsx.load(buffer)
-  const sheet = wb.worksheets[0]
-  if (!sheet) throw new Error('这个文件里没有工作表')
-  const rows = Math.min(Math.max(sheet.rowCount, 1), 200)
-  const cols = Math.min(Math.max(sheet.columnCount, 1), 60)
-  const data = Array.from({ length: rows }, () => Array(cols).fill(''))
-  const style = {}
-  for (let r = 1; r <= rows; r++) {
-    const row = sheet.getRow(r)
-    for (let c = 1; c <= cols; c++) {
-      const cell = row.getCell(c)
-      data[r - 1][c - 1] = cell.text == null ? '' : String(cell.text)
-      const css = []
-      const fill = cell.fill
-      if (fill && fill.type === 'pattern' && fill.pattern === 'solid') {
-        const bg = argb(fill.fgColor)
-        if (bg) css.push(`background-color:${bg}`)
-      }
-      const f = cell.font || {}
-      if (f.bold) css.push('font-weight:bold')
-      if (f.italic) css.push('font-style:italic')
-      if (argb(f.color)) css.push(`color:${argb(f.color)}`)
-      if (f.size) css.push(`font-size:${Math.round((f.size * 4) / 3)}px`)
-      const al = cell.alignment || {}
-      if (al.horizontal && ['left', 'center', 'right'].includes(al.horizontal)) {
-        css.push(`text-align:${al.horizontal}`)
-      }
-      const b = cell.border || {}
-      for (const side of ['top', 'right', 'bottom', 'left']) {
-        if (b[side] && b[side].style) {
-          const w = ['medium', 'thick', 'double'].includes(b[side].style) ? 2 : 1
-          css.push(`border-${side}:${w}px solid ${argb(b[side].color) || '#333'}`)
-        }
-      }
-      if (css.length) style[cellName(c - 1, r - 1)] = css.join(';') + ';'
-    }
-  }
-  const mergeCells = {}
-  for (const m of sheet.model.merges || []) {
-    const [a, z] = m.split(':')
-    const p1 = parseCell(a)
-    const p2 = parseCell(z || a)
-    if (!p1 || !p2) continue
-    if (p1[0] >= cols || p1[1] >= rows) continue
-    mergeCells[cellName(p1[0], p1[1])] = [p2[0] - p1[0] + 1, p2[1] - p1[1] + 1]
-  }
-  const colWidths = []
-  for (let c = 1; c <= cols; c++) {
-    const w = sheet.getColumn(c).width
-    colWidths.push(w ? Math.round(w * 7 + 5) : 90)
-  }
-  const rowHeights = {}
-  for (let r = 1; r <= rows; r++) {
-    const h = sheet.getRow(r).height
-    if (h) rowHeights[r - 1] = Math.round((h * 4) / 3)
-  }
-  return { data, mergeCells, style, colWidths, rowHeights, seatRanges: form.ranges, zoneRanges: form.zone }
+  return { ...sheetFromWorkbook(wb), seatRanges: form.ranges, zoneRanges: form.zone }
 }
 
 async function askOverwrite(what) {
-  if (!dirty.value && !hasContent()) return
+  if (!dirty.value && !props.cls.has_seat_sheet && !hasContent()) return
   await ElMessageBox.confirm(`${what}会替换掉现在的整张座次表，确定吗？`, '导入座次样式', { type: 'warning' })
 }
 
+/** 表格里有没有学生名字（默认空表里本来就有的座位号、讲台不算） */
 function hasContent() {
-  return !!ws && ws.getData().some(r => r.some(v => String(v ?? '').trim() && v !== '讲　台'))
+  if (!ws) return false
+  const base = new Set((templateCache?.data || []).flat().map(v => String(v ?? '').trim()))
+  return ws.getData().some(r => r.some(v => String(v ?? '').trim() && !base.has(String(v).trim()) && v !== '讲　台'))
 }
 
 function pickExcel() {
@@ -342,20 +303,38 @@ async function exportExcel() {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hex(css['background-color']) } }
     }
     const font = {}
+    if (css['font-family']) font.name = css['font-family'].replace(/["']/g, '')
     if (css['font-weight'] === 'bold') font.bold = true
+    if (css['font-style'] === 'italic') font.italic = true
+    if (/underline/.test(css['text-decoration'] || '')) font.underline = true
+    if (/line-through/.test(css['text-decoration'] || '')) font.strike = true
     if (hex(css.color)) font.color = { argb: hex(css.color) }
-    if (css['font-size']) font.size = Math.round((parseInt(css['font-size'], 10) * 3) / 4) || undefined
+    if (css['font-size']) font.size = Math.round((parseFloat(css['font-size']) * 3) / 4) || undefined
     if (Object.keys(font).length) cell.font = font
     const border = {}
     for (const side of ['top', 'right', 'bottom', 'left']) {
-      if (css[`border-${side}`]) border[side] = { style: 'thin' }
+      const v = css[`border-${side}`]
+      if (!v || /none|^0/.test(v)) continue
+      const w = parseInt(v, 10) || 1
+      const style = /double/.test(v) ? 'double' : /dashed/.test(v) ? 'dashed' : /dotted/.test(v) ? 'dotted' : w >= 3 ? 'thick' : w === 2 ? 'medium' : 'thin'
+      const color = hex((/#[0-9a-f]{6}/i.exec(v) || [])[0])
+      border[side] = color ? { style, color: { argb: color } } : { style }
+    }
+    if (css.border && !/none|^0/.test(css.border)) {
+      for (const side of ['top', 'right', 'bottom', 'left']) border[side] = border[side] || { style: 'thin' }
     }
     if (Object.keys(border).length) cell.border = border
   })
+  const V = { top: 'top', middle: 'middle', bottom: 'bottom' }
   for (let y = 0; y < s.data.length; y++) {
     for (let x = 0; x < (s.data[y] || []).length; x++) {
       const cell = sheet.getCell(y + 1, x + 1)
-      cell.alignment = { horizontal: cssMap(s.style[cellName(x, y)])['text-align'] || 'center', vertical: 'middle', wrapText: true }
+      const css = cssMap(s.style[cellName(x, y)])
+      cell.alignment = {
+        horizontal: css['text-align'] || 'center',
+        vertical: V[css['vertical-align']] || 'middle',
+        wrapText: true
+      }
     }
   }
   Object.entries(s.mergeCells).forEach(([name, [w, h]]) => {
@@ -386,7 +365,9 @@ function printSheet() {
     })
   )
   const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
-  let html = '<table>'
+  // 表格自己画了边框（导入的 Excel、默认空表）就照它的来；一条边框都没有的老表才给每格补细线
+  const ownBorders = Object.values(s.style).some(v => /border/.test(v))
+  let html = `<table class="${ownBorders ? 'own' : ''}">`
   for (let y = 0; y <= maxY; y++) {
     html += `<tr style="height:${s.rowHeights[y] || 34}px">`
     for (let x = 0; x <= maxX; x++) {
@@ -403,7 +384,8 @@ function printSheet() {
   if (!w) return ElMessage.warning('浏览器拦住了打印窗口，请允许弹出窗口')
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(props.cls.display)}座次表</title>
 <style>body{font-family:"Microsoft YaHei",sans-serif;margin:16px}h2{text-align:center;font-size:18px}
-table{border-collapse:collapse;margin:0 auto}td{border:1px solid #888;text-align:center;font-size:14px;padding:2px 4px}</style>
+table{border-collapse:collapse;margin:0 auto}td{border:1px solid #888;text-align:center;vertical-align:middle;font-size:14px;padding:2px 4px;white-space:pre-wrap}
+table.own td{border:none}</style>
 </head><body><h2>${esc(props.cls.display)} 上机座次表</h2>${html}</body></html>`)
   w.document.close()
   w.focus()
@@ -552,16 +534,16 @@ function expandRanges(text) {
   return out
 }
 
-watch(
-  () => props.height,
-  h => {
-    const box = host.value?.querySelector('.jss_content')
-    if (box) box.style.maxHeight = `${h}px`
-  }
-)
-
-onMounted(load)
-onBeforeUnmount(destroy)
+let ro = null
+onMounted(() => {
+  ro = new ResizeObserver(() => fitHeight())
+  if (host.value) ro.observe(host.value)
+  load()
+})
+onBeforeUnmount(() => {
+  ro?.disconnect()
+  destroy()
+})
 defineExpose({ dirty, save })
 </script>
 
@@ -688,11 +670,24 @@ defineExpose({ dirty, save })
   gap: 10px;
   align-items: center;
 }
+/* 整个组件填满面板剩下的高度；表格区（host）的高度由外面定，不跟内容走，
+   ResizeObserver 量它再把表格滚动区设成一样高 —— 面板多大表格就多大，不会撑出去 */
+.seat-sheet {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 .host {
+  flex: 1 1 0;
+  min-height: 160px;
   width: 100%;
-  overflow: auto;
+  overflow: hidden;
 }
 .host :deep(.jss_container) {
+  max-width: 100%;
+}
+.host :deep(.jss_content) {
   max-width: 100%;
 }
 </style>
