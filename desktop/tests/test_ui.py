@@ -1173,3 +1173,11 @@ def test_选择判断题乱序_按学号打乱_交的是原字母(app, server, e
     assert [r.cget("value") for r in radios] == [o["label"] for o in q["options"]]
     radios[0].invoke()
     assert frame.answers[q["id"]] == q["options"][0]["label"]       # 记的是原字母
+
+
+def test_登录页教师端地址不带http前缀_也没有示例提示(app):
+    f = app.frame
+    assert "如 192.168.1.8:8080" not in labels_in(f)
+    app.server = "http://192.168.1.8:8000"           # 老版本存下来的带前缀
+    app.swap(ui.LoginFrame(app))
+    assert app.frame.vars["server"].get() == "192.168.1.8:8000"
