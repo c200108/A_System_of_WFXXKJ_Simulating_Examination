@@ -1145,3 +1145,31 @@ def test_窗口窄了自动收起答题卡_让出位置给题目(app, server, ex
     frame.toggle_card()
     frame._body_resized(type("E", (), {"width": 900})())
     assert frame.card_folded
+
+
+def test_选择判断题乱序_按学号打乱_交的是原字母(app, server, exam):
+    """考试包开了乱序：答题界面按「考试 + 学号」打乱，选的是新位置的字母，记下的是原字母。"""
+    frame = start_exam(app, server, exam, "26090121")
+    ops = [{"label": x, "content": "选项" + x} for x in "ABCD"]
+    app.package.paper = [{"id": f"s{i}", "no": i + 1, "type": "选择题", "score": 2,
+                          "section": "一", "stem": f"第{i}题", "options": ops} for i in range(8)]
+    app.package.manifest["shuffle"] = True
+    frame.destroy()
+    frame = exam_ui.ExamFrame(app)
+    app.frame = frame
+    frame.pack(fill="both", expand=True)
+    again = exam_ui.ExamFrame(app)             # 同一个学生再开一次：顺序一样
+    assert [q["id"] for q in again.paper] == [q["id"] for q in frame.paper]
+    again.destroy()
+    assert sorted(q["id"] for q in frame.paper) == [f"s{i}" for i in range(8)]
+    assert [q["id"] for q in frame.paper] != [f"s{i}" for i in range(8)] or \
+        any(o["label"] != o["show"] for q in frame.paper for o in q["options"])
+
+    frame.show(0)
+    app.root.update()
+    radios = [w for w in frame.area.winfo_children() if isinstance(w, tk.Radiobutton)]
+    q = frame.paper[0]
+    assert [r.cget("text")[0] for r in radios] == list("ABCD")      # 屏幕上 A B C D 依次排
+    assert [r.cget("value") for r in radios] == [o["label"] for o in q["options"]]
+    radios[0].invoke()
+    assert frame.answers[q["id"]] == q["options"][0]["label"]       # 记的是原字母

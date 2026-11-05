@@ -8,6 +8,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
 import { optionText } from '../optionText'
+import { applyShuffle, browserSeed } from '../shuffle'
 import { useSubmitGate } from '../submitGate'
 import SimHost from '../components/sim/SimHost.vue'
 
@@ -60,7 +61,8 @@ const detailOf = computed(() => {
 
 onMounted(async () => {
   try {
-    paper.value = await api.takePaper(token)
+    // 选择判断题乱序：这个页面取卷时还不知道是谁，按这台浏览器的固定种子打乱
+    paper.value = applyShuffle(await api.takePaper(token), `${token}-${browserSeed(token)}`)
     gate.start()
   } catch (e) {
     loadError.value = e.response?.data?.detail || '打不开这场考试，请向老师确认链接'
@@ -210,7 +212,8 @@ async function submit() {
                 :checked="answers[q.id] === o.label"
                 @change="answers[q.id] = o.label"
               />
-              <span class="L">{{ o.label }}</span><span>{{ o.content }}</span>
+              <!-- 乱序时显示新位置的字母（o.show），交的仍是原字母（o.label） -->
+              <span class="L">{{ o.show || o.label }}</span><span>{{ o.content }}</span>
             </label>
           </div>
 
