@@ -40,7 +40,7 @@ paper:
     选择题: 20
     判断题: 10
     操作题: 3
-  shuffle_options: true # 默认打乱选择题选项（答案自动跟随）
+  shuffle_objective: true # 默认开「选择判断题乱序」：每个学生的选择题、判断题顺序和选项顺序各不相同（不跨大题）。老配置写的 shuffle_options 也认
   require_answer: true # 默认跳过原卷未给答案的题
   use_pinned: true # 默认让必出题优先入选
   section_numerals: ["一", "二", "三", "四", "五", "六"] # 大题序号

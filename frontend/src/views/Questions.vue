@@ -3,6 +3,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download } from '../api'
 import { ArrowDown } from '@element-plus/icons-vue'
+import ClampText from '../components/ClampText.vue'
 
 const loading = ref(false)
 const rows = ref([])
@@ -22,6 +23,8 @@ const query = reactive({
   scope: '',
   source: '',
   difficulty: '',
+  // 题目有无答案：'' 全部、true 有答案、false 没答案（没答案的题组卷时默认会被跳过）
+  has_answer: '',
   page: 1,
   page_size: 20
 })
@@ -61,9 +64,15 @@ function activeFilters() {
   const params = { ...query }
   delete params.page
   delete params.page_size
-  Object.keys(params).forEach(k => params[k] === '' && delete params[k])
+  // 下拉框点了清空是 undefined / null，也当没选
+  Object.keys(params).forEach(k => (params[k] === '' || params[k] == null) && delete params[k])
   if (onlyPinned.value) params.pinned = true
   return params
+}
+
+/** 选项拼成一行，给 ClampText 当「内容变了没」的依据（显示走插槽） */
+function optionsLine(row) {
+  return (row.options || []).map(o => `${o.label}.${o.content}`).join(' ')
 }
 
 async function load() {
@@ -198,6 +207,10 @@ async function uploadImage(options) {
       <el-select v-model="query.difficulty" placeholder="全部难度" clearable style="width: 128px">
         <el-option v-for="l in LEVELS" :key="l.value" :label="l.text" :value="l.value" />
       </el-select>
+      <el-select v-model="query.has_answer" placeholder="有无答案" clearable style="width: 118px">
+        <el-option label="有答案" :value="true" />
+        <el-option label="无答案" :value="false" />
+      </el-select>
       <el-checkbox v-model="onlyPinned" @change="search">只看必出</el-checkbox>
       <el-button type="primary" @click="search">查询</el-button>
       <div class="flex-1" />
@@ -231,16 +244,26 @@ async function uploadImage(options) {
     <el-table :data="rows" v-loading="loading" border stripe size="small">
       <el-table-column prop="code" label="编号" width="80" />
       <el-table-column prop="type" label="题型" width="80" />
-      <el-table-column prop="stem" label="题干" min-width="280" show-overflow-tooltip />
+      <!-- 长内容只露两行，末尾「展开」看全文（ClampText） -->
+      <el-table-column label="题干" min-width="280">
+        <template #default="{ row }"><ClampText :text="row.stem" /></template>
+      </el-table-column>
       <el-table-column label="可选项" min-width="200">
         <template #default="{ row }">
-          <span v-for="o in row.options" :key="o.label" class="opt">{{ o.label }}.{{ o.content }}</span>
+          <ClampText v-if="row.options && row.options.length" :text="optionsLine(row)">
+            <span v-for="o in row.options" :key="o.label" class="opt">{{ o.label }}.{{ o.content }}</span>
+          </ClampText>
           <el-tag v-if="row.sim_task" size="small" type="success" effect="plain" class="simtag">
             🖥 {{ SIM_KINDS[row.sim_task.kind] || row.sim_task.kind }}自动判分
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="answer" label="答案" width="90" />
+      <el-table-column label="答案" width="110">
+        <template #default="{ row }">
+          <ClampText v-if="(row.answer || '').trim()" :text="row.answer" />
+          <span v-else class="no-ans">无答案</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="scope" label="知识范围" width="150" />
       <el-table-column prop="difficulty" label="难度" width="70" align="center" sortable>
         <template #default="{ row }">
@@ -350,8 +373,12 @@ async function uploadImage(options) {
 <style scoped>
 .bar {
   display: flex;
+  flex-wrap: wrap;    /* 筛选项多了，窄屏换行，别把下拉框挤成「全部…」 */
   gap: 10px;
   align-items: center;
+}
+.bar :deep(.el-select) {
+  flex: none;
 }
 .flex-1 {
   flex: 1;
@@ -360,6 +387,10 @@ async function uploadImage(options) {
   margin-top: 12px;
   color: #606266;
   font-size: 13px;
+}
+.no-ans {
+  color: var(--el-text-color-placeholder);
+  font-size: 12px;
 }
 .opt {
   margin-right: 10px;

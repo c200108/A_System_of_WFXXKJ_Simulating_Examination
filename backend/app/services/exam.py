@@ -213,6 +213,15 @@ def load_items(db: Session, paper: Paper) -> list[dict]:
     return separate_workdirs(out)
 
 
+def wants_shuffle(paper: Paper | None) -> bool:
+    """这份卷子开没开「选择判断题乱序」。老卷子（2.19.0 以前组的）没这一项，算不开 ——
+    它们的选项当初是在组卷那一步打乱后存的，再乱一次也没坏处，但题序会和老师印出去的
+    那份对不上。"""
+    if paper is None:
+        return False
+    return bool(_json(paper.config_json, {}).get("shuffle"))
+
+
 def group_items(items: list[dict]) -> list[dict]:
     """按大题分组。大题不等于题型 —— 「物联网实践与探索」里两种题型都有。"""
     groups: list[dict] = []

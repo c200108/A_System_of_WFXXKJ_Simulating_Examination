@@ -139,7 +139,12 @@ class PaperConf(_Base):
     default_counts: dict[str, int] = Field(
         default_factory=lambda: {"选择题": 20, "判断题": 10, "操作题": 3}
     )
-    shuffle_options: bool = True
+    # 选择判断题乱序（2.19.0）：每个学生取卷时，同一大题（按题型组卷时是同一题型）
+    # 里的选择题、判断题各自换位置，选择题的选项也跟着打乱。不跨大题，操作题不动。
+    shuffle_objective: bool = True
+    # 老配置的键：原来只管「打乱选择题选项」，现在并进上面那一项。
+    # config.yaml 里只写了它的，读成 shuffle_objective（见 _legacy_shuffle）
+    shuffle_options: bool | None = None
     require_answer: bool = True
     use_pinned: bool = True
     section_numerals: list[str] = Field(
@@ -150,6 +155,14 @@ class PaperConf(_Base):
     sections: list[PaperSectionConf] = Field(default_factory=_default_sections)
     # 题干多少字算「长题目」（prefer: long_or_image 用它判断）
     long_stem_chars: int = Field(default=60, ge=10, le=2000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_shuffle(cls, data):
+        if (isinstance(data, dict) and "shuffle_objective" not in data
+                and data.get("shuffle_options") is not None):
+            data = dict(data, shuffle_objective=bool(data["shuffle_options"]))
+        return data
 
     @model_validator(mode="after")
     def _check_sections(self):

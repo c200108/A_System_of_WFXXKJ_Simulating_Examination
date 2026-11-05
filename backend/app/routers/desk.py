@@ -68,7 +68,7 @@ from ..deps import get_current_user
 from ..models import Exam, ExamSubmission, Student, User
 from ..schemas import ExamBrief, SignInIn, SignInOut, StudentBrief
 from ..services import docx_io, images, packcache
-from ..services.exam import group_items, load_items, strip_answers
+from ..services.exam import group_items, load_items, strip_answers, wants_shuffle
 
 router = APIRouter(prefix="/api/desk", tags=["桌面客户端"])
 
@@ -306,6 +306,9 @@ def build_package(db: Session, exam: Exam, server: str = "") -> bytes:
         "duration_min": _minutes(exam.paper.duration),
         # 老师开了「允许提前交卷」：客户端不拦交卷（老客户端不认这一项，照旧拦）
         "early_submit": bool(exam.early_submit),
+        # 选择判断题乱序：学生端按「考试 + 学号」在本机打乱（4.14.0 起认这一项；
+        # 老客户端不认，照原顺序考，判分照样对 —— 交的本来就是原选项字母）
+        "shuffle": wants_shuffle(exam.paper),
         "count": len(paper),
         "full_score": sum(q["score"] for q in paper),
         "created": clock.now().strftime("%Y-%m-%d %H:%M:%S"),

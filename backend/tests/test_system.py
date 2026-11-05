@@ -124,7 +124,7 @@ def test_import_checks_password_then_queues(client, auth, jobs):
     # 主机助手接单、做完
     (jobs / "queue" / job["id"]).unlink()
     (d / "status.json").write_text('{"status": "ok", "message": "完成"}', encoding="utf-8")
-    (d / "log.txt").write_text("\x1b[32m✓ 还原完成\x1b[0m\n", encoding="utf-8")
+    (d / "log.txt").write_bytes("\x1b[32m✓ 还原完成\x1b[0m\n".encode("utf-8"))   # 按字节写：Windows 上跑测试时 write_text 会把换行写成 \r\n
     got = client.get(f"/api/system/jobs/{job['id']}", headers=auth).json()
     assert got["status"] == "ok" and got["log"] == "✓ 还原完成\n"
     assert client.get("/api/system/status", headers=auth).json()["busy"] is None

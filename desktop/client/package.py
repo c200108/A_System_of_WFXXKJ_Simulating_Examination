@@ -75,6 +75,12 @@ class ExamPackage:
         return bool(self.manifest.get("early_submit"))
 
     @property
+    def shuffle(self) -> bool:
+        """老师开了「选择判断题乱序」：按「考试 + 学号」在本机打乱（client/shuffle.py）。
+        旧考试包没有这一项，按原顺序考。"""
+        return bool(self.manifest.get("shuffle"))
+
+    @property
     def exam_id(self) -> str:
         return str(self.manifest.get("exam_id") or self.path.stem)
 
