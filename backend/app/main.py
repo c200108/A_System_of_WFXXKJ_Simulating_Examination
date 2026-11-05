@@ -17,6 +17,7 @@ from .routers import (
     desk,
     hook,
     insight,
+    system,
     dicts,
     exams,
     imports,
@@ -111,7 +112,8 @@ app.include_router(recycle.router)  # 数据回收站
 app.include_router(client_update.router)  # 学生端 exe 检查更新：清单 + 下载，公开只读
 app.include_router(data_apis.router)  # 教师端「API」板块：老师建接口、看数据表单和大图
 app.include_router(hook.router)  # 第三方教学网页往 API 里送数据，认每个 API 自己的密钥
-app.include_router(insight.router)  # 学生学情：考试、排名、打字、第三方网页数据
+app.include_router(insight.router)
+app.include_router(system.router)  # 系统管理员：备份导出导入、一键更新（交给宿主机的主机助手）  # 学生学情：考试、排名、打字、第三方网页数据
 
 
 @app.on_event("startup")
