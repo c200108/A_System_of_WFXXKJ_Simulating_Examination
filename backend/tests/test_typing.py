@@ -179,7 +179,7 @@ def _student(client, auth, no, name):
     res = client.post("/api/students", headers=auth, json={
         "student_no": no, "name": name, "class_id": _class_id(client, auth, "八年级", "2班")})
     assert res.status_code == 200, res.text
-    tok = client.post("/api/student/login", params={"student_no": no, "password": no})
+    tok = client.post("/api/student/login", params={"student_no": no, "password": "123456"})
     assert tok.status_code == 200, tok.text
     return {"Authorization": f"Bearer {tok.json()['access_token']}"}
 

@@ -164,15 +164,21 @@ def _own_class(db: Session, scope: dict | None, class_id: int | None,
     return cls
 
 
-def initial_password(student_no: str) -> str:
-    """初始密码。学号够长就直接用学号，太短则补足到 6 位，保证能通过校验。"""
-    return student_no if len(student_no) >= PASSWORD_MIN else (student_no + "123456")[:6]
-
-
-# 「姓名登录版」学生端（desktop `build.py --name-login`）的初始密码。
-# 学号登录那条路不变（初始密码仍是学号）；两边认的是同一个账号，
-# 学生改过密码之后，两种登录都只认新密码。
+# 学生账号的初始密码。新建、导入、重置一律给它（2.19.2 起新账号也是 123456，
+# 原来是学号）；学生登录页、学生端、APP 写的都是「初始密码 123456」。
+# 学生改过密码之后，学号登录、姓名登录都只认新密码。
 NAME_LOGIN_PASSWORD = "123456"
+
+
+def initial_password(student_no: str = "") -> str:
+    """新账号的初始密码：123456。参数留着是给老的调用方（roster.ingest 按学号调）。"""
+    return NAME_LOGIN_PASSWORD
+
+
+def legacy_initial_password(student_no: str) -> str:
+    """2.19.2 以前建的号：初始密码是学号（太短则补足到 6 位）。已有的老账号不改库，
+    判「还没改过密码」时照样认它。"""
+    return student_no if len(student_no) >= PASSWORD_MIN else (student_no + "123456")[:6]
 
 
 # 老师点「重置密码」（批量、或编辑里的「重置为 123456」）给的密码。
@@ -182,9 +188,9 @@ RESET_PASSWORD = NAME_LOGIN_PASSWORD
 
 
 def still_initial(row: Student) -> bool:
-    """这个账号还没改过密码：仍是建号时的学号初始密码，或者老师重置给的 123456。"""
-    return (verify_password(initial_password(row.student_no), row.password_hash)
-            or verify_password(RESET_PASSWORD, row.password_hash))
+    """这个账号还没改过密码：初始 / 重置给的 123456，或者老账号建号时的学号初始密码。"""
+    return (verify_password(RESET_PASSWORD, row.password_hash)
+            or verify_password(legacy_initial_password(row.student_no), row.password_hash))
 
 
 def name_login_ok(row: Student, pwd: str) -> bool:
@@ -311,7 +317,7 @@ def student_change_password(
     pwd = check_student_password(body.new_password)
     if pwd == NAME_LOGIN_PASSWORD:
         raise HTTPException(status_code=400, detail="123456 是大家都知道的初始密码，换一个吧")
-    # 初始密码就是学号，所以「别用学号」要放在「和原密码一样」前面判，
+    # 老账号的初始密码是学号，所以「别用学号」要放在「和原密码一样」前面判，
     # 否则改密码时永远只看得到后一句，提示不到点子上
     if pwd == me.student_no:
         raise HTTPException(status_code=400, detail="别用学号当密码，同学之间太容易猜到了")
@@ -729,7 +735,7 @@ def batch_students(
     自带制表符分隔，直接粘就行；手打的用空格隔开「学号 姓名」两列。
     班级留空的归到弹窗里选的那个班。
 
-    初始密码就是学号，学生登录后自己改。已存在的学号跳过而不是报错 ——
+    初始密码 123456，学生登录后自己改。已存在的学号跳过而不是报错 ——
     名单里混进几个已建的很正常，不该因此让整批都导不进去。
     """
     scope = _scope(db, me)
@@ -885,7 +891,7 @@ def student_template(me: User = Depends(get_current_user), db: Session = Depends
         ["", ],
         ["学生登录时先选班级，再填中文姓名，初始密码 123456，登录后自己改；"],
         ["  同一个班里重名的同学改填学号。"],
-        ["  用学号登录的客户端照旧：账号填学号，初始密码就是学号。"],
+        ["  用学号登录的客户端：账号填学号，初始密码也是 123456。"],
         ["已经存在的学号会自动跳过，不会覆盖原有账号。"],
         ["也可以存成 CSV 再上传，编码用 UTF-8 或 GBK 都行。"],
     ]:

@@ -106,11 +106,11 @@ def labels_in(widget) -> list[str]:
 
 
 def signed_in(app, server, no="26090111", password=None):
-    """登录进主界面。**初始密码就是学号**，所以不给密码就用学号。"""
+    """登录进主界面。不给密码就用初始密码 123456（4.14.1 起新账号都是它）。"""
     f = app.frame
     f.vars["server"].set(server)
     f.vars["no"].set(no)
-    f.vars["password"].set(password if password is not None else no)
+    f.vars["password"].set(password if password is not None else "123456")
     f.login()
     assert settle(app, until=on(app, ui.ShellFrame)), f"没登上：{f.msg.cget('text')}"
     return app.frame
@@ -194,7 +194,7 @@ def test_changing_the_password_really_changes_it(app, server, exam):
     shell = signed_in(app, server, "26090116")
     assert settle(app, until=lambda: hasattr(shell.body, "pwd"))
     page = shell.body
-    for key, value in (("old", "26090116"), ("new", "Kaoshi2026"),
+    for key, value in (("old", "123456"), ("new", "Kaoshi2026"),
                        ("again", "Kaoshi2026")):
         page.pwd[key].set(value)
     page.save_password()

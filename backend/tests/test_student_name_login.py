@@ -35,10 +35,10 @@ def test_name_and_123456_logs_in(client, auth):
 
 def test_student_no_login_is_unchanged(client, auth):
     _mk(client, auth, "27010002", "姓名乙")
-    ok = client.post("/api/student/login", params={"student_no": "27010002", "password": "27010002"})
+    # 2.19.2 起新账号初始密码是 123456：学号登录也用 123456，学号本身不再是密码
+    ok = client.post("/api/student/login", params={"student_no": "27010002", "password": "123456"})
     assert ok.status_code == 200
-    # 学号登录不认 123456 —— 老版本学生端的规矩不动
-    bad = client.post("/api/student/login", params={"student_no": "27010002", "password": "123456"})
+    bad = client.post("/api/student/login", params={"student_no": "27010002", "password": "27010002"})
     assert bad.status_code == 400
 
 
@@ -116,7 +116,9 @@ def test_name_login_does_not_take_the_student_no_password(client, auth):
 
 
 def test_old_client_can_still_change_password_with_student_no(client, auth):
-    _mk(client, auth, "27010013", "姓名壬")
+    """2.19.2 以前建的老账号初始密码是学号（库里不改），学号版老客户端照样能登、能改密码。"""
+    s = _mk(client, auth, "27010013", "姓名壬")
+    client.patch(f"/api/students/{s['id']}", json={"password": "27010013"}, headers=auth)  # 模拟老账号
     token = client.post("/api/student/login", params={
         "student_no": "27010013", "password": "27010013"}).json()["access_token"]
     res = client.post("/api/student/password",

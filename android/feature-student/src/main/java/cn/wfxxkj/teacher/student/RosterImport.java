@@ -44,7 +44,7 @@ final class RosterImport {
                 + "• 工作簿里每一张表都会读，一个年级一张表、按班分表都行，报错会指明是哪张表的第几行。\n"
                 + "• 班级要和「班级」页里的名称完全一致（如「七年级1班」），写错的行会被跳过并报出来；模板的「可用班级」页列好了所有班。\n"
                 + "• 性别填「男」或「女」，选填。\n"
-                + "• 支持 .xlsx 和 .csv（UTF-8 或 GBK），单个文件不超过 5 MB。已存在的学号会跳过，初始密码就是学号。",
+                + "• 支持 .xlsx 和 .csv（UTF-8 或 GBK），单个文件不超过 5 MB。已存在的学号会跳过，初始密码 123456。",
                 Tone.NEUTRAL));
         s.buttons("下载模板", () -> template(host), "选择文件", () -> host.pickFile(TYPES, uri -> {
             s.dismiss();
@@ -75,7 +75,7 @@ final class RosterImport {
         s.content(V.notice(c, "一行一个学生，四列：学号、姓名、班级、性别，后两列选填 —— 和「从 Excel 导入」认的是同一套。\n"
                 + "• 从 Excel 直接复制粘贴即可，自带制表符分隔；手打的话「学号 姓名」中间用空格隔开。\n"
                 + "• 单个空格不当列分隔，姓名里带空格（如「钱 七」）不会被拆散；要粘多列请用逗号隔开。\n"
-                + "• 已存在的学号自动跳过，初始密码就是学号。", Tone.NEUTRAL));
+                + "• 已存在的学号自动跳过，初始密码 123456。", Tone.NEUTRAL));
         s.buttons("取消", null, "开始导入", () -> {
             if (!f.validate()) return;
             final String body = text.raw();

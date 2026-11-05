@@ -469,7 +469,7 @@ def submit(server: str, token: str, student: dict, answers: dict,
 # 桌面端因此不用另起一套：首页数字、改密码、考试列表、打字练习，网页上有的
 # 这边都有，而且两边看到的永远是同一份数据。
 #
-# 登录是**学号 + 密码**（初始密码就是学号）。早先桌面端用的是"考号 + 姓名"，
+# 登录是**学号 + 密码**（初始密码 123456；老账号是学号）。早先桌面端用的是"考号 + 姓名"，
 # 那样没法改密码 —— 没有密码可改。
 def login(server: str, student_no: str, password: str) -> dict:
     """学生登录，换回 {"access_token": …, "student": {...}}。"""

@@ -78,7 +78,7 @@ def _slogin(client, no, pwd):
 
 def _stoken(client, auth, no="20260101", grade="七年级", cls="1班"):
     _mk_student(client, auth, no=no, grade=grade, cls=cls)
-    res = _slogin(client, no, no)  # 初始密码就是学号
+    res = _slogin(client, no, "123456")  # 新账号初始密码 123456（2.19.2 起，原来是学号）
     assert res.status_code == 200, res.text
     return {"Authorization": f"Bearer {res.json()['access_token']}"}
 
@@ -86,8 +86,10 @@ def _stoken(client, auth, no="20260101", grade="七年级", cls="1班"):
 # ---------- 账号管理 ----------
 def test_create_and_login_with_initial_password(client, auth):
     _mk_student(client, auth, no="20260001", name="李四")
-    res = _slogin(client, "20260001", "20260001")
+    res = _slogin(client, "20260001", "123456")
     assert res.status_code == 200
+    # 2.19.2 起新账号不再拿学号当初始密码
+    assert _slogin(client, "20260001", "20260001").status_code == 400
     body = res.json()
     assert body["student"]["name"] == "李四"
     assert "password" not in str(body).lower() or "password_hash" not in str(body)
@@ -231,7 +233,7 @@ def test_teacher_token_cannot_reach_student_apis(client, auth):
 def test_disabled_student_cannot_login(client, auth):
     s = _mk_student(client, auth, no="20260061")
     client.post("/api/students/bulk", json={"ids": [s["id"]], "action": "disable"}, headers=auth)
-    res = _slogin(client, "20260061", "20260061")
+    res = _slogin(client, "20260061", "123456")
     assert res.status_code == 403
     assert "停用" in res.json()["detail"]
 
@@ -447,19 +449,19 @@ def test_change_own_password(client, auth):
     hdr = _stoken(client, auth, no="20260121")
     res = client.post(
         "/api/student/password",
-        json={"old_password": "20260121", "new_password": "my-new-pw"},
+        json={"old_password": "123456", "new_password": "my-new-pw"},
         headers=hdr,
     )
     assert res.status_code == 200, res.text
     assert _slogin(client, "20260121", "my-new-pw").status_code == 200
-    assert _slogin(client, "20260121", "20260121").status_code == 400
+    assert _slogin(client, "20260121", "123456").status_code == 400
 
 
 def test_cannot_set_password_to_student_no(client, auth):
     hdr = _stoken(client, auth, no="20260131")
     res = client.post(
         "/api/student/password",
-        json={"old_password": "20260131", "new_password": "20260131"},
+        json={"old_password": "123456", "new_password": "20260131"},
         headers=hdr,
     )
     assert res.status_code == 400
