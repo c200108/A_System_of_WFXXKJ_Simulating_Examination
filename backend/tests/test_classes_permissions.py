@@ -223,7 +223,7 @@ def test_admin_exam_reaches_everyone(client, auth, teacher_auth):
         headers=auth,
     )
     tok = client.post(
-        "/api/student/login", params={"student_no": "26060001", "password": "26060001"}
+        "/api/student/login", params={"student_no": "26060001", "password": "123456"}
     ).json()["access_token"]
     seen = client.get(
         "/api/student/exams", headers={"Authorization": f"Bearer {tok}"}
@@ -246,7 +246,7 @@ def test_teacher_exam_only_reaches_own_class(client, auth, teacher_auth):
             headers=auth,
         )
         tok = client.post(
-            "/api/student/login", params={"student_no": no, "password": no}
+            "/api/student/login", params={"student_no": no, "password": "123456"}
         ).json()["access_token"]
         rows = client.get(
             "/api/student/exams", headers={"Authorization": f"Bearer {tok}"}

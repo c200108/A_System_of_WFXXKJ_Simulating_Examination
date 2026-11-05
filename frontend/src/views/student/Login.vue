@@ -1,7 +1,7 @@
 <script setup>
 /**
  * 学生登录：先选班级，再填中文姓名 + 密码，初始密码 123456。账号由老师创建，
- * 这里不提供注册。同一个班里重名的同学改填学号（学号登录时老的初始密码 = 学号照样能用）。
+ * 这里不提供注册。同一个班里重名的同学改填学号。新账号初始密码都是 123456（老账号的学号密码照样认）。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'

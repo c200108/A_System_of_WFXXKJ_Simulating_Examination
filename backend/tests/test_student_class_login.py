@@ -39,8 +39,8 @@ def test_class_and_name_login(client, auth):
     assert _login(client, " 犇骉 ", class_id=cid).status_code == 200
     # 初始密码只认 123456，不认学号
     assert _login(client, "犇骉", "28010001", class_id=cid).status_code == 400
-    # 学号那条路照旧：学号 + 学号初始密码也行
-    assert _login(client, "28010001", "28010001").status_code == 200
+    # 学号那条路：学号 + 123456 也行（新账号初始密码 123456）
+    assert _login(client, "28010001").status_code == 200
     # 拼音不再认
     assert _login(client, "benbiao", class_id=cid).status_code == 400
 
@@ -68,7 +68,7 @@ def test_duplicate_name_picks_by_class(client, auth):
     other = _class_id(client, auth, "七年级", "3班")
     assert _login(client, "鑫淼", class_id=other).status_code == 400
     # 学号不看班级
-    assert _login(client, "28010012", "28010012", class_id=c1).status_code == 200
+    assert _login(client, "28010012", class_id=c1).status_code == 200
 
 
 def test_disabled_duplicate_does_not_block(client, auth):

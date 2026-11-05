@@ -15,7 +15,7 @@
 
 ## 登录是学号 + 密码
 
-初始密码就是学号，和网页端一致。早先桌面端用的是"考号 + 姓名"，那样没法做
+初始密码 123456（4.14.1 起，和网页端一致；老账号的学号密码照样认）。早先桌面端用的是"考号 + 姓名"，那样没法做
 改密码 —— 没有密码可改。
 
 **姓名登录版**（`build.py --name-login`）换成先选班级、再填中文姓名 + 密码，
@@ -87,7 +87,7 @@ class LoginFrame(ttk.Frame):
                  font=(FONT, 20, "bold")).pack(pady=(22, 0))
         by_name = self.app.name_login
         tk.Label(head, text=(f"选班级、用姓名和密码登录　·　初始密码 {NAME_LOGIN_PASSWORD}" if by_name
-                             else f"用学号和密码登录　·　初始密码是学号，老师重置后是 {NAME_LOGIN_PASSWORD}"), bg=BLUE,
+                             else f"用学号和密码登录　·　初始密码 {NAME_LOGIN_PASSWORD}"), bg=BLUE,
                  fg="#d8e6ff", font=(FONT, 10)).pack()
 
         card = tk.Frame(wrap, bg=CARD, highlightbackground=LINE, highlightthickness=1)
@@ -103,7 +103,7 @@ class LoginFrame(ttk.Frame):
         else:
             rows += [("no", "学　　号", "如 26070101")]
         rows += [("password", "密　　码",
-                  f"初始密码 {NAME_LOGIN_PASSWORD}" if by_name else "初始密码=学号")]
+                  f"初始密码 {NAME_LOGIN_PASSWORD}")]
         for i, (key, label, hint) in enumerate(rows):
             y = 26 + i * 46
             tk.Label(card, text=label, bg=CARD, font=(FONT, 10)).place(x=30, y=y + 4)
@@ -335,7 +335,7 @@ class LoginFrame(ttk.Frame):
             return
         if not no or not pwd:
             self.msg.config(text=f"姓名和密码都要填（初始密码 {NAME_LOGIN_PASSWORD}）"
-                            if self.app.name_login else "学号和密码都要填（初始密码就是学号）")
+                            if self.app.name_login else f"学号和密码都要填（初始密码 {NAME_LOGIN_PASSWORD}）")
             return
         class_id = self.class_ids.get(cls)
 
@@ -637,8 +637,7 @@ class HomePage(Page):
 
     def _password_card(self):
         c = self.card("修改密码")
-        first = (f"初始密码是 {NAME_LOGIN_PASSWORD}" if self.app.name_login
-                 else "初始密码就是学号")
+        first = f"初始密码是 {NAME_LOGIN_PASSWORD}"
         tk.Label(c, text=f"{first}，建议第一次登录后改掉。", bg=CARD, fg=GRAY,
                  font=(FONT, 9), anchor="w").pack(fill="x", padx=16)
         self.pwd = {}

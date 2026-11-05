@@ -105,7 +105,7 @@ final class StudentListScreen extends Screen {
         LinearLayout h = V.vbox(c);
         V.pad(h, 0, 4, 0, 10);
         boolean admin = session().isAdmin();
-        String text = "学生用学号登录学生平台，初始密码就是学号；系统里没有邮箱，忘了密码只能由老师重置。"
+        String text = "学生选班级填姓名（或填学号）登录学生平台，初始密码 123456；系统里没有邮箱，忘了密码只能由老师重置。"
                 + "班级要先在「班级」页建好。长按卡片可多选，批量重置密码、调班、停用或删除。";
         if (!admin) {
             text += "\n这里只列你带的班的学生，加学生、导入名单也只能进这几个班。";

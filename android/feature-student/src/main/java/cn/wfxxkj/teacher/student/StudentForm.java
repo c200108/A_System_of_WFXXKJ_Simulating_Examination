@@ -59,7 +59,7 @@ final class StudentForm {
                 editing == null ? "" : Json.str(editing, "gender"));
 
         final Form.Text pwd = f.text(editing == null ? "初始密码" : "重置密码", "",
-                editing == null ? "留空则用学号当密码" : "留空则不改密码");
+                editing == null ? "留空则用初始密码 123456" : "留空则不改密码");
         pwd.rule(v -> v.length() < 6 ? "密码至少 6 位" : null);
         pwd.edit.setTypeface(Typeface.MONOSPACE);
         f.row(gender, pwd);

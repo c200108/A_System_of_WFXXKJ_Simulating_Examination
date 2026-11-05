@@ -7,7 +7,7 @@
  *   粘贴名单     —— 从花名册直接粘文本
  * 两条路认**同样的四列**「学号 姓名 班级 性别」、同样的规则、同样的报错措辞
  * （后端共用 services/roster.py），换个入口不用重新适应一遍。
- * 学生选班级、填中文姓名登录，初始密码 123456（学号登录照旧，初始密码是学号）。
+ * 学生选班级、填中文姓名登录，初始密码 123456（学号登录也是 123456；2.19.2 以前建的老账号学号照认）。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -272,7 +272,7 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
 
     <el-alert type="info" :closable="false" class="hint">
       学生登录学生平台和姓名登录版学生端时先选<b>班级</b>，再填<b>中文姓名</b>，初始密码 <b>123456</b>；
-      同一个班里重名的同学改用学号登录。用学号登录也照样可以（初始密码就是学号）。
+      同一个班里重名的同学改用学号登录，初始密码同样是 123456。
       系统里没有邮箱，学生忘了密码只能由老师重置。
       班级要先在「班级」页面建好，这里从下拉里选。
       <template v-if="!isAdmin">
@@ -408,7 +408,7 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
       </el-form-item>
       <el-form-item :label="editing ? '重置密码' : '初始密码'">
         <div class="pwd-row">
-          <el-input v-model="form.password" :placeholder="editing ? '留空则不改密码，或填一个新密码' : '留空则用学号当密码'" />
+          <el-input v-model="form.password" :placeholder="editing ? '留空则不改密码，或填一个新密码' : '留空则用初始密码 123456'" />
           <el-button v-if="editing" @click="resetOne">重置为 123456</el-button>
         </div>
       </el-form-item>

@@ -129,7 +129,7 @@ final class Kit {
 
         List<String> parts = new ArrayList<>();
         parts.add(first);
-        parts.add("初始密码就是学号，请提醒学生登录后到「首页」改密码。");
+        parts.add("初始密码 123456，请提醒学生登录后到「首页」改密码。");
         List<String> errors = Json.strings(Json.arr(res, "errors"));
         if (!errors.isEmpty()) {
             parts.add("这些行没能导入：\n" + TextUtils.join("\n", errors));

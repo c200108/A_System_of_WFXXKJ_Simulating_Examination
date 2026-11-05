@@ -40,7 +40,7 @@ def test_对得上的能交_而且挂到学生账号上(client, auth, pupil):
     assert res.status_code == 200, res.text
     rows = client.get("/api/typing/records", params={"keyword": "名单甲"}, headers=auth).json()
     assert rows and rows[0]["student_class"] == "九年级7班"
-    tok = client.post("/api/student/login", params={"student_no": "R97001", "password": "R97001"})
+    tok = client.post("/api/student/login", params={"student_no": "R97001", "password": "123456"})
     assert tok.status_code == 200, tok.text
     home = client.get("/api/student/home",
                       headers={"Authorization": "Bearer " + tok.json()["access_token"]}).json()
