@@ -312,14 +312,14 @@ def test_batch_create_classes(client, auth):
 
 # ================================================================ 导入导出
 def test_template_columns_and_lists_classes(client, auth):
-    """模板四列：学号、姓名、班级、性别，并把现有班级原样列出来供照抄。"""
+    """模板五列：学号、姓名、班级、性别、学困生（2.20.0 加了学困生），并把现有班级原样列出来供照抄。"""
     _cid(client, auth, "七年级", "9班")
     res = client.get("/api/students/template.xlsx", headers=auth)
     assert res.status_code == 200
     assert res.content.startswith(XLSX_MAGIC)
 
     wb = load_workbook(io.BytesIO(res.content))
-    assert [c.value for c in wb["学生名单"][1]] == ["学号", "姓名", "班级", "性别"]
+    assert [c.value for c in wb["学生名单"][1]] == ["学号", "姓名", "班级", "性别", "学困生"]
     # 示例行也要带上性别，老师照着改就知道该填什么
     assert wb["学生名单"][2][3].value in ("男", "女")
 

@@ -98,6 +98,27 @@ class ClassOut(ORMModel):
     seat_kind: str = ""
     seat_name: str = ""
     seat_url: str = ""
+    has_seat_sheet: bool = False   # 做过「在线座次」没有
+
+
+class SeatSheetIn(BaseModel):
+    """在线座次的表格 JSON：data / mergeCells / style / colWidths / rowHeights /
+    seatRanges / zoneRanges ……由前端组织，服务端只管存、管大小。"""
+
+    sheet: dict
+
+
+class SeatPlanIn(BaseModel):
+    """一键导入本班学生：在哪些格子排、怎么排。"""
+
+    ranges: str = Field(max_length=2000)            # B2:B15, A4:H4, A1:D5
+    zone: str = Field(default="", max_length=2000)  # 学困生区域
+    alternate_gender: bool = False
+    struggling_zone: bool = False
+    shuffle: bool = True                            # False = 按学号顺序
+    content: Literal["name", "no_name"] = "name"    # 格子里写姓名 / 学号 + 姓名
+    skip: list[str] = Field(default_factory=list, max_length=20000)  # 合并单元格里的非左上角格
+    seed: str | None = Field(default=None, max_length=64)
 
 
 class ClassIn(BaseModel):
@@ -151,6 +172,13 @@ class StudentOut(ORMModel):
     created_at: datetime | None = None
 
 
+class StudentAdminOut(StudentOut):
+    """老师 / 管理员看到的学生。多一个学困生标记 —— 那是学生隐私，学生自己的接口
+    （登录、/api/student/me、首页）只给 StudentOut，看不到这一项。"""
+
+    struggling: bool = False
+
+
 class StudentCreate(BaseModel):
     """学号和密码的规则在接口里用中文判，这里只卡住结构上的长度上限。"""
 
@@ -158,7 +186,8 @@ class StudentCreate(BaseModel):
     name: str = Field(max_length=64)
     class_id: int | None = None  # 从下拉里选，不再手打班级名
     gender: str = Field(default="", max_length=8)     # 男 / 女，选填
-    password: str = Field(default="", max_length=64)  # 留空则用学号当初始密码
+    password: str = Field(default="", max_length=64)  # 留空则用初始密码 123456
+    struggling: bool = False                          # 学困生（只老师看得到）
 
 
 class StudentUpdate(BaseModel):
@@ -170,11 +199,14 @@ class StudentUpdate(BaseModel):
     class_role: str | None = Field(default=None, max_length=8)   # 班长 / 组长 / 空
     is_active: bool | None = None
     password: str | None = Field(default=None, max_length=64)
+    struggling: bool | None = None                     # 学困生标记
 
 
 class StudentBulkIn(BaseModel):
     ids: list[int] = Field(default_factory=list)
-    action: Literal["delete", "disable", "enable", "reset_password"]
+    # mark/unmark_struggling：批量设 / 取消学困生；set_male / set_female：批量设性别
+    action: Literal["delete", "disable", "enable", "reset_password",
+                    "mark_struggling", "unmark_struggling", "set_male", "set_female"]
 
 
 class StudentBatchIn(BaseModel):

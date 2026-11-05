@@ -61,6 +61,14 @@ def norm_gender(value) -> str:
     return GENDER_ALIASES.get(text.lower(), "") if text else ""
 
 
+# 第五列「学困生」：填了这些算是，别的（包括留空）都算不是
+_YES = {"是", "√", "✓", "✔", "1", "y", "yes", "true", "学困生", "是的", "对"}
+
+
+def is_struggling(value) -> bool:
+    return str(value or "").strip().lower() in _YES
+
+
 def clip(text: str, width: int = 16) -> str:
     """错误信息里回显用户填的内容时截一下，免得十几条堆起来没法看。"""
     value = (text or "").strip()
@@ -244,7 +252,7 @@ def ingest(db: Session, rows: list[Row], me_id: int, fallback: SchoolClass | Non
     for label, lineno, cells in rows:
         # 按列位置取，不要先把空单元格挤掉 —— 学号和姓名之间空一格的话，
         # 挤掉之后班级会被当成姓名
-        no, name, cls_name, sex = (list(cells) + ["", "", "", ""])[:4]
+        no, name, cls_name, sex, weak = (list(cells) + ["", "", "", "", ""])[:5]
         no, name = no.strip(), name.strip()
         cls_name, sex = cls_name.strip(), sex.strip()
         at = where(label, lineno)
@@ -297,6 +305,7 @@ def ingest(db: Session, rows: list[Row], me_id: int, fallback: SchoolClass | Non
                 class_id=cls.id if cls else None,
                 student_class=cls.display if cls else "",
                 gender=gender,
+                struggling=is_struggling(weak),
                 password_hash=hash_it(make_password(no)),
                 created_by=me_id,
             )

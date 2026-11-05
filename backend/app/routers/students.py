@@ -35,6 +35,7 @@ from ..schemas import (
     StudentCreate,
     StudentExamOut,
     StudentHomeOut,
+    StudentAdminOut,
     StudentOut,
     StudentPasswordChange,
     StudentTokenOut,
@@ -658,7 +659,7 @@ def student_home(me: Student = Depends(get_current_student), db: Session = Depen
 
 
 # ================================================================ 教师端管理
-@admin_api.get("", response_model=list[StudentOut], summary="学生列表")
+@admin_api.get("", response_model=list[StudentAdminOut], summary="学生列表")
 def list_students(
     class_id: int | None = None,
     student_class: str | None = None,
@@ -682,7 +683,8 @@ def list_students(
         like = f"%{keyword.strip()}%"
         stmt = stmt.where(Student.name.like(like) | Student.student_no.like(like))
     stmt = stmt.order_by(Student.student_class, Student.student_no).limit(limit)
-    return _out(db.scalars(stmt))
+    # 老师只看得到自己班的（_mine），学困生标记跟着出去
+    return [StudentAdminOut.model_validate(r) for r in db.scalars(stmt)]
 
 
 @admin_api.get("/classes", response_model=list[str], summary="出现过的班级，供筛选下拉")
@@ -696,7 +698,7 @@ def student_classes(me: User = Depends(get_current_user), db: Session = Depends(
     return [r[0] for r in rows]
 
 
-@admin_api.post("", response_model=StudentOut, summary="新增一个学生账号")
+@admin_api.post("", response_model=StudentAdminOut, summary="新增一个学生账号")
 def create_student(
     body: StudentCreate, me: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
@@ -717,12 +719,13 @@ def create_student(
         student_class=cls.display if cls else "",
         gender=norm_gender(body.gender),
         password_hash=hash_password(pwd),
+        struggling=bool(body.struggling),
         created_by=me.id,
     )
     db.add(row)
     db.commit()
     db.refresh(row)
-    return StudentOut.model_validate(row)
+    return StudentAdminOut.model_validate(row)
 
 
 @admin_api.post("/batch", summary="粘贴名单批量建账号")
@@ -750,7 +753,7 @@ def batch_students(
     )
 
 
-@admin_api.patch("/{sid}", response_model=StudentOut, summary="改学生资料或重置密码")
+@admin_api.patch("/{sid}", response_model=StudentAdminOut, summary="改学生资料或重置密码")
 def update_student(
     sid: int,
     body: StudentUpdate,
@@ -799,10 +802,10 @@ def update_student(
 
     db.commit()
     db.refresh(row)
-    return StudentOut.model_validate(row)
+    return StudentAdminOut.model_validate(row)
 
 
-@admin_api.post("/bulk", summary="批量启用／停用／删除／重置密码")
+@admin_api.post("/bulk", summary="批量启用／停用／删除／重置密码／设学困生／设性别")
 def bulk_students(
     body: StudentBulkIn, me: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
@@ -827,6 +830,12 @@ def bulk_students(
     elif body.action == "disable":
         for r in rows:
             r.is_active = False
+    elif body.action in ("mark_struggling", "unmark_struggling"):
+        for r in rows:
+            r.struggling = body.action == "mark_struggling"
+    elif body.action in ("set_male", "set_female"):
+        for r in rows:
+            r.gender = "男" if body.action == "set_male" else "女"
     elif body.action == "reset_password":
         # 统一重置成 123456（见 RESET_PASSWORD），学号版、姓名登录版、学生网页都认
         for r in rows:
@@ -872,10 +881,10 @@ def student_template(me: User = Depends(get_current_user), db: Session = Depends
     wb = Workbook()
     ws = wb.active
     ws.title = "学生名单"
-    ws.append(["学号", "姓名", "班级", "性别"])
-    ws.append(["20260101", "张三", sample_class, "男"])
-    ws.append(["20260102", "李四", sample_class, "女"])
-    for col, w in zip("ABCD", [18, 14, 18, 8]):
+    ws.append(["学号", "姓名", "班级", "性别", "学困生"])
+    ws.append(["20260101", "张三", sample_class, "男", ""])
+    ws.append(["20260102", "李四", sample_class, "女", "是"])
+    for col, w in zip("ABCDE", [18, 14, 18, 8, 10]):
         ws.column_dimensions[col].width = w
 
     note = wb.create_sheet("填写说明")
@@ -888,6 +897,8 @@ def student_template(me: User = Depends(get_current_user), db: Session = Depends
         ["", ],
         ["性别填「男」或「女」，选填。留空或写别的都不影响建账号，"],
         ["  只是这一栏空着，以后可以在学生列表里补。"],
+        ["学困生填「是」，选填，留空就不是。只有本班老师和管理员看得到，学生自己看不到；"],
+        ["  在线座次「学困生分配固定区域」按它排。"],
         ["", ],
         ["学生登录时先选班级，再填中文姓名，初始密码 123456，登录后自己改；"],
         ["  同一个班里重名的同学改填学号。"],
