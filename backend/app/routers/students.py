@@ -50,7 +50,14 @@ from ..routers.classes import owned_class_ids
 from ..routers.take import _submit_out as submit_out
 from ..services.exam import submission_scores
 from ..services import recycle, roster
-from ..services.exam import grade, group_items, load_items, manual_types, strip_answers
+from ..services.exam import (
+    grade,
+    group_items,
+    load_items,
+    manual_types,
+    strip_answers,
+    wants_shuffle,
+)
 # 名单解析和入库都在 services/roster.py，上传表格和粘贴名单共用那一套。
 # 这里只保留单个增改用得到的几个小工具。
 from ..services.roster import STUDENT_NO_RE, norm_gender
@@ -404,6 +411,8 @@ def student_paper(
         "code": exam.paper.code,
         "total": len(items),
         "early_submit": bool(exam.early_submit),
+        # 选择判断题乱序：答题页按「考试 + 学号」打乱，交上来的仍是原选项字母
+        "shuffle": wants_shuffle(exam.paper),
         "full_score": sum(int(it.get("score") or 0) for it in items),
         # 和公开答题页同一个函数，答案在这一步就被剥掉了
         "groups": strip_answers(group_items(items)),

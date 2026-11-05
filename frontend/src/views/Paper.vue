@@ -45,7 +45,8 @@ const form = reactive({
   scopes: [],
   use_pinned: siteConfig.paper.use_pinned,
   require_answer: siteConfig.paper.require_answer,
-  shuffle_options: siteConfig.paper.shuffle_options,
+  // 选择判断题乱序（含选项乱序）。老服务端只回 shuffle_options，退回读它
+  shuffle_objective: siteConfig.paper.shuffle_objective ?? siteConfig.paper.shuffle_options ?? true,
   seed: '',
   save: false
 })
@@ -362,7 +363,11 @@ function printPaper() {
 
           <el-form-item label="选项">
             <div class="checks">
-              <el-checkbox v-model="form.shuffle_options">打乱选择题的选项顺序（答案自动跟随）</el-checkbox>
+              <el-checkbox v-model="form.shuffle_objective">选择判断题乱序</el-checkbox>
+              <span class="sub check-sub">
+                开启后每个学生拿到的卷子，选择题、判断题的先后顺序各不相同，选择题的选项顺序也打乱（答案自动跟随）。
+                只在同一大题{{ form.by_sections ? '' : '（同一题型）' }}里换，不会跑到别的大题；操作题不动。
+              </span>
               <el-checkbox v-model="form.require_answer">跳过原卷未给答案的题目</el-checkbox>
               <el-checkbox v-model="form.use_pinned">优先放入题库里的必出题</el-checkbox>
               <el-checkbox v-model="form.save">把这套卷子存档</el-checkbox>
@@ -620,6 +625,10 @@ function printPaper() {
   display: flex;
   flex-direction: column;
   line-height: 1.9;
+}
+.check-sub {
+  margin: -4px 0 4px 24px;
+  line-height: 1.5;
 }
 .chips {
   display: flex;

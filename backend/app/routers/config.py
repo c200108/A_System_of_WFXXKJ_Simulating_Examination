@@ -27,7 +27,9 @@ def get_config():
             "default_title": site.paper.default_title,
             "default_duration": site.paper.default_duration,
             "default_counts": site.paper.default_counts,
-            "shuffle_options": site.paper.shuffle_options,
+            "shuffle_objective": site.paper.shuffle_objective,
+            # 老前端、老 APP 读的键，值和上面同一个
+            "shuffle_options": site.paper.shuffle_objective,
             "require_answer": site.paper.require_answer,
             "use_pinned": site.paper.use_pinned,
             "section_numerals": site.paper.section_numerals,

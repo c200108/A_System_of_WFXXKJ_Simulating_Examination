@@ -247,7 +247,9 @@ final class ComposeScreen extends Screen {
         final Form.Text seed = f.text("随机种子", bp.seed, "填了可复现同一套卷子");
         seed.onChange(() -> bp.seed = seed.value());
         f.section("选项").setTextSize(14);
-        final Form.Toggle shuffle = f.toggle("打乱选择题的选项顺序", "答案自动跟随", bp.shuffleOptions);
+        final Form.Toggle shuffle = f.toggle("选择判断题乱序",
+                "每个学生的选择题、判断题顺序各不相同，选项也打乱（答案自动跟随）；只在同一大题里换，操作题不动",
+                bp.shuffleOptions);
         shuffle.onChange(() -> bp.shuffleOptions = shuffle.value());
         final Form.Toggle require = f.toggle("跳过原卷未给答案的题目", null, bp.requireAnswer);
         require.onChange(() -> {

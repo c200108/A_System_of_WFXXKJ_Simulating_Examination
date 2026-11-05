@@ -23,7 +23,7 @@ export const siteConfig = reactive({
     default_title: '信息技术测试卷',
     default_duration: '',
     default_counts: {},
-    shuffle_options: true,
+    shuffle_objective: true,
     require_answer: true,
     use_pinned: true,
     section_numerals: ['一', '二', '三', '四', '五', '六'],

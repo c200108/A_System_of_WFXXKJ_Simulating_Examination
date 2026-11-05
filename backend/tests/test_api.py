@@ -202,7 +202,7 @@ def test_paper_header_and_groups(client, auth):
 def test_shuffled_paper_answer_still_matches_its_option(client, auth):
     body = client.post(
         "/api/papers/generate",
-        json={"by_sections": False, "counts": {"选择题": 12}, "shuffle_options": True, "seed": "shuffle-check"},
+        json={"by_sections": False, "counts": {"选择题": 12}, "shuffle_objective": True, "seed": "shuffle-check"},
         headers=auth,
     ).json()
     for q in body["questions"]:
@@ -214,7 +214,7 @@ def test_shuffled_paper_answer_still_matches_its_option(client, auth):
 def test_saved_paper_keeps_the_shuffled_order(client, auth):
     gen = client.post(
         "/api/papers/generate",
-        json={"by_sections": False, "counts": {"选择题": 5}, "shuffle_options": True, "save": True},
+        json={"by_sections": False, "counts": {"选择题": 5}, "shuffle_objective": True, "save": True},
         headers=auth,
     ).json()
     again = client.get(f"/api/papers/{gen['paper_id']}", headers=auth).json()

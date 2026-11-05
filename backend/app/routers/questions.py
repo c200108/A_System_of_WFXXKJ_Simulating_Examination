@@ -31,6 +31,7 @@ def _filtered(
     source: str | None,
     pinned: bool | None,
     difficulty: int | None = None,
+    has_answer: bool | None = None,
 ):
     """题库列表和题库导出用同一套筛选条件，避免两处走样。"""
     stmt = select(Question).where(Question.is_deleted.is_(False))
@@ -46,6 +47,10 @@ def _filtered(
         stmt = stmt.where(Question.is_pinned.is_(pinned))
     if difficulty:
         stmt = stmt.where(Question.difficulty == difficulty)
+    if has_answer is not None:
+        # 「有答案」= 去掉空白后不是空的；全是空格的当成没答案（组卷时也是这么跳的）
+        filled = func.trim(func.coalesce(Question.answer, "")) != ""
+        stmt = stmt.where(filled if has_answer else ~filled)
     return stmt
 
 
@@ -64,12 +69,13 @@ def list_questions(
     source: str | None = None,
     pinned: bool | None = None,
     difficulty: int | None = Query(None, ge=1, le=5),
+    has_answer: bool | None = Query(None, description="true 只看有答案的，false 只看没答案的"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
     _: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    stmt = _filtered(keyword, type, scope, source, pinned, difficulty)
+    stmt = _filtered(keyword, type, scope, source, pinned, difficulty, has_answer)
 
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     items = db.scalars(
@@ -128,12 +134,14 @@ def export_questions(
     source: str | None = None,
     pinned: bool | None = None,
     difficulty: int | None = Query(None, ge=1, le=5),
+    has_answer: bool | None = None,
     filename: str = "信息技术题库",
     _: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     rows = list(
-        db.scalars(_filtered(keyword, type, scope, source, pinned, difficulty).order_by(Question.id))
+        db.scalars(_filtered(keyword, type, scope, source, pinned, difficulty, has_answer)
+                   .order_by(Question.id))
     )
     data = questions_to_xlsx(rows, "题库")
     name = quote(f"{filename}.xlsx")
