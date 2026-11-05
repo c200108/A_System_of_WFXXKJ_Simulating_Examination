@@ -156,7 +156,34 @@ def test_bulk_reset_password(client, auth):
     client.post(
         "/api/students/bulk", json={"ids": [s["id"]], "action": "reset_password"}, headers=auth
     )
-    assert _slogin(client, "20260031", "20260031").status_code == 200
+    # 重置成初始密码 123456（2.19.1 起；原来是重置成学号，学生照提示填 123456 登不上）
+    assert _slogin(client, "20260031", "123456").status_code == 200
+    assert _slogin(client, "20260031", "changed-it").status_code == 400
+
+
+def test_编辑里重置为123456_学号版和姓名登录都认(client, auth):
+    s = _mk_student(client, auth, no="20260032", name="重置甲")
+    client.patch(f"/api/students/{s['id']}", json={"password": "changed-it"}, headers=auth)
+    res = client.patch(f"/api/students/{s['id']}", json={"password": "123456"}, headers=auth)
+    assert res.status_code == 200
+    assert _slogin(client, "20260032", "123456").status_code == 200
+    got = client.post("/api/student/login-by-name",
+                      params={"name": s["name"], "password": "123456"})
+    assert got.status_code == 200, got.text
+
+
+def test_重置后学生用123456当原密码改新密码(client, auth):
+    s = _mk_student(client, auth, no="20260034")
+    client.patch(f"/api/students/{s['id']}", json={"password": "changed-it"}, headers=auth)
+    client.post("/api/students/bulk", json={"ids": [s["id"]], "action": "reset_password"},
+                headers=auth)
+    tk = _slogin(client, "20260034", "123456").json()["access_token"]
+    res = client.post("/api/student/password",
+                      json={"old_password": "123456", "new_password": "brand-new-1"},
+                      headers={"Authorization": f"Bearer {tk}"})
+    assert res.status_code == 200, res.text
+    assert _slogin(client, "20260034", "brand-new-1").status_code == 200
+    assert _slogin(client, "20260034", "123456").status_code == 400
 
 
 def test_bulk_delete_keeps_their_results(client, auth, exam):

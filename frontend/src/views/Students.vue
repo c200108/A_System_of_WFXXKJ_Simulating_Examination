@@ -88,6 +88,18 @@ function openEdit(row) {
   dialog.value = true
 }
 
+/** 编辑框里的「重置为 123456」：当场重置，不用再点保存 */
+async function resetOne() {
+  const row = editing.value
+  if (!row) return
+  await ElMessageBox.confirm(`把「${row.name}」的密码重置成初始密码 123456？`, '重置密码', {
+    type: 'warning'
+  })
+  await api.studentUpdate(row.id, { password: '123456' })
+  form.password = ''
+  ElMessage.success(`「${row.name}」的密码已重置成 123456`)
+}
+
 async function save() {
   if (editing.value) {
     const data = { name: form.name, class_id: form.class_id, gender: form.gender }
@@ -212,7 +224,7 @@ async function bulk(action) {
     )
   } else if (action === 'reset_password') {
     await ElMessageBox.confirm(
-      `把这 ${ids.length} 个学生的密码重置成各自的学号？\n${pickedNames.value}`,
+      `把这 ${ids.length} 个学生的密码重置成初始密码 123456？\n${pickedNames.value}`,
       '重置密码',
       { type: 'warning' }
     )
@@ -233,7 +245,11 @@ async function bulk(action) {
     enable: '启用',
     reset_password: '重置密码'
   }[action]
-  ElMessage.success(`已${verb} ${res.affected} 个账号`)
+  ElMessage.success(
+    action === 'reset_password'
+      ? `已把 ${res.affected} 个账号的密码重置成 123456`
+      : `已${verb} ${res.affected} 个账号`
+  )
 }
 
 const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
@@ -391,7 +407,10 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
         </el-radio-group>
       </el-form-item>
       <el-form-item :label="editing ? '重置密码' : '初始密码'">
-        <el-input v-model="form.password" :placeholder="editing ? '留空则不改密码' : '留空则用学号当密码'" />
+        <div class="pwd-row">
+          <el-input v-model="form.password" :placeholder="editing ? '留空则不改密码，或填一个新密码' : '留空则用学号当密码'" />
+          <el-button v-if="editing" @click="resetOne">重置为 123456</el-button>
+        </div>
       </el-form-item>
     </el-form>
     <template #footer>
@@ -564,5 +583,10 @@ const fmt = t => String(t || '').replace('T', ' ').slice(0, 16)
   font-family: ui-monospace, Consolas, monospace;
   font-size: 13px;
   line-height: 1.8;
+}
+.pwd-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
 }
 </style>

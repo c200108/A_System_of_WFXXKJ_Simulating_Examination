@@ -74,8 +74,11 @@ def test_an_https_address_is_left_alone(server):
     """部署到公网、挂了域名和证书的学校填的是 https://… —— **不能被改成 http**，
     否则永远连不上，而提示还是「连不上教师端」。"""
     assert api.norm("https://exam.xxx.edu.cn") == "https://exam.xxx.edu.cn"
-    assert api.norm("exam.xxx.edu.cn") == "http://exam.xxx.edu.cn"
-    assert api.norm("192.168.1.8:8080/") == "http://192.168.1.8:8080"
+    assert api.base("https://exam.xxx.edu.cn") == "https://exam.xxx.edu.cn"
+    assert api.base("http://exam.xxx.edu.cn/") == "http://exam.xxx.edu.cn"
+    # 不写协议的 IP 直接 http（4.14.1 起 norm 只整理、不加协议，协议由 base 选）
+    assert api.norm("192.168.1.8:8080/") == "192.168.1.8:8080"
+    assert api.base("192.168.1.8:8080/") == "http://192.168.1.8:8080"
 
 
 # ================================================================ 取卷 + 开考

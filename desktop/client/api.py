@@ -38,7 +38,9 @@ import http.client
 import json
 import platform
 import socket
+import re
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -144,18 +146,140 @@ DEVICE_ID = _device_id()
 
 
 def norm(server: str) -> str:
-    """把用户输的地址整成能用的样子。
+    """把用户输的地址整理干净：去掉首尾空格和末尾的斜杠。**不加协议**。
 
-    机房里监考老师常常只输一个 IP（`192.168.1.8`）或者带上端口
-    （`192.168.1.8:8000`），少了 http:// 就连不上，还查不出原因。
+    界面上的「教师端地址」只填 `192.168.1.8:8000`、`exam.xxx.edu.cn` 这样的，
+    不带 http://（4.14.1）。用的时候再由 base() 选协议：
 
-    **自己写了 https:// 就按 https 走** —— 部署在公网、挂了域名和证书的学校
-    填的是 `https://exam.xxx.edu.cn`，不能被改成 http。
+      · IP（含 localhost、带端口的）—— 直接 http；
+      · 域名 —— 先试 https，连不上再退 http，试出来的记住，下次直接用；
+      · 自己写了 http:// 或 https:// 的，照写的走，不猜。
     """
-    s = str(server or "").strip().rstrip("/")
-    if s and "://" not in s:
-        s = "http://" + s
+    return str(server or "").strip().rstrip("/")
+
+
+def bare(server: str) -> str:
+    """显示在输入框里的样子：去掉 http:// / https:// 前缀。"""
+    s = norm(server)
+    low = s.lower()
+    for head in ("http://", "https://"):
+        if low.startswith(head):
+            return s[len(head):]
     return s
+
+
+_IPV4 = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+
+
+def _hostport(s: str) -> str:
+    return s.split("/", 1)[0]
+
+
+def is_ip_address(server: str) -> bool:
+    """地址里的主机是不是 IP：IPv4、localhost、[IPv6]（可以带端口）。"""
+    hp = _hostport(bare(server)).lower()
+    if hp.startswith("["):                                 # [::1]:8000
+        return True
+    host = hp.rsplit(":", 1)[0] if hp.count(":") == 1 else hp
+    if hp.count(":") > 1:                                  # 不带方括号的 IPv6
+        return True
+    return host == "localhost" or bool(_IPV4.match(host))
+
+
+# 试出来的协议：{"exam.xxx.edu.cn": "https"}。内存里一份，配置文件里存一份，
+# 重开程序不用再试一遍
+_schemes_lock = threading.Lock()
+_schemes: dict = {}
+_schemes_loaded = False
+# 两个协议都没试通的域名：{主机: 什么时候试的}。三十秒里不再重试，
+# 不然断网时每个请求都要先白等两轮超时
+_dead: dict = {}
+DEAD_FOR = 30
+
+
+def _load_schemes() -> None:
+    global _schemes_loaded
+    if _schemes_loaded:
+        return
+    _schemes_loaded = True
+    try:
+        from . import store
+        got = store.load_config().get("server_schemes") or {}
+        _schemes.update({str(k): str(v) for k, v in got.items() if v in ("http", "https")})
+    except Exception:                                       # noqa: BLE001
+        pass
+
+
+def _remember(host: str, scheme: str | None) -> None:
+    with _schemes_lock:
+        if scheme:
+            _schemes[host] = scheme
+        else:
+            _schemes.pop(host, None)
+        snapshot = dict(_schemes)
+    try:
+        from . import store
+        store.save_config(server_schemes=snapshot)
+    except Exception:                                       # noqa: BLE001
+        pass
+
+
+def _probe(s: str) -> str:
+    """域名先试 https、再试 http。服务器回了话（哪怕是 404）就算通。"""
+    for scheme in ("https", "http"):
+        try:
+            _request(f"{scheme}://{s}/api/desk/ping", timeout=PING_TIMEOUT)
+            return scheme
+        except NetError:
+            continue
+        except (ApiError, NotModified):
+            return scheme
+    return ""
+
+
+def base(server: str) -> str:
+    """带协议的完整地址。所有请求都走它：登录、取卷、下载考试包、交卷、打字……
+
+    域名第一次用的时候要试一下（最多两轮 PING_TIMEOUT），所以**别在界面线程里叫**；
+    试出来之后记住，之后都是直接返回。
+    """
+    s = norm(server)
+    if not s or "://" in s:
+        return s
+    if is_ip_address(s):
+        return "http://" + s
+    host = _hostport(s).lower()
+    with _schemes_lock:
+        _load_schemes()
+        known = _schemes.get(host)
+    if known:
+        return f"{known}://{s}"
+    if time.time() - _dead.get(host, 0) < DEAD_FOR:
+        return "https://" + s                              # 刚试过都不通，别再等一遍
+    scheme = _probe(s)
+    if scheme:
+        _dead.pop(host, None)
+        _remember(host, scheme)
+        return f"{scheme}://{s}"
+    _dead[host] = time.time()
+    return "https://" + s
+
+
+def forget(server: str) -> None:
+    """记住的协议不灵了（证书过期、服务器换了配置）：忘掉，下次重新试。"""
+    s = norm(server)
+    if s and "://" not in s and not is_ip_address(s):
+        host = _hostport(s).lower()
+        with _schemes_lock:
+            _load_schemes()
+            had = host in _schemes
+        if had:
+            _remember(host, None)
+
+
+class NetError(ApiError):
+    """根本没连上（断网、地址不对、超时、证书不过）。和「服务器拒绝了」分开，
+    试协议的时候靠它分：连不上才换 http，服务器回了 4xx 说明这个协议是通的。"""
 
 
 def _fail(exc: Exception) -> ApiError:
@@ -164,11 +288,11 @@ def _fail(exc: Exception) -> ApiError:
     # 证书问题单独说：学校自己签的证书很常见，报「CERTIFICATE_VERIFY_FAILED」
     # 网管也不知道该查哪儿。直接告诉他怎么绕
     if "CERTIFICATE" in text.upper() or "SSL" in text.upper():
-        return ApiError("教师端的 https 证书通不过校验（多半是学校自己签的）。"
+        return NetError("教师端的 https 证书通不过校验（多半是学校自己签的）。"
                         "请改用 http 地址，或者换成受信任的证书")
     if isinstance(exc, (socket.timeout, TimeoutError)):
-        return ApiError("教师端响应超时")
-    return ApiError(f"连不上教师端（{text}）")
+        return NetError("教师端响应超时")
+    return NetError(f"连不上教师端（{text}）")
 
 
 def _request(url: str, body: dict | None = None, timeout: int = TIMEOUT,
@@ -204,6 +328,8 @@ def _request(url: str, body: dict | None = None, timeout: int = TIMEOUT,
             _close(conn)
             if attempt == 1 and pooled:
                 continue                                    # 换条新连接再来一次
+            # 试出来记住的协议连不上了：忘掉，下一次重新试（证书过期、改了配置）
+            forget(f"{bits.hostname}:{bits.port}" if bits.port else str(bits.hostname))
             raise _fail(exc) from exc
         if reuse and not resp.will_close:
             _keep(bits.scheme, bits.hostname, bits.port, conn)
@@ -247,7 +373,7 @@ def ping(server: str, timeout: int = PING_TIMEOUT) -> bool:
     if not server:
         return False
     try:
-        _json(norm(server) + "/api/desk/ping", timeout=timeout)
+        _json(base(server) + "/api/desk/ping", timeout=timeout)
         return True
     except ApiError:
         return False
@@ -261,7 +387,7 @@ def signin(server: str, student_no: str, name: str = "") -> dict:
     **只包含面向这个学生班级的考试** —— 准入在服务器那边判，客户端不做过滤，
     也就没法被绕过。
     """
-    return _json(norm(server) + "/api/desk/signin",
+    return _json(base(server) + "/api/desk/signin",
                  {"student_no": str(student_no).strip(), "name": str(name).strip()})
 
 
@@ -271,7 +397,7 @@ def exam_live(server: str, token: str) -> dict:
     考试包里那份是开考那一刻的；老师考到一半打开「允许提前交卷」，靠这个跟上。
     超时给短一点：它在后台问，问不到就按原来的设置走，不耽误考试。
     """
-    return _json(norm(server) + f"/api/take/{token}/live", timeout=5)
+    return _json(base(server) + f"/api/take/{token}/live", timeout=5)
 
 
 def fetch_exam(server: str, token: str, save_to: Path) -> Path:
@@ -284,8 +410,8 @@ def fetch_exam(server: str, token: str, save_to: Path) -> Path:
     先写临时文件再改名：下到一半断网的话，留下的是个半截 zip，下次开机自动
     认包时会打不开 —— 一个改名就能避掉。
     """
-    base = norm(server)
-    url = f"{base}/api/desk/exam/{urllib.parse.quote(token)}?server={urllib.parse.quote(base)}"
+    base_url = base(server)
+    url = f"{base_url}/api/desk/exam/{urllib.parse.quote(token)}?server={urllib.parse.quote(base_url)}"
     save_to = Path(save_to)
     stamp = save_to.with_suffix(save_to.suffix + ".etag")
 
@@ -325,7 +451,7 @@ def submit(server: str, token: str, student: dict, answers: dict,
     """
     if not server or not token:
         return False, "没有教师端地址，只能交到本地", {}
-    url = f"{norm(server)}/api/take/{urllib.parse.quote(token)}/submit"
+    url = f"{base(server)}/api/take/{urllib.parse.quote(token)}/submit"
     try:
         got = _json(url, {
             "student_name": student.get("name", ""),
@@ -349,12 +475,12 @@ def login(server: str, student_no: str, password: str) -> dict:
     """学生登录，换回 {"access_token": …, "student": {...}}。"""
     query = urllib.parse.urlencode({"student_no": str(student_no).strip(),
                                     "password": password})
-    return _json(f"{norm(server)}/api/student/login?{query}", {}, method="POST")
+    return _json(f"{base(server)}/api/student/login?{query}", {}, method="POST")
 
 
 def login_classes(server: str) -> list:
     """姓名登录版登录页的班级下拉：[{"id": 3, "display": "八年级1班"}, …]。不用登录。"""
-    got = _json(f"{norm(server)}/api/student/classes")
+    got = _json(f"{base(server)}/api/student/classes")
     return got if isinstance(got, list) else []
 
 
@@ -365,26 +491,26 @@ def login_by_name(server: str, name: str, password: str, class_id=None) -> dict:
     if class_id is not None:
         params["class_id"] = class_id
     query = urllib.parse.urlencode(params)
-    return _json(f"{norm(server)}/api/student/login-by-name?{query}", {}, method="POST")
+    return _json(f"{base(server)}/api/student/login-by-name?{query}", {}, method="POST")
 
 
 def me(server: str, token: str) -> dict:
-    return _json(f"{norm(server)}/api/student/me", token=token)
+    return _json(f"{base(server)}/api/student/me", token=token)
 
 
 def home(server: str, token: str) -> dict:
     """首页那一小把数字：考了几场、打字练了多少、最快多少字。"""
-    return _json(f"{norm(server)}/api/student/home", token=token)
+    return _json(f"{base(server)}/api/student/home", token=token)
 
 
 def change_password(server: str, token: str, old: str, new: str) -> dict:
-    return _json(f"{norm(server)}/api/student/password",
+    return _json(f"{base(server)}/api/student/password",
                  {"old_password": old, "new_password": new}, token=token)
 
 
 def my_exams(server: str, token: str) -> list:
     """我能参加的考试。每项带 token —— 桌面端拿它去下考试包。"""
-    got = _json(f"{norm(server)}/api/student/exams", token=token)
+    got = _json(f"{base(server)}/api/student/exams", token=token)
     return got if isinstance(got, list) else []
 
 
@@ -398,12 +524,12 @@ def review(server: str, token: str, exam_id) -> dict:
     分数是**当场读的**，不是交卷那一刻的快照：老师批完操作题，学生点一下
     刷新就能看到新分。
     """
-    return _json(f"{norm(server)}/api/student/exams/{exam_id}/review", token=token)
+    return _json(f"{base(server)}/api/student/exams/{exam_id}/review", token=token)
 
 
 # ================================================================ 打字练习
 def typing_config(server: str) -> dict:
-    return _json(f"{norm(server)}/api/typing/config")
+    return _json(f"{base(server)}/api/typing/config")
 
 
 # 两套叫法：取文本的接口用 english/chinese，交成绩的接口用「英文」「中文」。
@@ -415,7 +541,7 @@ def typing_passage(server: str, module: str, difficulty: str) -> str:
     """取一段练习文本。返回正文，取不到就抛 ApiError（里面是后端写好的中文）。"""
     query = urllib.parse.urlencode({"mode": PASSAGE_MODE.get(module, "chinese"),
                                     "difficulty": difficulty})
-    got = _json(f"{norm(server)}/api/typing/passage?{query}")
+    got = _json(f"{base(server)}/api/typing/passage?{query}")
     return str((got or {}).get("text") or "")
 
 
@@ -436,7 +562,7 @@ def typing_submit(server: str, student: dict, module: str, difficulty: str,
     target 是这段文本有多长：服务端要打完一半（min_done_ratio）才收，靠它判。
     exe 不限时，time_limit 固定报 0。
     """
-    return _json(f"{norm(server)}/api/typing/records", {
+    return _json(f"{base(server)}/api/typing/records", {
         "student_name": student.get("name", ""),
         "student_class": student.get("cls", "") or student.get("student_class", ""),
         "student_no": str(student.get("no", "") or student.get("student_no", "")),

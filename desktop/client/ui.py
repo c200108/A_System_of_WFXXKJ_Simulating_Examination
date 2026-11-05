@@ -87,7 +87,7 @@ class LoginFrame(ttk.Frame):
                  font=(FONT, 20, "bold")).pack(pady=(22, 0))
         by_name = self.app.name_login
         tk.Label(head, text=(f"选班级、用姓名和密码登录　·　初始密码 {NAME_LOGIN_PASSWORD}" if by_name
-                             else "用学号和密码登录　·　初始密码就是学号"), bg=BLUE,
+                             else f"用学号和密码登录　·　初始密码是学号，老师重置后是 {NAME_LOGIN_PASSWORD}"), bg=BLUE,
                  fg="#d8e6ff", font=(FONT, 10)).pack()
 
         card = tk.Frame(wrap, bg=CARD, highlightbackground=LINE, highlightthickness=1)
@@ -95,7 +95,8 @@ class LoginFrame(ttk.Frame):
         card.place(relx=0.5, rely=0.53, anchor="center", width=470, height=300 + extra)
 
         self.vars = {}
-        rows = [("server", "教师端地址", "如 192.168.1.8:8080")]
+        # 地址不带 http://（4.14.1）：IP 直接走 http，域名先试 https 再退 http（api.base）
+        rows = [("server", "教师端地址", "")]
         if by_name:
             rows += [("cls", "班　　级", "先选班级"),
                      ("no", "姓　　名", "重名的同学填学号")]
@@ -128,7 +129,7 @@ class LoginFrame(ttk.Frame):
             if key == "server":
                 self.server_entry = entry
 
-        self.vars["server"].set(self.app.server or default_server())
+        self.vars["server"].set(api.bare(self.app.server or default_server()))
         if by_name:
             # 卡片下面单独一行说规矩 —— 右边那点地方写不下
             tk.Label(wrap, text="先选班级，再填中文姓名　·　班里有同学和你重名的，账号改填学号",

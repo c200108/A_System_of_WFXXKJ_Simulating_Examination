@@ -175,9 +175,16 @@ def initial_password(student_no: str) -> str:
 NAME_LOGIN_PASSWORD = "123456"
 
 
+# 老师点「重置密码」（批量、或编辑里的「重置为 123456」）给的密码。
+# 学生登录页、学生端都写着「初始密码 123456」，重置也就给这个 —— 原来重置成
+# 各人的学号，学生照着提示填 123456，学号版学生端登不上，老师以为重置没生效（2.19.1）
+RESET_PASSWORD = NAME_LOGIN_PASSWORD
+
+
 def still_initial(row: Student) -> bool:
-    """这个账号还没改过密码（仍是建号 / 重置时给的那个学号初始密码）。"""
-    return verify_password(initial_password(row.student_no), row.password_hash)
+    """这个账号还没改过密码：仍是建号时的学号初始密码，或者老师重置给的 123456。"""
+    return (verify_password(initial_password(row.student_no), row.password_hash)
+            or verify_password(RESET_PASSWORD, row.password_hash))
 
 
 def name_login_ok(row: Student, pwd: str) -> bool:
@@ -203,6 +210,7 @@ def student_login(
     db: Session = Depends(get_db),
 ):
     row = db.scalar(select(Student).where(Student.student_no == student_no.strip()))
+    # 学号登录只认库里存的密码：建号时是学号，老师重置后是 123456（RESET_PASSWORD）
     if not row or not verify_password(password, row.password_hash):
         raise HTTPException(status_code=400, detail="学号或密码不正确")
     if not row.is_active:
@@ -814,8 +822,9 @@ def bulk_students(
         for r in rows:
             r.is_active = False
     elif body.action == "reset_password":
+        # 统一重置成 123456（见 RESET_PASSWORD），学号版、姓名登录版、学生网页都认
         for r in rows:
-            r.password_hash = hash_password(initial_password(r.student_no))
+            r.password_hash = hash_password(RESET_PASSWORD)
     else:  # delete
         # 先进回收站：账号连同"答卷、打字成绩挂在谁名下"一起记下，还原后原样接上
         recycle.trash(db, me, "student", f"{len(rows)} 名学生", Student, [r.id for r in rows],
