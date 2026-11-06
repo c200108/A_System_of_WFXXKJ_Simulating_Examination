@@ -121,6 +121,43 @@ class SchoolClass(Base):
         return f"{self.grade}{self.name}"
 
 
+class ClassLog(Base):
+    """课堂情况日志：在线座次右边那一栏，每次上机记一条（请假缺勤、设备问题……）。
+
+    跟着班走：删班时一起删（回收站顺着外键一起拍快照，还原班级时日志也回来）。
+    """
+
+    __tablename__ = "class_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"), index=True)
+    lesson_date: Mapped[date] = mapped_column(Date)
+    title: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    content: Mapped[str] = mapped_column(Text, default="")
+    author_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    author_name: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
+
+
+class StudentPoint(Base):
+    """课堂加减分：在线座次里右键学生「加分 / 减分」记一笔。总分 = 这个班里这位学生所有记录相加。
+
+    一条一行而不是只存总分：老师能看到「什么时候、为什么加的」，点错了能撤销那一笔。
+    跟着班走（删班一起删、回收站一起还原）；学生删了记录也跟着删。
+    """
+
+    __tablename__ = "student_points"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"), index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), index=True)
+    delta: Mapped[int] = mapped_column(Integer)
+    reason: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    author_name: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
+
+
 class Student(Base):
     """学生账号。
 

@@ -108,6 +108,46 @@ class SeatSheetIn(BaseModel):
     sheet: dict
 
 
+class ClassLogIn(BaseModel):
+    """课堂情况日志的一条：哪天上的课、标题（可空）、正文。"""
+
+    lesson_date: date
+    title: str = Field(default="", max_length=64)
+    content: str = Field(default="", max_length=20000)
+
+
+class ClassLogOut(BaseModel):
+    id: int
+    class_id: int
+    lesson_date: date
+    title: str
+    content: str
+    author_name: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PointIn(BaseModel):
+    """右键学生加分 / 减分：一次 -100 ~ 100，不能是 0。"""
+
+    student_id: int
+    delta: int = Field(ge=-100, le=100)
+    reason: str = Field(default="", max_length=64)
+
+
+class PointOut(BaseModel):
+    id: int
+    student_id: int
+    delta: int
+    reason: str
+    author_name: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class SeatPlanIn(BaseModel):
     """一键导入本班学生：在哪些格子排、怎么排。"""
 

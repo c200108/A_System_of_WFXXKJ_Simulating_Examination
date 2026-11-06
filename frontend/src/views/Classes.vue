@@ -20,6 +20,9 @@ import { currentUser } from '../auth'
 // 在线座次：表格库（Jspreadsheet CE + ExcelJS）几百 KB，只有点开「查看」才下载
 const SeatSheet = defineAsyncComponent(() => import('../components/SeatSheet.vue'))
 const seatSheet = ref(null)
+// 课堂情况日志：座次表右边一栏，跟着座次面板一起懒加载
+const ClassLogs = defineAsyncComponent(() => import('../components/ClassLogs.vue'))
+const classLogs = ref(null)
 const panelFull = ref(false)
 const panelFolded = ref(false)
 
@@ -34,6 +37,17 @@ function onCardClick(e, c) {
 }
 
 async function closeDetail() {
+  if (classLogs.value?.dirty) {
+    try {
+      await ElMessageBox.confirm('课堂日志写了还没保存，关掉就没了，确定关闭吗？', '关闭在线座次', {
+        type: 'warning',
+        confirmButtonText: '不要了，关闭',
+        cancelButtonText: '回去保存'
+      })
+    } catch {
+      return
+    }
+  }
   if (seatSheet.value?.dirty) {
     try {
       await ElMessageBox.confirm('座次表改了还没保存，先保存吗？', '关闭在线座次', {
@@ -49,6 +63,11 @@ async function closeDetail() {
   }
   detail.value = null
   panelFolded.value = false
+}
+
+/** 座次表里右键设了班长 / 组长：面板顶上的「班长 / 组长」跟着刷新 */
+async function reloadRoster() {
+  if (detail.value) detailRows.value = await api.students({ class_id: detail.value.id })
 }
 
 function onSeatSaved(got) {
@@ -493,7 +512,17 @@ async function doBulkOwner() {
         <el-button size="small" @click="panelFolded = true">收起</el-button>
         <el-button size="small" type="danger" plain @click="closeDetail">关闭</el-button>
       </header>
-      <SeatSheet ref="seatSheet" :key="detail.id" :cls="detail" @saved="onSeatSaved" />
+      <SeatSheet ref="seatSheet" :key="detail.id" :cls="detail" @saved="onSeatSaved" @roles="reloadRoster">
+        <template #side>
+          <ClassLogs
+            ref="classLogs"
+            :key="detail.id"
+            :cls="detail"
+            :can-edit="canSeat(detail)"
+            :students="detailRows.filter(s => s.is_active)"
+          />
+        </template>
+      </SeatSheet>
     </section>
     <button v-if="detail && panelFolded" type="button" class="seatpill" @click="panelFolded = false">
       ▲ {{ detail.display }} 在线座次（点开）
