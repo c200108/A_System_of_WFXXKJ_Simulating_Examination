@@ -224,6 +224,15 @@ export const api = {
   classSeatSheetSave: (id, sheet) => http.put(`/classes/${id}/seat-sheet`, { sheet }),
   classSeatSheetDelete: id => http.delete(`/classes/${id}/seat-sheet`),
   classSeatPlan: (id, body) => http.post(`/classes/${id}/seat-plan`, body),
+  // 课堂情况日志：在线座次右边那一栏，每次上机一条
+  classLogs: id => http.get(`/classes/${id}/logs`),
+  classLogCreate: (id, body) => http.post(`/classes/${id}/logs`, body),
+  classLogUpdate: (id, lid, body) => http.put(`/classes/${id}/logs/${lid}`, body),
+  classLogDelete: (id, lid) => http.delete(`/classes/${id}/logs/${lid}`),
+  // 课堂加减分：在线座次里右键学生
+  classPoints: id => http.get(`/classes/${id}/points`),
+  classPointAdd: (id, body) => http.post(`/classes/${id}/points`, body),
+  classPointUndo: (id, pid) => http.delete(`/classes/${id}/points/${pid}`),
 
   // 数据回收站：删掉的东西放 7 天，可还原
   recycleList: (kind = '') => http.get('/recycle', { params: { kind } }),

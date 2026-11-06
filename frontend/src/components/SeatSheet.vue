@@ -11,18 +11,21 @@
  * services/seating.py），这里只负责把「哪个格子放谁」填进表格。学困生标记是学生隐私，
  * 表格里**不标**谁是学困生，导出、打印也就不会带出去。
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import jspreadsheet from 'jspreadsheet-ce'
 import 'jsuites/dist/jsuites.css'
 import 'jspreadsheet-ce/dist/jspreadsheet.css'
 import { api, download } from '../api'
 import { cellName, coveredCells, parseCell, sheetFromWorkbook } from './seatExcel'
+import { attachLongPressDrag, groupCss, studentIndex } from './seatBoard'
+import SeatMenu from './SeatMenu.vue'
+import SeatGroups from './SeatGroups.vue'
 
 const props = defineProps({
   cls: { type: Object, required: true }         // 班级行（id / display / seat_kind / seat_name）
 })
-const emit = defineEmits(['saved'])
+const emit = defineEmits(['saved', 'roles'])
 
 const host = ref(null)
 const fileInput = ref(null)
@@ -33,6 +36,14 @@ const canEdit = ref(false)
 const students = ref([])
 const lastSel = ref('')           // 表格上最近一次框选的区域，如 B2:D5
 let ws = null                     // 当前工作表实例
+
+// ---------------- 座位板：小组、得分、班干部（seatBoard.js） ----------------
+const uid = `s${Math.random().toString(36).slice(2, 8)}`
+const groups = reactive([])       // [{ id, name, color }]，跟座次表一起存
+const groupOf = reactive({})      // { 学生 id: 组 id }，小组跟着人走
+const points = reactive({})       // { 学生 id: 总分 }，存在服务器（/points），加减立即生效
+const finder = computed(() => studentIndex(students.value))
+const studentAt = (x, y) => (ws ? finder.value(ws.getValueFromCoords(x, y)) : null)
 
 const DEFAULT_COLS = 12
 const DEFAULT_ROWS = 14
@@ -77,7 +88,8 @@ function build(sheet) {
   const cols = Math.max(1, ...(s.data || []).map(r => r.length), (s.colWidths || []).length)
   const rows = Math.max(1, (s.data || []).length)
   const rowsCfg = {}
-  Object.entries(s.rowHeights || {}).forEach(([i, h]) => (rowsCfg[i] = { height: h }))
+  // 表格库直接把 height 塞进 style.height，必须带 px，光写数字浏览器不认（2.20.1 及以前行高因此一直没生效）
+  Object.entries(s.rowHeights || {}).forEach(([i, h]) => (rowsCfg[i] = { height: `${parseInt(h, 10)}px` }))
   // 合并区域里被盖住的格子的样式会被表格库叠到左上角那格上，去掉
   const covered = coveredCells(s.mergeCells)
   const style = {}
@@ -103,7 +115,6 @@ function build(sheet) {
         rows: rowsCfg,
         editable: canEdit.value,
         tableOverflow: true,
-        tableWidth: '100%',
         tableHeight: `${tableH.value}px`,
         defaultColAlign: 'center'
       }
@@ -113,7 +124,10 @@ function build(sheet) {
       const b = cellName(Math.max(x1, x2), Math.max(y1, y2))
       lastSel.value = a === b ? a : `${a}:${b}`
     },
-    onchange: () => (dirty.value = true),
+    onchange: () => {
+      dirty.value = true
+      decorate()
+    },
     onmerge: () => (dirty.value = true),
     onchangestyle: () => (dirty.value = true),
     onresizecolumn: () => (dirty.value = true),
@@ -124,6 +138,13 @@ function build(sheet) {
     ondeletecolumn: () => (dirty.value = true)
   })
   ws = sheets[0]
+  // 小组是跟人走的：导入 Excel 样式、清空表格时 s 里没有小组，就留着原来的
+  if (s.groups) groups.splice(0, groups.length, ...s.groups)
+  if (s.groupOf) {
+    Object.keys(groupOf).forEach(k => delete groupOf[k])
+    Object.assign(groupOf, s.groupOf)
+  }
+  decorate()
   form.ranges = s.seatRanges || form.ranges
   form.zone = s.zoneRanges || form.zone
   dirty.value = false
@@ -176,7 +197,9 @@ function snapshot() {
     colWidths: (widths || []).map(w => parseInt(w, 10) || 90),
     rowHeights,
     seatRanges: form.ranges,
-    zoneRanges: form.zone
+    zoneRanges: form.zone,
+    groups: groups.map(g => ({ ...g })),
+    groupOf: { ...groupOf }
   }
 }
 
@@ -187,6 +210,7 @@ async function load() {
     const got = await api.classSeatSheet(props.cls.id)
     canEdit.value = got.can_edit
     students.value = got.students || []
+    if (got.can_edit) loadPoints()
     await nextTick()
     build(got.sheet || (await defaultSheet()))
   } finally {
@@ -341,6 +365,14 @@ async function exportExcel() {
     const p = parseCell(name)
     if (p && (w > 1 || h > 1)) sheet.mergeCells(p[1] + 1, p[0] + 1, p[1] + h, p[0] + w)
   })
+  // 小组底色也带进 Excel（座次表本身没填底色的格子才用）
+  Object.entries(groupFills(s)).forEach(([name, color]) => {
+    const p = parseCell(name)
+    const cell = sheet.getCell(p[1] + 1, p[0] + 1)
+    if (!cell.fill || cell.fill.type !== 'pattern' || cell.fill.pattern !== 'solid') {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hex(color) } }
+    }
+  })
   const buf = await wb.xlsx.writeBuffer()
   const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
   await download(Promise.resolve(blob), `${props.cls.display}座次表.xlsx`)
@@ -348,6 +380,7 @@ async function exportExcel() {
 
 function printSheet() {
   const s = snapshot()
+  const fills = groupFills(s)
   const covered = new Set()
   Object.entries(s.mergeCells).forEach(([name, [w, h]]) => {
     const p = parseCell(name)
@@ -375,7 +408,8 @@ function printSheet() {
       if (covered.has(name)) continue
       const m = s.mergeCells[name]
       const span = m ? ` colspan="${m[0]}" rowspan="${m[1]}"` : ''
-      html += `<td${span} style="width:${s.colWidths[x] || 90}px;${esc(s.style[name] || '')}">${esc((s.data[y] || [])[x])}</td>`
+      const gc = fills[name] ? `background-color:${fills[name]};` : ''
+      html += `<td${span} style="width:${s.colWidths[x] || 90}px;${esc(s.style[name] || '')}${gc}">${esc((s.data[y] || [])[x])}</td>`
     }
     html += '</tr>'
   }
@@ -534,21 +568,236 @@ function expandRanges(text) {
   return out
 }
 
+// ================================================================ 座位板交互
+/** 哪些格子坐着分了组的学生 → 小组底色（打印、导出 Excel 用） */
+function groupFills(s) {
+  const color = Object.fromEntries(groups.map(g => [String(g.id), g.color]))
+  const out = {}
+  s.data.forEach((row, y) =>
+    row.forEach((v, x) => {
+      const st = finder.value(v)
+      const c = st && color[String(groupOf[st.id] || '')]
+      if (c) out[cellName(x, y)] = c
+    })
+  )
+  return out
+}
+
+/** 给格子挂上 data-*：小组底色、班干部、分数角标都靠 CSS 读这几个属性显示，不写进格子样式 */
+let decoFrame = 0
+function decorate() {
+  // 用 setTimeout 不用 requestAnimationFrame：窗口在后台时 rAF 会停，切回来角标才出来
+  clearTimeout(decoFrame)
+  decoFrame = setTimeout(() => {
+    if (!ws || !host.value) return
+    const set = (el, k, v) => (v ? el.setAttribute(k, v) : el.removeAttribute(k))
+    const live = new Set(groups.map(g => String(g.id)))
+    host.value.querySelectorAll('.jss_content td[data-x][data-y]').forEach(td => {
+      const st = studentAt(Number(td.dataset.x), Number(td.dataset.y))
+      const p = st ? points[st.id] || 0 : 0
+      const g = st ? String(groupOf[st.id] || '') : ''
+      set(td, 'data-sid', st ? String(st.id) : '')
+      set(td, 'data-g', live.has(g) ? g : '')
+      set(td, 'data-role', st ? st.class_role || '' : '')
+      set(td, 'data-pts', p ? (p > 0 ? `+${p}` : String(p)) : '')
+      const gname = live.has(g) ? groups.find(x => String(x.id) === g)?.name : ''
+      set(
+        td,
+        'title',
+        st
+          ? [st.name, st.class_role, gname, canEdit.value ? `${p > 0 ? '+' : ''}${p} 分` : '', canEdit.value ? '长按拖动换座 · 右键更多' : '']
+              .filter(Boolean)
+              .join(' · ')
+          : ''
+      )
+    })
+  }, 16)
+}
+
+// ---- 小组底色：生成一段 CSS（只认 data-g），挂在 <head> 里 ----
+let groupStyle = null
+watch(
+  groups,
+  () => {
+    if (groupStyle) groupStyle.textContent = groupCss(`.seat-sheet[data-uid="${uid}"]`, groups)
+    decorate()
+  },
+  { deep: true }
+)
+watch(groupOf, decorate, { deep: true })
+watch(students, decorate, { deep: true })
+
+// ---- 长按拖动换座 ----
+const xy = td => [Number(td.dataset.x), Number(td.dataset.y)]
+function onDrop(fromTd, toTd) {
+  const [fx, fy] = xy(fromTd)
+  const [tx, ty] = xy(toTd)
+  const a = ws.getValueFromCoords(fx, fy)
+  const b = ws.getValueFromCoords(tx, ty)
+  const sa = finder.value(a)
+  const sb = finder.value(b)
+  if (String(b ?? '').trim() && !sb) {
+    return ElMessage.warning(`${cellName(tx, ty)} 写着「${String(b).trim()}」，不是学生座位，换不过去`)
+  }
+  ws.setValueFromCoords(tx, ty, a, true)
+  ws.setValueFromCoords(fx, fy, b ?? '', true)
+  dirty.value = true
+  decorate()
+  ElMessage.success(sb ? `${sa.name} ⇄ ${sb.name} 互换了座位` : `${sa.name} 换到了 ${cellName(tx, ty)}`)
+}
+
+// ---- 右键学生：加减分、班干部、小组 ----
+const menu = reactive({ open: false, x: 0, y: 0, student: null, cell: null })
+const menuTotal = computed(() => (menu.student ? points[menu.student.id] || 0 : 0))
+function onContext(e) {
+  if (!canEdit.value || !ws) return
+  const td = e.target.closest ? e.target.closest('td[data-x][data-y]') : null
+  if (!td || !host.value.contains(td)) return
+  const st = studentAt(...xy(td))
+  if (!st) return // 不是学生：照旧给表格自己的菜单（插入删除行列）
+  e.preventDefault()
+  e.stopPropagation()
+  Object.assign(menu, { open: true, x: e.clientX, y: e.clientY, student: st, cell: xy(td) })
+}
+
+async function loadPoints() {
+  try {
+    const got = await api.classPoints(props.cls.id)
+    Object.keys(points).forEach(k => delete points[k])
+    Object.entries(got.totals || {}).forEach(([k, v]) => (points[k] = v))
+    decorate()
+  } catch {
+    /* 没权限就不显示分数 */
+  }
+}
+
+async function addPoints(delta, reason = '', who = menu.student) {
+  const got = await api.classPointAdd(props.cls.id, { student_id: who.id, delta, reason })
+  points[who.id] = got.total
+  decorate()
+  ElMessage({
+    type: delta > 0 ? 'success' : 'warning',
+    message: `${who.name} ${delta > 0 ? '+' : ''}${delta} 分${reason ? `（${reason}）` : ''}，现在 ${got.total} 分`
+  })
+}
+
+async function customPoints() {
+  const who = menu.student
+  const { value } = await ElMessageBox.prompt(
+    '先写分值，后面可以跟原因，如「+3 回答问题」「-2 上课说话」',
+    `给 ${who.name} 加减分`,
+    {
+      inputPlaceholder: '+3 回答问题',
+      inputValidator: v => /^\s*[+\-－]?\d{1,3}(\s|$)/.test(v || '') || '开头写分值，如 +3 或 -2'
+    }
+  )
+  const m = /^\s*([+\-－]?)(\d{1,3})\s*(.*)$/.exec(value)
+  const delta = (m[1] === '-' || m[1] === '－' ? -1 : 1) * Number(m[2])
+  if (!delta) return ElMessage.warning('分值不能是 0')
+  if (Math.abs(delta) > 100) return ElMessage.warning('一次最多加减 100 分')
+  await addPoints(delta, m[3].slice(0, 64), who)
+}
+
+const hist = reactive({ open: false, student: null, rows: [], loading: false })
+async function openHistory() {
+  Object.assign(hist, { open: true, student: menu.student, rows: [], loading: true })
+  try {
+    const got = await api.classPoints(props.cls.id)
+    hist.rows = (got.recent || []).filter(r => r.student_id === hist.student.id)
+  } finally {
+    hist.loading = false
+  }
+}
+async function undoPoint(row) {
+  const got = await api.classPointUndo(props.cls.id, row.id)
+  points[got.student_id] = got.total
+  hist.rows = hist.rows.filter(r => r.id !== row.id)
+  decorate()
+  ElMessage.success(`已撤销，${hist.student.name} 现在 ${got.total} 分`)
+}
+
+async function setRole(role) {
+  const who = menu.student
+  await api.studentUpdate(who.id, { class_role: role })
+  if (role === '班长') students.value.forEach(s => s.class_role === '班长' && (s.class_role = ''))
+  who.class_role = role
+  decorate()
+  emit('roles')
+  ElMessage.success(role ? `已设 ${who.name} 为${role}` : `已取消 ${who.name} 的班干部`)
+}
+
+const groupDlg = ref(false)
+function setGroup(gid) {
+  if (gid === '__manage') return (groupDlg.value = true)
+  const who = menu.student
+  if (gid) groupOf[who.id] = String(gid)
+  else delete groupOf[who.id]
+  dirty.value = true
+  const g = groups.find(x => String(x.id) === String(gid))
+  ElMessage.success(g ? `${who.name} 分到「${g.name}」` : `${who.name} 不分组了`)
+}
+function selectedStudents() {
+  const seen = new Map()
+  for (const name of expandRanges(lastSel.value)) {
+    const p = parseCell(name)
+    const st = p && studentAt(p[0], p[1])
+    if (st) seen.set(st.id, st)
+  }
+  return [...seen.values()]
+}
+function removeFromSeat() {
+  const [x, y] = menu.cell
+  ws.setValueFromCoords(x, y, '', true)
+  dirty.value = true
+  decorate()
+}
+
+/** 小组一览：每组几个人、组长、组内总分 */
+const groupStats = computed(() =>
+  groups.map(g => {
+    const list = students.value.filter(s => String(groupOf[s.id] || '') === String(g.id))
+    return {
+      ...g,
+      n: list.length,
+      leader: list
+        .filter(s => s.class_role === '组长')
+        .map(s => s.name)
+        .join('、'),
+      pts: list.reduce((n, s) => n + (points[s.id] || 0), 0)
+    }
+  })
+)
+
+let detachDrag = null
 let ro = null
 onMounted(() => {
   ro = new ResizeObserver(() => fitHeight())
-  if (host.value) ro.observe(host.value)
+  if (host.value) {
+    ro.observe(host.value)
+    host.value.addEventListener('contextmenu', onContext, true)
+    detachDrag = attachLongPressDrag(host.value, {
+      canStart: td => canEdit.value && !ws?.edition && !!studentAt(...xy(td)),
+      onDrop,
+      label: td => studentAt(...xy(td))?.name || ''
+    })
+  }
+  groupStyle = document.createElement('style')
+  document.head.appendChild(groupStyle)
   load()
 })
 onBeforeUnmount(() => {
   ro?.disconnect()
+  detachDrag?.()
+  host.value?.removeEventListener('contextmenu', onContext, true)
+  groupStyle?.remove()
+  clearTimeout(decoFrame)
   destroy()
 })
-defineExpose({ dirty, save })
+defineExpose({ dirty, save, students })
 </script>
 
 <template>
-  <div class="seat-sheet" v-loading="loading">
+  <div class="seat-sheet" :data-uid="uid" v-loading="loading">
     <input ref="fileInput" type="file" accept=".xlsx" hidden @change="onExcel" />
     <div class="tools">
       <template v-if="canEdit">
@@ -573,6 +822,8 @@ defineExpose({ dirty, save })
         <el-button size="small" @click="unmergeSel">取消合并</el-button>
         <el-button size="small" @click="clearAll">清空</el-button>
         <el-divider direction="vertical" />
+        <el-button size="small" @click="groupDlg = true">🎨 小组</el-button>
+        <el-divider direction="vertical" />
       </template>
       <el-button size="small" @click="exportExcel">导出 Excel</el-button>
       <el-button size="small" @click="printSheet">打印</el-button>
@@ -584,9 +835,68 @@ defineExpose({ dirty, save })
       <span v-if="!canEdit" class="muted">不是你带的班，只能看</span>
     </div>
     <p v-if="canEdit" class="hint">
-      双击格子改字；框选几个格子后，用上面的按钮加粗、对齐、填底色、加边框、合并；右键能插入 / 删除行列。原来上传的是图片的话，照着图在这里画一遍再「一键导入本班学生」。
+      <b>长按学生拖到别的座位</b>（那里有人就互换）；<b>右键学生</b>加减分、设班长 / 组长、分小组；
+      双击格子改字；框选后用上面的按钮改样式、合并；右键空格子插入 / 删除行列。
     </p>
-    <div ref="host" class="host" />
+    <!-- 小组一览：颜色、人数、组长、组内总分 -->
+    <div v-if="groupStats.length" class="legend">
+      <button
+        v-for="g in groupStats"
+        :key="g.id"
+        type="button"
+        class="lg"
+        :style="{ background: g.color }"
+        :title="g.leader ? `组长 ${g.leader}` : '还没设组长'"
+        @click="groupDlg = true"
+      >
+        <b>{{ g.name }}</b> {{ g.n }} 人
+        <template v-if="g.leader"> · ⭐{{ g.leader }}</template>
+        <template v-if="canEdit && g.pts"> · {{ g.pts > 0 ? '+' : '' }}{{ g.pts }} 分</template>
+      </button>
+    </div>
+    <!-- 表格 + 右边一栏（课堂日志，由外面塞进 side 插槽）：挨着放、中间留一道空，不连在一起 -->
+    <div class="body">
+      <div ref="host" class="host" />
+      <slot name="side" />
+    </div>
+
+    <SeatMenu
+      :open="menu.open"
+      :x="menu.x"
+      :y="menu.y"
+      :student="menu.student"
+      :total="menuTotal"
+      :groups="groups"
+      :group-id="menu.student ? groupOf[menu.student.id] || '' : ''"
+      @close="menu.open = false"
+      @points="addPoints"
+      @custom="customPoints"
+      @history="openHistory"
+      @role="setRole"
+      @group="setGroup"
+      @remove="removeFromSeat"
+    />
+    <SeatGroups
+      v-model="groupDlg"
+      :groups="groups"
+      :group-of="groupOf"
+      :students="students"
+      :selection="lastSel"
+      :selected-students="selectedStudents"
+      @changed="dirty = true"
+    />
+    <el-dialog v-model="hist.open" :title="`${hist.student?.name || ''} 的得分记录`" width="460px" append-to-body>
+      <div v-loading="hist.loading">
+        <p class="muted">现在 <b>{{ hist.student ? points[hist.student.id] || 0 : 0 }}</b> 分。点错了可以撤销那一笔。</p>
+        <el-empty v-if="!hist.loading && !hist.rows.length" :image-size="50" description="还没有加减过分" />
+        <div v-for="r in hist.rows" :key="r.id" class="hrow">
+          <b :class="r.delta > 0 ? 'up' : 'down'">{{ r.delta > 0 ? '+' : '' }}{{ r.delta }}</b>
+          <span class="hreason">{{ r.reason || '—' }}</span>
+          <span class="muted">{{ r.author_name }} · {{ String(r.created_at).replace('T', ' ').slice(5, 16) }}</span>
+          <el-button link size="small" type="danger" @click="undoPoint(r)">撤销</el-button>
+        </div>
+      </div>
+    </el-dialog>
 
     <el-dialog v-model="dlg" title="一键导入本班学生" width="560px" append-to-body>
       <el-form label-width="96px" size="small">
@@ -678,10 +988,16 @@ defineExpose({ dirty, save })
   display: flex;
   flex-direction: column;
 }
-.host {
+.body {
   flex: 1 1 0;
   min-height: 160px;
-  width: 100%;
+  display: flex;
+  gap: 14px;
+}
+/* 表格区宽度跟着表格走（不撑满），右边的日志栏就紧挨着表格；表格太宽时收窄、横向滚动 */
+.host {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
 }
 .host :deep(.jss_container) {
@@ -689,5 +1005,106 @@ defineExpose({ dirty, save })
 }
 .host :deep(.jss_content) {
   max-width: 100%;
+}
+/* ---- 座位板：学生格子上的角标（班干部、分数），靠 data-* 显示，不进座次表样式 ---- */
+.host :deep(td[data-sid]) {
+  position: relative;
+  cursor: grab;
+}
+.host :deep(td[data-role])::before {
+  position: absolute;
+  top: 0;
+  left: 1px;
+  font: 9px/12px sans-serif;
+  pointer-events: none;
+}
+/* 班干部用小图标，窄格子里也不挡名字；悬停格子 title 里有全称 */
+.host :deep(td[data-role='班长'])::before {
+  content: '👑';
+}
+.host :deep(td[data-role='组长'])::before {
+  content: '⭐';
+}
+/* 分数角标放右下角、班干部图标放左上角：名字在格子正中，两个角是空的，不挡名字 */
+.host :deep(td[data-pts])::after {
+  content: attr(data-pts);
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  padding: 0 3px;
+  border-radius: 6px;
+  font: 700 9px/12px sans-serif;
+  background: #67c23a;
+  color: #fff;
+  pointer-events: none;
+}
+.host :deep(td[data-pts^='-'])::after {
+  background: #f56c6c;
+}
+.host :deep(td.seat-drag-from) {
+  opacity: 0.45;
+  outline: 2px dashed var(--el-color-primary);
+  outline-offset: -2px;
+}
+.host :deep(td.seat-drop) {
+  outline: 3px solid var(--el-color-primary);
+  outline-offset: -3px;
+  box-shadow: inset 0 0 0 999px rgba(64, 158, 255, 0.12);
+}
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.lg {
+  padding: 3px 10px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  font-size: 12px;
+  color: #303133;
+  cursor: pointer;
+}
+.hrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  font-size: 13px;
+}
+.hrow .up {
+  color: #529b2e;
+  width: 34px;
+}
+.hrow .down {
+  color: #c45656;
+  width: 34px;
+}
+.hreason {
+  flex: 1;
+}
+</style>
+
+<style>
+/* 拖动时跟着鼠标走的「学生名牌」，挂在 body 上，不能 scoped */
+.seat-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 4000;
+  padding: 6px 14px;
+  border-radius: 8px;
+  background: var(--el-color-primary);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+body.seat-dragging,
+body.seat-dragging * {
+  cursor: grabbing !important;
+  user-select: none !important;
 }
 </style>

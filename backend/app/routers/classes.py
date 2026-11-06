@@ -23,15 +23,19 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..database import get_db
 from ..deps import get_current_user, require_admin
-from ..models import SchoolClass, Student, User
+from ..models import ClassLog, SchoolClass, Student, StudentPoint, User, now_local
 from ..services import recycle, seating
 from ..schemas import (
     ClassBatchIn,
     ClassBulkIn,
     ClassBulkOwnerIn,
     ClassIn,
+    ClassLogIn,
+    ClassLogOut,
     ClassOut,
     ClassUpdate,
+    PointIn,
+    PointOut,
     SeatPlanIn,
     SeatSheetIn,
 )
@@ -431,7 +435,8 @@ def get_seat_sheet(cid: int, me: User = Depends(get_current_user), db: Session =
                                                 Student.is_active.is_(True))
                           .order_by(Student.student_no))
         out["students"] = [{"id": s.id, "student_no": s.student_no, "name": s.name,
-                            "gender": s.gender or "", "struggling": bool(s.struggling)}
+                            "gender": s.gender or "", "struggling": bool(s.struggling),
+                            "class_role": s.class_role or ""}
                            for s in rows]
     return out
 
@@ -482,3 +487,124 @@ def seat_plan(cid: int, body: SeatPlanIn, me: User = Depends(get_current_user),
                             seed=body.seed, content=body.content, skip=body.skip)
     except seating.RangeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+# ================================================================ 课堂情况日志
+# 在线座次右边那一栏：每次上机记一条（请假缺勤、设备问题……）。
+# 看：和座次表一样谁都能看（任课老师想知道上节课机房出了什么事）；写、改、删：本班老师和管理员。
+LOG_LIMIT = 500   # 一个班最多返回最近 500 条，一学期上机一般几十次
+
+
+def _log_or_404(db: Session, cid: int, lid: int) -> ClassLog:
+    log = db.get(ClassLog, lid)
+    if not log or log.class_id != cid:
+        raise HTTPException(status_code=404, detail="这条日志不存在（可能已经被删了）")
+    return log
+
+
+@router.get("/{cid}/logs", response_model=list[ClassLogOut], summary="本班的课堂情况日志")
+def list_logs(cid: int, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _class_or_404(db, cid)
+    return db.scalars(select(ClassLog).where(ClassLog.class_id == cid)
+                      .order_by(ClassLog.lesson_date.desc(), ClassLog.id.desc())
+                      .limit(LOG_LIMIT)).all()
+
+
+@router.post("/{cid}/logs", response_model=ClassLogOut, summary="新建一条课堂情况日志")
+def create_log(cid: int, body: ClassLogIn, me: User = Depends(get_current_user),
+               db: Session = Depends(get_db)):
+    row = _class_or_404(db, cid)
+    _can_seat(row, me)
+    if not body.title.strip() and not body.content.strip():
+        raise HTTPException(status_code=400, detail="标题和内容至少写一样")
+    now = now_local()
+    log = ClassLog(class_id=cid, lesson_date=body.lesson_date, title=body.title.strip(),
+                   content=body.content, author_id=me.id,
+                   author_name=(me.name or me.username or "")[:64],
+                   created_at=now, updated_at=now)
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+    return log
+
+
+@router.put("/{cid}/logs/{lid}", response_model=ClassLogOut, summary="修改一条课堂情况日志")
+def update_log(cid: int, lid: int, body: ClassLogIn, me: User = Depends(get_current_user),
+               db: Session = Depends(get_db)):
+    row = _class_or_404(db, cid)
+    _can_seat(row, me)
+    log = _log_or_404(db, cid, lid)
+    if not body.title.strip() and not body.content.strip():
+        raise HTTPException(status_code=400, detail="标题和内容至少写一样")
+    log.lesson_date = body.lesson_date
+    log.title = body.title.strip()
+    log.content = body.content
+    log.updated_at = now_local()
+    db.commit()
+    db.refresh(log)
+    return log
+
+
+@router.delete("/{cid}/logs/{lid}", summary="删掉一条课堂情况日志")
+def delete_log(cid: int, lid: int, me: User = Depends(get_current_user),
+               db: Session = Depends(get_db)):
+    row = _class_or_404(db, cid)
+    _can_seat(row, me)
+    db.delete(_log_or_404(db, cid, lid))
+    db.commit()
+    return {"ok": True}
+
+
+# ================================================================ 课堂加减分
+# 在线座次里右键学生加分 / 减分。一笔一行：看得到什么时候、为什么，点错了撤销那一笔。
+# 只给本班老师和管理员（和排座位一样）；别的老师打开座次表看不到分数。
+POINT_RECENT = 200
+
+
+@router.get("/{cid}/points", summary="本班学生的课堂得分：总分 + 最近的记录")
+def list_points(cid: int, me: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    row = _class_or_404(db, cid)
+    _can_seat(row, me)
+    totals = dict(db.execute(select(StudentPoint.student_id, func.sum(StudentPoint.delta))
+                             .where(StudentPoint.class_id == cid)
+                             .group_by(StudentPoint.student_id)).all())
+    recent = db.scalars(select(StudentPoint).where(StudentPoint.class_id == cid)
+                        .order_by(StudentPoint.id.desc()).limit(POINT_RECENT)).all()
+    return {"totals": {str(k): int(v or 0) for k, v in totals.items()},
+            "recent": [PointOut.model_validate(p).model_dump(mode="json") for p in recent]}
+
+
+@router.post("/{cid}/points", summary="给本班一位学生加分 / 减分")
+def add_point(cid: int, body: PointIn, me: User = Depends(get_current_user),
+              db: Session = Depends(get_db)):
+    row = _class_or_404(db, cid)
+    _can_seat(row, me)
+    if body.delta == 0:
+        raise HTTPException(status_code=400, detail="加减分不能是 0")
+    stu = db.get(Student, body.student_id)
+    if not stu or stu.class_id != cid:
+        raise HTTPException(status_code=400, detail="这位学生不在这个班里")
+    p = StudentPoint(class_id=cid, student_id=stu.id, delta=body.delta, reason=body.reason.strip(),
+                     author_name=(me.name or me.username or "")[:64], created_at=now_local())
+    db.add(p)
+    db.commit()
+    db.refresh(p)
+    total = db.scalar(select(func.sum(StudentPoint.delta)).where(
+        StudentPoint.class_id == cid, StudentPoint.student_id == stu.id)) or 0
+    return {"total": int(total), "entry": PointOut.model_validate(p).model_dump(mode="json")}
+
+
+@router.delete("/{cid}/points/{pid}", summary="撤销一笔加减分")
+def undo_point(cid: int, pid: int, me: User = Depends(get_current_user),
+               db: Session = Depends(get_db)):
+    row = _class_or_404(db, cid)
+    _can_seat(row, me)
+    p = db.get(StudentPoint, pid)
+    if not p or p.class_id != cid:
+        raise HTTPException(status_code=404, detail="这笔记录不存在（可能已经撤销了）")
+    sid = p.student_id
+    db.delete(p)
+    db.commit()
+    total = db.scalar(select(func.sum(StudentPoint.delta)).where(
+        StudentPoint.class_id == cid, StudentPoint.student_id == sid)) or 0
+    return {"ok": True, "student_id": sid, "total": int(total)}
