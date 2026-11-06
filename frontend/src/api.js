@@ -184,6 +184,8 @@ export const api = {
   siteConfig: () => http.get('/config'),
   // 服务器自己的网卡地址（老师在服务器本机用 localhost 打开后台时拼学生链接用，要登录）
   serverAddresses: () => http.get('/config/addresses'),
+  // 全站界面主题、字号（系统管理员，2.22.0）
+  uiSave: body => http.put('/config/ui', body),
 
   login(username, password) {
     const form = new URLSearchParams()
@@ -233,6 +235,7 @@ export const api = {
   classPoints: id => http.get(`/classes/${id}/points`),
   classPointAdd: (id, body) => http.post(`/classes/${id}/points`, body),
   classPointUndo: (id, pid) => http.delete(`/classes/${id}/points/${pid}`),
+  classPointBulk: (id, body) => http.post(`/classes/${id}/points/bulk`, body),
 
   // 数据回收站：删掉的东西放 7 天，可还原
   recycleList: (kind = '') => http.get('/recycle', { params: { kind } }),

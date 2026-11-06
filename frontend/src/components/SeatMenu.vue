@@ -3,20 +3,26 @@
  * 在线座次：右键学生格子弹出的菜单（加分 / 减分 / 班干部 / 小组 / 移走）。
  * 只有本班老师和管理员会看到；右键空格子、讲台这些还是表格本来的菜单（插入删除行列）。
  */
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
   x: { type: Number, default: 0 },
   y: { type: Number, default: 0 },
+  mode: { type: String, default: 'student' },          // student / batch（框选了几位）/ seat（空座位）
   student: { type: Object, default: null },
+  batch: { type: Array, default: () => [] },
+  seat: { type: String, default: '' },
+  seatBroken: { type: String, default: undefined },   // 这个座位标了设备故障就是说明文字（可能是空串）
   total: { type: Number, default: 0 },
   groups: { type: Array, default: () => [] },
   groupId: { type: [String, Number], default: '' }
 })
-const emit = defineEmits(['close', 'points', 'custom', 'history', 'role', 'group', 'remove'])
+const emit = defineEmits(['close', 'points', 'custom', 'history', 'role', 'group', 'remove', 'broken', 'fixed'])
 
 const box = ref(null)
+// 菜单靠右时子菜单往左边开，别跑出窗口
+const flip = computed(() => pos.value.left + 420 > window.innerWidth)
 const pos = ref({ left: 0, top: 0 })
 const sub = ref(false)
 
@@ -61,12 +67,51 @@ const act = (name, ...args) => {
 <template>
   <teleport to="body">
     <div
-      v-if="open && student"
+      v-if="open && (student || mode !== 'student')"
       ref="box"
       class="seatmenu"
       :style="{ left: pos.left + 'px', top: pos.top + 'px' }"
       @contextmenu.prevent
     >
+      <!-- 空座位：设备故障 -->
+      <template v-if="mode === 'seat'">
+        <div class="mhead">
+          <b>座位 {{ seat }}</b>
+          <span v-if="seatBroken !== undefined" class="bad">🔧 {{ seatBroken || '设备故障' }}</span>
+          <span v-else class="muted">空座</span>
+        </div>
+        <button v-if="seatBroken === undefined" type="button" class="item" @click="act('broken')">🔧 标成设备故障（不可入座）</button>
+        <button v-else type="button" class="item" @click="act('fixed')">✅ 修好了，取消设备故障</button>
+      </template>
+
+      <!-- 框选了好几位：批量 -->
+      <template v-else-if="mode === 'batch'">
+        <div class="mhead">
+          <b>选中 {{ batch.length }} 位同学</b>
+          <span class="muted names">{{ batch.slice(0, 4).map(s => s.name).join('、') }}{{ batch.length > 4 ? '…' : '' }}</span>
+        </div>
+        <div class="mrow">
+          <button type="button" class="chip plus" @click="act('points', 1)">+1</button>
+          <button type="button" class="chip plus" @click="act('points', 2)">+2</button>
+          <button type="button" class="chip plus" @click="act('points', 5)">+5</button>
+          <button type="button" class="chip minus" @click="act('points', -1)">−1</button>
+          <button type="button" class="chip minus" @click="act('points', -2)">−2</button>
+        </div>
+        <button type="button" class="item" @click="act('custom')">✎ 一起自定义加减分（写原因）…</button>
+        <div class="sep" />
+        <div class="item has-sub" @mouseenter="sub = true" @mouseleave="sub = false" @click="sub = !sub">
+          🎨 都分到小组 <span class="arrow">›</span>
+          <div v-if="sub" class="submenu" :class="{ flip }">
+            <button v-for="g in groups" :key="g.id" type="button" class="item" @click.stop="act('group', g.id)">
+              <i class="dot" :style="{ background: g.color }" />{{ g.name }}
+            </button>
+            <button type="button" class="item" @click.stop="act('group', '')">都不分组</button>
+            <button type="button" class="item muted" @click.stop="act('group', '__manage')">管理小组…</button>
+          </div>
+        </div>
+      </template>
+
+      <template v-else>
       <div class="mhead">
         <b>{{ student.name }}</b>
         <span class="muted">{{ student.student_no }}</span>
@@ -93,7 +138,7 @@ const act = (name, ...args) => {
       <div class="sep" />
       <div class="item has-sub" @mouseenter="sub = true" @mouseleave="sub = false" @click="sub = !sub">
         🎨 分到小组 <span class="arrow">›</span>
-        <div v-if="sub" class="submenu">
+        <div v-if="sub" class="submenu" :class="{ flip }">
           <button
             v-for="g in groups"
             :key="g.id"
@@ -109,7 +154,9 @@ const act = (name, ...args) => {
         </div>
       </div>
       <div class="sep" />
+      <button type="button" class="item" @click="act('broken')">🔧 这个座位设备故障（先请他离开）</button>
       <button type="button" class="item danger" @click="act('remove')">从这个座位移走</button>
+      </template>
     </div>
   </teleport>
 </template>
@@ -229,6 +276,20 @@ const act = (name, ...args) => {
   border: 1px solid var(--el-border-color);
   border-radius: 10px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+}
+.submenu.flip {
+  left: auto;
+  right: 100%;
+}
+.bad {
+  font-size: 12px;
+  color: #c45656;
+}
+.names {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .dot {
   display: inline-block;

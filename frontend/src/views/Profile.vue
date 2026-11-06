@@ -13,6 +13,7 @@ import { api } from '../api'
 import { currentUser, setUser } from '../auth'
 import RecycleBin from '../components/RecycleBin.vue'
 import SystemMaintenance from '../components/SystemMaintenance.vue'
+import ThemePicker from '../components/ThemePicker.vue'
 
 const route = useRoute()
 const binCard = ref()
@@ -174,6 +175,7 @@ async function savePassword() {
     <!-- 只有部署时建的系统管理员看得到：动整台服务器的事 -->
     <el-card v-if="user?.is_root" shadow="never" class="bincard">
       <template #header><span class="ch">🛠 数据备份与系统更新</span></template>
+      <ThemePicker />
       <SystemMaintenance />
     </el-card>
 

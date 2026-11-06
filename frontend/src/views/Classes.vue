@@ -12,7 +12,7 @@
  * 例外是**上机座次表**：每个班自己的事，班主任（名下的老师）和管理员都能传、换、删。
  * 图片点开在新页面直接看，Excel 点了下载。
  */
-import { computed, defineAsyncComponent, onMounted, reactive, ref } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download } from '../api'
 import { currentUser } from '../auth'
@@ -25,6 +25,23 @@ const ClassLogs = defineAsyncComponent(() => import('../components/ClassLogs.vue
 const classLogs = ref(null)
 const panelFull = ref(false)
 const panelFolded = ref(false)
+
+/**
+ * 点面板外面的空白处就收起成右下角的小按钮（2.22.0 起取代「收起」按钮），表格里没保存的改动不丢。
+ * 弹出来的对话框、下拉框、右键菜单、提示条都挂在 body 上、不在面板里，点它们不算「外面」。
+ */
+const NOT_OUTSIDE = [
+  '.seatpanel', '.seatpill', '.seatmenu', '.seat-ghost', '.el-overlay', '.el-popper', '.el-message',
+  '.el-message-box__wrapper', '.el-notification', '.el-color-dropdown', '.jcontextmenu', '.jss_contextmenu'
+].join(',')
+function onOutside(e) {
+  if (!detail.value || panelFolded.value || e.button !== 0) return
+  if (e.target.closest && e.target.closest(NOT_OUTSIDE)) return
+  if (!document.body.contains(e.target)) return       // 点的东西已经被移走了（下拉选完就消失）
+  panelFolded.value = true
+}
+onMounted(() => document.addEventListener('mousedown', onOutside, true))
+onBeforeUnmount(() => document.removeEventListener('mousedown', onOutside, true))
 
 /**
  * 点班级卡片的空白处就打开在线座次（2.20.1 起取代「查看」按钮）。
@@ -195,6 +212,7 @@ const detailLoading = ref(false)
 const detailKeyword = ref('')
 
 async function openDetail(row) {
+  panelFolded.value = false
   detail.value = row
   detailKeyword.value = ''
   detailRows.value = []
@@ -509,10 +527,9 @@ async function doBulkOwner() {
           {{ detail.seat_kind ? '更换上传的座次表' : '上传座次表文件' }}
         </el-button>
         <el-button size="small" @click="panelFull = !panelFull">{{ panelFull ? '还原大小' : '全屏' }}</el-button>
-        <el-button size="small" @click="panelFolded = true">收起</el-button>
         <el-button size="small" type="danger" plain @click="closeDetail">关闭</el-button>
       </header>
-      <SeatSheet ref="seatSheet" :key="detail.id" :cls="detail" @saved="onSeatSaved" @roles="reloadRoster">
+      <SeatSheet ref="seatSheet" :key="detail.id" :cls="detail" :wide="panelFull" @saved="onSeatSaved" @roles="reloadRoster">
         <template #side>
           <ClassLogs
             ref="classLogs"

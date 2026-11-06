@@ -4,20 +4,61 @@
 本来也不在 config.yaml 中）。学生答题页也要读，所以不要求登录。
 """
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..deps import get_current_user
-from ..models import User
+from ..database import get_db
+from ..deps import get_current_user, require_root
+from ..models import AppMeta, User
 from ..services.netaddr import in_container, server_addresses
 from ..siteconfig import site
 
 router = APIRouter(prefix="/api/config", tags=["配置"])
 
 
+# ---------------------------------------------------------------- 界面主题（2.22.0）
+# 全站共用一套：系统管理员在「我的账号 → 数据备份与系统更新」里选，存在 app_meta 里。
+# 主题本身（颜色、圆角）都在前端 frontend/src/theme.js，这里只存选了哪个。
+THEMES = ("default", "ant", "primer", "naive", "indigo", "warm", "contrast")
+FONTS = ("normal", "large", "larger", "huge")
+UI_DEFAULT = {"theme": "default", "font": "large"}
+
+
+def ui_settings(db: Session) -> dict:
+    out = dict(UI_DEFAULT)
+    for key in ("theme", "font"):
+        row = db.get(AppMeta, f"ui_{key}")
+        if row and row.value in (THEMES if key == "theme" else FONTS):
+            out[key] = row.value
+    return out
+
+
+class UiIn(BaseModel):
+    theme: Literal[THEMES]  # type: ignore[valid-type]
+    font: Literal[FONTS]  # type: ignore[valid-type]
+
+
+@router.put("/ui", summary="改全站界面主题、字号（系统管理员）")
+def set_ui(body: UiIn, _: User = Depends(require_root), db: Session = Depends(get_db)):
+    for key, value in (("theme", body.theme), ("font", body.font)):
+        row = db.get(AppMeta, f"ui_{key}")
+        if row:
+            row.value = value
+        else:
+            db.add(AppMeta(key=f"ui_{key}", value=value))
+    db.commit()
+    return ui_settings(db)
+
+
 @router.get("", summary="前端要用的配置（公开，不含任何密钥）")
-def get_config():
+def get_config(db: Session = Depends(get_db)):
     return {
+        # 全站界面主题、字号（2.22.0）
+        "ui": ui_settings(db),
         "school": site.school.name,
         # 平台名称等门面文案，改 config.yaml 重启后端即生效，前端不用重新构建
         "site": site.site.model_dump(),

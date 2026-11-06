@@ -50,3 +50,18 @@ def test_别的班的学生不收_别的老师不能加也看不到(client, auth
 def test_座次表接口带班干部(client, teacher_auth, two):
     got = client.get(f"/api/classes/{two['cid']}/seat-sheet", headers=teacher_auth).json()
     assert all("class_role" in s for s in got["students"])
+
+
+def test_批量加减分(client, teacher_auth, auth, two):
+    cid = two["cid"]
+    c = client.post("/api/students", json={"student_no": "PT003", "name": "积分丙", "class_id": cid},
+                    headers=auth).json()["id"]
+    url = f"/api/classes/{cid}/points/bulk"
+    before = client.get(f"/api/classes/{cid}/points", headers=teacher_auth).json()["totals"]
+    got = client.post(url, json={"student_ids": [two["a"], c], "delta": 3, "reason": "小组合作"},
+                      headers=teacher_auth).json()["totals"]
+    assert got[str(c)] == 3 and got[str(two["a"])] == before.get(str(two["a"]), 0) + 3
+    # 夹了别的班的学生：整批不收
+    assert client.post(url, json={"student_ids": [c, two["b"]], "delta": 1},
+                       headers=teacher_auth).status_code == 400
+    assert client.post(url, json={"student_ids": [c], "delta": 0}, headers=teacher_auth).status_code == 400

@@ -8,6 +8,7 @@ import App from './App.vue'
 import router from './router'
 import { api } from './api'
 import { setSiteConfig } from './siteConfig'
+import { applyTheme } from './theme'
 
 const app = createApp(App)
 // 图标不再全量注册：整个站只用到两个（UploadFilled、ArrowDown），
@@ -20,5 +21,8 @@ app.use(router)
 api
   .siteConfig()
   .then(setSiteConfig)
-  .catch(() => console.warn('读取 /api/config 失败，改用内置默认值'))
+  .catch(() => {
+    console.warn('读取 /api/config 失败，改用内置默认值')
+    applyTheme('default', 'large')
+  })
   .finally(() => app.mount('#app'))

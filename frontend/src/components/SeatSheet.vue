@@ -23,7 +23,8 @@ import SeatMenu from './SeatMenu.vue'
 import SeatGroups from './SeatGroups.vue'
 
 const props = defineProps({
-  cls: { type: Object, required: true }         // 班级行（id / display / seat_kind / seat_name）
+  cls: { type: Object, required: true },        // 班级行（id / display / seat_kind / seat_name）
+  wide: { type: Boolean, default: false }       // 面板全屏：表格和右边一栏拉开一点
 })
 const emit = defineEmits(['saved', 'roles'])
 
@@ -44,6 +45,47 @@ const groupOf = reactive({})      // { 学生 id: 组 id }，小组跟着人走
 const points = reactive({})       // { 学生 id: 总分 }，存在服务器（/points），加减立即生效
 const finder = computed(() => studentIndex(students.value))
 const studentAt = (x, y) => (ws ? finder.value(ws.getValueFromCoords(x, y)) : null)
+const broken = reactive({})       // { 格子名: 说明 }：设备故障、不可入座的座位，跟座次表一起存
+
+// ---------------- 缩放（只改显示，不改座次表；每人自己记在浏览器里） ----------------
+const ZOOMS = [50, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200]
+const zoom = ref(100)
+try {
+  zoom.value = Number(localStorage.getItem('seat-zoom')) || 100
+} catch {
+  /* 无痕模式读不了就用 100% */
+}
+function applyZoom() {
+  const box = host.value?.querySelector('.jss_container')
+  if (box) box.style.zoom = zoom.value === 100 ? '' : String(zoom.value / 100)
+  fitHeight()
+  try {
+    localStorage.setItem('seat-zoom', String(zoom.value))
+  } catch {
+    /* 存不了也没关系 */
+  }
+}
+function stepZoom(d) {
+  // 「适应」算出来的比例（如 69%）不在档位里：往上 / 往下找最近的一档
+  const next = d > 0 ? ZOOMS.find(z => z > zoom.value) : [...ZOOMS].reverse().find(z => z < zoom.value)
+  if (next) zoom.value = next
+  applyZoom()
+}
+const zoomOptions = computed(() => [...new Set([...ZOOMS, zoom.value])].sort((a, b) => a - b))
+/** 按表格区的宽高算一个刚好放得下整张表的比例 */
+function fitZoom() {
+  const box = host.value?.querySelector('.jss_container')
+  const table = host.value?.querySelector('.jss_content table')
+  if (!box || !table) return
+  box.style.zoom = ''
+  const side = host.value.parentElement.querySelector('.logs')
+  const room = host.value.parentElement.clientWidth - (side ? side.offsetWidth + (props.wide ? 50 : 20) : 0)
+  const sw = room / (table.offsetWidth + 4)
+  const sh = host.value.clientHeight / (table.offsetHeight + 4)
+  const best = Math.floor(Math.min(sw, sh, 2) * 100)
+  zoom.value = Math.max(50, Math.min(200, best))
+  applyZoom()
+}
 
 const DEFAULT_COLS = 12
 const DEFAULT_ROWS = 14
@@ -144,7 +186,12 @@ function build(sheet) {
     Object.keys(groupOf).forEach(k => delete groupOf[k])
     Object.assign(groupOf, s.groupOf)
   }
+  if (s.broken) {
+    Object.keys(broken).forEach(k => delete broken[k])
+    Object.assign(broken, s.broken)
+  }
   decorate()
+  applyZoom()
   form.ranges = s.seatRanges || form.ranges
   form.zone = s.zoneRanges || form.zone
   dirty.value = false
@@ -158,7 +205,8 @@ function fitHeight() {
   tableH.value = Math.max(160, h)
   const box = host.value.querySelector('.jss_content')
   if (box) {
-    box.style.maxHeight = `${tableH.value}px`
+    // 缩放（zoom）连滚动区的 max-height 一起缩，要除回去，滚动区才正好占满表格区
+    box.style.maxHeight = `${Math.floor(tableH.value / (zoom.value / 100))}px`
     box.style.height = 'auto'
   }
 }
@@ -199,7 +247,8 @@ function snapshot() {
     seatRanges: form.ranges,
     zoneRanges: form.zone,
     groups: groups.map(g => ({ ...g })),
-    groupOf: { ...groupOf }
+    groupOf: { ...groupOf },
+    broken: { ...broken }
   }
 }
 
@@ -408,8 +457,9 @@ function printSheet() {
       if (covered.has(name)) continue
       const m = s.mergeCells[name]
       const span = m ? ` colspan="${m[0]}" rowspan="${m[1]}"` : ''
-      const gc = fills[name] ? `background-color:${fills[name]};` : ''
-      html += `<td${span} style="width:${s.colWidths[x] || 90}px;${esc(s.style[name] || '')}${gc}">${esc((s.data[y] || [])[x])}</td>`
+      const bk = s.broken && s.broken[name] !== undefined
+      const gc = bk ? 'background-color:#eeeeee;color:#999;' : fills[name] ? `background-color:${fills[name]};` : ''
+      html += `<td${span} style="width:${s.colWidths[x] || 90}px;${esc(s.style[name] || '')}${gc}">${bk ? `设备故障${s.broken[name] ? '：' + esc(s.broken[name]) : ''}` : esc((s.data[y] || [])[x])}</td>`
     }
     html += '</tr>'
   }
@@ -511,14 +561,74 @@ function mergedSkip() {
   return out
 }
 
+/**
+ * 自动认座位（2.22.0）：表里写着座位号（A1、B12、C3 这种「字母 + 数字」）的格子，
+ * 它右边那一格就是座位。按座位号排（A1、A2 … A16、B1 …、C1 …），连着往下的几格并成一段（B3:B18），
+ * 区域写得短。右边那格写着别的字（不是学生）、是合并格被盖住的部分，就不算。
+ */
+const SEAT_LABEL = /^([A-Za-z]{1,2})\s*-?\s*(\d{1,3})$/
+function detectSeats() {
+  if (!ws) return []
+  const data = ws.getData()
+  const covered = new Set(mergedSkip())
+  const found = []
+  data.forEach((row, y) =>
+    row.forEach((v, x) => {
+      const m = SEAT_LABEL.exec(String(v ?? '').trim())
+      if (!m || x + 1 >= row.length) return
+      const seat = cellName(x + 1, y)
+      if (covered.has(seat)) return
+      const right = String(row[x + 1] ?? '').trim()
+      if (right && (SEAT_LABEL.test(right) || !finder.value(right))) return
+      found.push({ cell: seat, x: x + 1, y, key: [m[1].toUpperCase(), Number(m[2])] })
+    })
+  )
+  found.sort((a, b) => (a.key[0] === b.key[0] ? a.key[1] - b.key[1] : a.key[0] < b.key[0] ? -1 : 1))
+  return found
+}
+/** 认出来的座位 → 区域文字：同一列连着往下的并成 B3:B18 */
+function seatsToRanges(list) {
+  const parts = []
+  let run = null
+  for (const s of list) {
+    if (run && s.x === run.x && s.y === run.y2 + 1) run.y2 = s.y
+    else {
+      if (run) parts.push(run)
+      run = { x: s.x, y1: s.y, y2: s.y }
+    }
+  }
+  if (run) parts.push(run)
+  return parts.map(r => (r.y1 === r.y2 ? cellName(r.x, r.y1) : `${cellName(r.x, r.y1)}:${cellName(r.x, r.y2)}`)).join(', ')
+}
+const detected = ref(0)
+function autoSeats(quiet = false) {
+  const list = detectSeats()
+  detected.value = list.length
+  if (!list.length) {
+    if (!quiet) ElMessage.warning('表里没认出座位号（A1、B2 这种）。手动框选要放学生的格子再「加入」也行')
+    return
+  }
+  form.ranges = seatsToRanges(list)
+  const nBroken = list.filter(s => broken[s.cell] !== undefined).length
+  if (!quiet) {
+    ElMessage.success(`认出 ${list.length} 个座位（座位号右边的格子）${nBroken ? `，其中 ${nBroken} 个设备故障会跳过` : ''}`)
+  }
+}
+function openPlan() {
+  // 第一次打开、还没写区域：先按座位号自动认一遍
+  if (!form.ranges.trim()) autoSeats(true)
+  dlg.value = true
+}
+
 async function runPlan() {
-  if (!form.ranges.trim()) return ElMessage.warning('先写要放学生的区域，比如 B2:B15, A4:H4')
+  if (!form.ranges.trim()) return ElMessage.warning('先写要放学生的区域，比如 B2:B15, A4:H4，或点「自动识别座位」')
   planning.value = true
   let got
   try {
     got = await api.classSeatPlan(props.cls.id, {
       ...form,
-      skip: mergedSkip(),
+      // 合并格被盖住的部分、设备故障的座位都不排人
+      skip: [...mergedSkip(), ...Object.keys(broken)],
       seed: `${Date.now()}-${Math.random()}`
     })
   } finally {
@@ -600,6 +710,8 @@ function decorate() {
       set(td, 'data-g', live.has(g) ? g : '')
       set(td, 'data-role', st ? st.class_role || '' : '')
       set(td, 'data-pts', p ? (p > 0 ? `+${p}` : String(p)) : '')
+      const bk = broken[cellName(Number(td.dataset.x), Number(td.dataset.y))]
+      set(td, 'data-broken', bk === undefined ? '' : bk || '设备故障')
       const gname = live.has(g) ? groups.find(x => String(x.id) === g)?.name : ''
       set(
         td,
@@ -626,6 +738,7 @@ watch(
 )
 watch(groupOf, decorate, { deep: true })
 watch(students, decorate, { deep: true })
+watch(broken, decorate, { deep: true })
 
 // ---- 长按拖动换座 ----
 const xy = td => [Number(td.dataset.x), Number(td.dataset.y)]
@@ -639,6 +752,9 @@ function onDrop(fromTd, toTd) {
   if (String(b ?? '').trim() && !sb) {
     return ElMessage.warning(`${cellName(tx, ty)} 写着「${String(b).trim()}」，不是学生座位，换不过去`)
   }
+  if (broken[cellName(tx, ty)] !== undefined) {
+    return ElMessage.warning(`${cellName(tx, ty)} 设备故障（${broken[cellName(tx, ty)] || '不可入座'}），不能坐`)
+  }
   ws.setValueFromCoords(tx, ty, a, true)
   ws.setValueFromCoords(fx, fy, b ?? '', true)
   dirty.value = true
@@ -647,17 +763,97 @@ function onDrop(fromTd, toTd) {
 }
 
 // ---- 右键学生：加减分、班干部、小组 ----
-const menu = reactive({ open: false, x: 0, y: 0, student: null, cell: null })
+// mode：student 一位学生 / batch 框选了好几位 / seat 空座位（设备故障）
+const menu = reactive({ open: false, x: 0, y: 0, mode: 'student', student: null, batch: [], cell: null, seat: '' })
 const menuTotal = computed(() => (menu.student ? points[menu.student.id] || 0 : 0))
+const inSel = (x, y) => expandRanges(lastSel.value).includes(cellName(x, y))
+const isSeatCell = (x, y) => detectSeats().some(s => s.x === x && s.y === y)
 function onContext(e) {
   if (!canEdit.value || !ws) return
   const td = e.target.closest ? e.target.closest('td[data-x][data-y]') : null
   if (!td || !host.value.contains(td)) return
-  const st = studentAt(...xy(td))
-  if (!st) return // 不是学生：照旧给表格自己的菜单（插入删除行列）
-  e.preventDefault()
-  e.stopPropagation()
-  Object.assign(menu, { open: true, x: e.clientX, y: e.clientY, student: st, cell: xy(td) })
+  const [x, y] = xy(td)
+  const st = studentAt(x, y)
+  const name = cellName(x, y)
+  const base = { open: true, x: e.clientX, y: e.clientY, cell: [x, y], seat: name, student: st, batch: [] }
+  // 右键点在框选区域里、区域里有两位以上学生：批量菜单
+  if (inSel(x, y)) {
+    const list = selectedStudents()
+    if (list.length > 1) {
+      e.preventDefault()
+      e.stopPropagation()
+      return Object.assign(menu, base, { mode: 'batch', batch: list, student: null })
+    }
+  }
+  if (st) {
+    e.preventDefault()
+    e.stopPropagation()
+    return Object.assign(menu, base, { mode: 'student' })
+  }
+  // 空座位（座位号旁边那格）或已标故障的格子：设备故障菜单；其他格子照旧给表格自己的菜单（插入删除行列）
+  if (!String(ws.getValueFromCoords(x, y) ?? '').trim() && (broken[name] !== undefined || isSeatCell(x, y))) {
+    e.preventDefault()
+    e.stopPropagation()
+    return Object.assign(menu, base, { mode: 'seat' })
+  }
+}
+/** 右键按下时如果点在框选区域里，别让表格库把选区改成这一格（批量菜单要用整片选区） */
+function onRightDown(e) {
+  if (e.button !== 2 || !ws) return
+  const td = e.target.closest ? e.target.closest('td[data-x][data-y]') : null
+  if (td && host.value.contains(td) && inSel(...xy(td))) e.stopPropagation()
+}
+
+// ---- 批量：框选的几位学生一起加减分、分组 ----
+async function addPointsBulk(delta, reason = '', list = menu.batch) {
+  const got = await api.classPointBulk(props.cls.id, { student_ids: list.map(s => s.id), delta, reason })
+  Object.entries(got.totals || {}).forEach(([k, v]) => (points[k] = v))
+  decorate()
+  ElMessage({
+    type: delta > 0 ? 'success' : 'warning',
+    message: `${list.length} 位同学各 ${delta > 0 ? '+' : ''}${delta} 分${reason ? `（${reason}）` : ''}`
+  })
+}
+function onMenuPoints(delta) {
+  return menu.mode === 'batch' ? addPointsBulk(delta) : addPoints(delta)
+}
+
+// ---- 设备故障：座位标成不可入座，一键排座、拖动换座都跳过它 ----
+async function markBroken(cells) {
+  const list = cells.filter(n => broken[n] === undefined)
+  if (!list.length) return
+  const seated = list
+    .map(n => parseCell(n))
+    .map(p => studentAt(p[0], p[1]))
+    .filter(Boolean)
+  const { value } = await ElMessageBox.prompt(
+    `${list.length === 1 ? list[0] : `${list.length} 个座位`}标成设备故障、不可入座。可以写一句是什么问题（显示在格子里）：` +
+      (seated.length ? `\n\n上面坐着 ${seated.map(s => s.name).join('、')}，会先请他们离开这个座位。` : ''),
+    '设备故障',
+    { inputPlaceholder: '如：显示器不亮、键盘坏了', inputValue: '', confirmButtonText: '标成故障' }
+  )
+  for (const n of list) {
+    const p = parseCell(n)
+    if (studentAt(p[0], p[1])) ws.setValueFromCoords(p[0], p[1], '', true)
+    broken[n] = String(value || '').trim().slice(0, 20)
+  }
+  dirty.value = true
+  ElMessage.success(`已标 ${list.length} 个座位设备故障，排座位时会跳过`)
+}
+function clearBroken(cells) {
+  const list = cells.filter(n => broken[n] !== undefined)
+  list.forEach(n => delete broken[n])
+  if (list.length) {
+    dirty.value = true
+    ElMessage.success(`${list.length} 个座位修好了，可以坐人`)
+  }
+}
+/** 工具栏按钮：选中的格子里有没标的就标故障，全都标了就取消 */
+function toggleBrokenSel() {
+  if (!lastSel.value) return ElMessage.info('先在表格上框选座位（座位号右边的格子），再点「设备故障」')
+  const cells = expandRanges(lastSel.value)
+  if (cells.every(n => broken[n] !== undefined)) return clearBroken(cells)
+  return markBroken(cells)
 }
 
 async function loadPoints() {
@@ -683,9 +879,10 @@ async function addPoints(delta, reason = '', who = menu.student) {
 
 async function customPoints() {
   const who = menu.student
+  const batch = menu.mode === 'batch' ? menu.batch : null
   const { value } = await ElMessageBox.prompt(
     '先写分值，后面可以跟原因，如「+3 回答问题」「-2 上课说话」',
-    `给 ${who.name} 加减分`,
+    batch ? `给选中的 ${batch.length} 位同学一起加减分` : `给 ${who.name} 加减分`,
     {
       inputPlaceholder: '+3 回答问题',
       inputValidator: v => /^\s*[+\-－]?\d{1,3}(\s|$)/.test(v || '') || '开头写分值，如 +3 或 -2'
@@ -695,6 +892,7 @@ async function customPoints() {
   const delta = (m[1] === '-' || m[1] === '－' ? -1 : 1) * Number(m[2])
   if (!delta) return ElMessage.warning('分值不能是 0')
   if (Math.abs(delta) > 100) return ElMessage.warning('一次最多加减 100 分')
+  if (batch) return addPointsBulk(delta, m[3].slice(0, 64), batch)
   await addPoints(delta, m[3].slice(0, 64), who)
 }
 
@@ -729,6 +927,12 @@ async function setRole(role) {
 const groupDlg = ref(false)
 function setGroup(gid) {
   if (gid === '__manage') return (groupDlg.value = true)
+  if (menu.mode === 'batch') {
+    menu.batch.forEach(s => (gid ? (groupOf[s.id] = String(gid)) : delete groupOf[s.id]))
+    dirty.value = true
+    const g = groups.find(x => String(x.id) === String(gid))
+    return ElMessage.success(`${menu.batch.length} 位同学${g ? `分到「${g.name}」` : '不分组了'}`)
+  }
   const who = menu.student
   if (gid) groupOf[who.id] = String(gid)
   else delete groupOf[who.id]
@@ -775,6 +979,7 @@ onMounted(() => {
   if (host.value) {
     ro.observe(host.value)
     host.value.addEventListener('contextmenu', onContext, true)
+    host.value.addEventListener('mousedown', onRightDown, true)
     detachDrag = attachLongPressDrag(host.value, {
       canStart: td => canEdit.value && !ws?.edition && !!studentAt(...xy(td)),
       onDrop,
@@ -789,6 +994,7 @@ onBeforeUnmount(() => {
   ro?.disconnect()
   detachDrag?.()
   host.value?.removeEventListener('contextmenu', onContext, true)
+  host.value?.removeEventListener('mousedown', onRightDown, true)
   groupStyle?.remove()
   clearTimeout(decoFrame)
   destroy()
@@ -797,11 +1003,11 @@ defineExpose({ dirty, save, students })
 </script>
 
 <template>
-  <div class="seat-sheet" :data-uid="uid" v-loading="loading">
+  <div class="seat-sheet" :class="{ wide }" :data-uid="uid" v-loading="loading">
     <input ref="fileInput" type="file" accept=".xlsx" hidden @change="onExcel" />
     <div class="tools">
       <template v-if="canEdit">
-        <el-button type="primary" size="small" @click="dlg = true">一键导入本班学生</el-button>
+        <el-button type="primary" size="small" @click="openPlan">一键导入本班学生</el-button>
         <el-button size="small" @click="pickExcel">导入 Excel 座次样式</el-button>
         <el-button v-if="cls.seat_kind === 'sheet'" size="small" @click="importUploaded">
           导入已上传的「{{ cls.seat_name }}」
@@ -823,10 +1029,20 @@ defineExpose({ dirty, save, students })
         <el-button size="small" @click="clearAll">清空</el-button>
         <el-divider direction="vertical" />
         <el-button size="small" @click="groupDlg = true">🎨 小组</el-button>
+        <el-button size="small" title="框选座位后点：标成设备故障、不可入座；再点一次取消" @click="toggleBrokenSel">🔧 设备故障</el-button>
         <el-divider direction="vertical" />
       </template>
       <el-button size="small" @click="exportExcel">导出 Excel</el-button>
       <el-button size="small" @click="printSheet">打印</el-button>
+      <el-divider direction="vertical" />
+      <div class="zoom" title="只改显示大小，不影响座次表本身；每个人自己的设置">
+        <el-button size="small" :disabled="zoom <= ZOOMS[0]" @click="stepZoom(-1)">－</el-button>
+        <el-select v-model="zoom" size="small" style="width: 84px" @change="applyZoom">
+          <el-option v-for="z in zoomOptions" :key="z" :label="`${z}%`" :value="z" />
+        </el-select>
+        <el-button size="small" :disabled="zoom >= ZOOMS[ZOOMS.length - 1]" @click="stepZoom(1)">＋</el-button>
+        <el-button size="small" link type="primary" @click="fitZoom">适应</el-button>
+      </div>
       <div class="flex-1" />
       <span v-if="lastSel" class="sel">选中 <b>{{ lastSel }}</b></span>
       <el-button v-if="canEdit" type="success" size="small" :loading="saving" @click="save">
@@ -836,7 +1052,7 @@ defineExpose({ dirty, save, students })
     </div>
     <p v-if="canEdit" class="hint">
       <b>长按学生拖到别的座位</b>（那里有人就互换）；<b>右键学生</b>加减分、设班长 / 组长、分小组；
-      双击格子改字；框选后用上面的按钮改样式、合并；右键空格子插入 / 删除行列。
+      <b>框选几位再右键</b>一起加减分、分组；右键空座位标<b>设备故障</b>；双击格子改字；右键其他格子插入 / 删除行列。
     </p>
     <!-- 小组一览：颜色、人数、组长、组内总分 -->
     <div v-if="groupStats.length" class="legend">
@@ -864,12 +1080,18 @@ defineExpose({ dirty, save, students })
       :open="menu.open"
       :x="menu.x"
       :y="menu.y"
+      :mode="menu.mode"
       :student="menu.student"
+      :batch="menu.batch"
+      :seat="menu.seat"
+      :seat-broken="broken[menu.seat]"
       :total="menuTotal"
       :groups="groups"
       :group-id="menu.student ? groupOf[menu.student.id] || '' : ''"
       @close="menu.open = false"
-      @points="addPoints"
+      @points="onMenuPoints"
+      @broken="markBroken([menu.seat])"
+      @fixed="clearBroken([menu.seat])"
       @custom="customPoints"
       @history="openHistory"
       @role="setRole"
@@ -902,6 +1124,12 @@ defineExpose({ dirty, save, students })
       <el-form label-width="96px" size="small">
         <el-form-item label="放在哪些格子">
           <el-input v-model="form.ranges" type="textarea" :rows="2" placeholder="如 B2:B15, A4:H4, A1:D5（可以写好几段、不连续）" />
+          <div class="row">
+            <el-button size="small" type="primary" plain @click="autoSeats()">🪑 自动识别座位</el-button>
+            <span class="muted">
+              认表里的座位号（A1、B12…）右边那格，按 A1→A16、B1… 的顺序排<template v-if="detected">，认出 {{ detected }} 个</template>；设备故障的座位自动跳过
+            </span>
+          </div>
           <div class="row">
             <el-button size="small" link type="primary" @click="useSelection('ranges')">
               + 加入表格上选中的 {{ lastSel || '区域' }}
@@ -993,6 +1221,36 @@ defineExpose({ dirty, save, students })
   min-height: 160px;
   display: flex;
   gap: 14px;
+}
+/* 面板全屏：表格和课堂日志拉开一些，间距、日志栏宽度都跟着窗口宽度走 */
+.seat-sheet.wide .body {
+  gap: clamp(24px, 3vw, 64px);
+}
+.seat-sheet.wide .body > :deep(.logs) {
+  flex-basis: clamp(330px, 24vw, 440px);
+}
+.zoom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+/* 设备故障的座位：灰色斜纹 + 说明，排座位、拖动换座都跳过 */
+.host :deep(td[data-broken]) {
+  position: relative;
+  background-image: repeating-linear-gradient(45deg, rgba(245, 108, 108, 0.16) 0 6px, transparent 6px 12px) !important;
+}
+.host :deep(td[data-broken])::after {
+  content: '🔧 ' attr(data-broken);
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 2px;
+  font: 700 11px/1.2 sans-serif;
+  color: #c45656;
+  text-align: center;
+  pointer-events: none;
 }
 /* 表格区宽度跟着表格走（不撑满），右边的日志栏就紧挨着表格；表格太宽时收窄、横向滚动 */
 .host {
