@@ -137,6 +137,14 @@ class PointIn(BaseModel):
     reason: str = Field(default="", max_length=64)
 
 
+class PointBulkIn(BaseModel):
+    """座次表框选几位学生，一起加减分。"""
+
+    student_ids: list[int] = Field(min_length=1, max_length=200)
+    delta: int = Field(ge=-100, le=100)
+    reason: str = Field(default="", max_length=64)
+
+
 class PointOut(BaseModel):
     id: int
     student_id: int

@@ -34,6 +34,7 @@ from ..schemas import (
     ClassLogOut,
     ClassOut,
     ClassUpdate,
+    PointBulkIn,
     PointIn,
     PointOut,
     SeatPlanIn,
@@ -592,6 +593,29 @@ def add_point(cid: int, body: PointIn, me: User = Depends(get_current_user),
     total = db.scalar(select(func.sum(StudentPoint.delta)).where(
         StudentPoint.class_id == cid, StudentPoint.student_id == stu.id)) or 0
     return {"total": int(total), "entry": PointOut.model_validate(p).model_dump(mode="json")}
+
+
+@router.post("/{cid}/points/bulk", summary="给本班几位学生一起加分 / 减分（座次表框选后右键）")
+def add_points_bulk(cid: int, body: PointBulkIn, me: User = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    row = _class_or_404(db, cid)
+    _can_seat(row, me)
+    if body.delta == 0:
+        raise HTTPException(status_code=400, detail="加减分不能是 0")
+    ids = list(dict.fromkeys(body.student_ids))
+    found = {s.id for s in db.scalars(select(Student).where(Student.id.in_(ids), Student.class_id == cid))}
+    if not ids or found != set(ids):
+        raise HTTPException(status_code=400, detail="有学生不在这个班里")
+    now = now_local()
+    who = (me.name or me.username or "")[:64]
+    for sid in ids:
+        db.add(StudentPoint(class_id=cid, student_id=sid, delta=body.delta, reason=body.reason.strip(),
+                            author_name=who, created_at=now))
+    db.commit()
+    totals = dict(db.execute(select(StudentPoint.student_id, func.sum(StudentPoint.delta))
+                             .where(StudentPoint.class_id == cid, StudentPoint.student_id.in_(ids))
+                             .group_by(StudentPoint.student_id)).all())
+    return {"totals": {str(k): int(v or 0) for k, v in totals.items()}}
 
 
 @router.delete("/{cid}/points/{pid}", summary="撤销一笔加减分")
