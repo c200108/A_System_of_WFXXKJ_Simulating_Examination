@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Locale;
 
 import cn.wfxxkj.teacher.core.R;
+import cn.wfxxkj.teacher.core.io.Files;
 import cn.wfxxkj.teacher.core.nav.Action;
 import cn.wfxxkj.teacher.core.nav.Screen;
 import cn.wfxxkj.teacher.core.net.Json;
@@ -26,7 +27,7 @@ import cn.wfxxkj.teacher.core.util.Fmt;
 
 /**
  * 组卷历史：存档的试卷。点开看卷面；每张卡片的「⋮」可以导出、删除；
- * 长按进入多选，批量删除。顶部搜索按标题、卷号、学校过滤。
+ * 长按进入多选，批量导出（压缩包）、批量删除（进回收站）。顶部搜索按标题、卷号、学校过滤。
  */
 final class HistoryScreen extends Screen {
 
@@ -50,6 +51,7 @@ final class HistoryScreen extends Screen {
         List<Action> a = new ArrayList<>();
         if (selected >= 0) {
             a.add(Action.icon(R.drawable.ic_select_all, "全选", () -> list.selectAll()));
+            a.add(Action.icon(R.drawable.ic_download, "导出", this::exportSelected).enabled(selected > 0));
             a.add(Action.icon(R.drawable.ic_delete, "删除", this::deleteSelected).enabled(selected > 0));
             a.add(Action.icon(R.drawable.ic_close, "退出多选", () -> list.stopSelection()));
         } else {
@@ -148,7 +150,7 @@ final class HistoryScreen extends Screen {
     }
 
     private void deleteOne(final JSONObject p) {
-        Dialogs.confirm(ctx(), "删除这份试卷？", "确定删除《" + Json.str(p, "title") + "》？删除后不能恢复。", "删除", true,
+        Dialogs.confirm(ctx(), "删除这份试卷？", "确定删除《" + Json.str(p, "title") + "》？会先进回收站，几天内可以还原。", "删除", true,
                 () -> runBusy("正在删除…", () -> {
                     PaperApi.delete(p.optLong("id"));
                     return true;
@@ -161,19 +163,32 @@ final class HistoryScreen extends Screen {
     private void deleteSelected() {
         final List<Object> ids = list.selectedKeys();
         if (ids.isEmpty()) return;
-        Dialogs.confirm(ctx(), "删除 " + ids.size() + " 份试卷？", "删除后不能恢复。已经用这些试卷发布的考试不受影响。",
-                "删除", true, () -> runBusy("正在删除…", () -> {
-                    int n = 0;
-                    for (Object id : ids) {
-                        PaperApi.delete(((Number) id).longValue());
-                        n++;
-                    }
-                    return n;
-                }, n -> {
-                    toast("已删除 " + n + " 份");
+        Dialogs.confirm(ctx(), "删除 " + ids.size() + " 份试卷？", "删除的试卷连同用它发布的考试、答卷一起进回收站，"
+                        + "几天内可以在「我的 → 回收站」还原。", "删除", true,
+                () -> runBusy("正在删除…", () -> PaperApi.bulkDelete(ids), r -> {
+                    int n = Json.arr(r, "deleted").length();
+                    int exams = Json.num(r, "exams");
+                    int failed = Json.arr(r, "failed").length();
+                    toast("已删除 " + n + " 份" + (exams > 0 ? "（连带 " + exams + " 场考试）" : "")
+                            + (failed > 0 ? "，" + failed + " 份已经不在了" : ""));
                     list.stopSelection();
                     load();
                 }));
+    }
+
+    /** 批量导出：选格式，服务器打成一个 zip 存到手机 */
+    private void exportSelected() {
+        final List<Object> ids = list.selectedKeys();
+        if (ids.isEmpty()) return;
+        List<Action> a = new ArrayList<>();
+        a.add(Action.menu(R.drawable.ic_table_view, "Excel", () -> bulkExport(ids, "xlsx")));
+        a.add(Action.menu(R.drawable.ic_quiz, "学生答题网页", () -> bulkExport(ids, "html")));
+        a.add(Action.menu(R.drawable.ic_download, "Excel + 学生答题网页", () -> bulkExport(ids, "both")));
+        Dialogs.actions(ctx(), "导出 " + ids.size() + " 份试卷（打成一个压缩包）", a);
+    }
+
+    private void bulkExport(final List<Object> ids, final String fmt) {
+        Files.export(this, "服务器正在打包 " + ids.size() + " 份试卷…", () -> PaperApi.bulkExport(ids, fmt), null);
     }
 
     /** 一份试卷的卡片 */

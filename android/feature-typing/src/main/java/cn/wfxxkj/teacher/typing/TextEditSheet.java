@@ -18,7 +18,7 @@ final class TextEditSheet {
      * @param difficulty 新建时默认的难度
      */
     static void show(final Screen s, final JSONObject row, String mode, String difficulty, String[] difficulties,
-                     final Runnable onSaved) {
+                     java.util.List<JSONObject> themes, Integer defaultTheme, final Runnable onSaved) {
         final boolean editing = row != null;
         Sheet sh = new Sheet(s.ctx(), editing ? "编辑文本" : "添加文本");
         Form f = new Form(s.ctx());
@@ -33,6 +33,8 @@ final class TextEditSheet {
                 editing ? Json.str(row, "difficulty") : (difficulty.isEmpty() ? difficulties[0] : difficulty));
         if (lang != null) f.row(lang, diff);
         final Form.Choice langF = lang;
+        final Form.Choice theme = themes.isEmpty() ? null : f.choice("主题", themeOptions(themes),
+                editing && !Json.isNull(row, "theme_id") && row.has("theme_id") ? Integer.valueOf(Json.num(row, "theme_id")) : defaultTheme);
         final Form.Text content = f.area("内容", editing ? Json.str(row, "content") : "", 5)
                 .hint("一段完整的练习文本")
                 .rule(v -> v.length() < 5 ? "文本太短，至少 5 个字符" : null);
@@ -42,11 +44,14 @@ final class TextEditSheet {
         sh.buttons("取消", null, "保存", () -> {
             if (!f.validate()) return;
             final String m = langF == null ? Json.str(row, "mode") : langF.string(), d = diff.string(), text = content.value();
+            final Integer th = theme == null || theme.value() == null ? null : ((Number) theme.value()).intValue();
             s.runBusy("正在保存…", () -> {
                 if (editing) {
-                    return TypingApi.updateText(row.optLong("id"), Json.of("difficulty", d, "content", text));
+                    JSONObject patch = Json.of("difficulty", d, "content", text);
+                    if (th != null) Json.put(patch, "theme_id", th);
+                    return TypingApi.updateText(row.optLong("id"), patch);
                 }
-                return TypingApi.createText(m, d, text);
+                return TypingApi.createText(m, d, text, th);
             }, r -> {
                 sh.dismiss();
                 s.toast("已保存");
@@ -54,5 +59,13 @@ final class TextEditSheet {
             });
         });
         sh.show();
+    }
+
+    static java.util.List<Option> themeOptions(java.util.List<JSONObject> themes) {
+        java.util.List<Option> o = new java.util.ArrayList<>();
+        for (JSONObject t : themes) {
+            o.add(new Option(Integer.valueOf(Json.num(t, "id")), Json.str(t, "name") + (Json.bool(t, "is_enabled") ? "" : "（停用）")));
+        }
+        return o;
     }
 }

@@ -101,6 +101,85 @@ final class StudentApi {
         return Json.num(r, "updated");
     }
 
+    /** 改学生的个别字段（班干部 class_role 等） */
+    static JSONObject patchStudent(int id, JSONObject body) throws ApiException {
+        return Http.asObj(Http.patch("/students/" + id, body));
+    }
+
+    /** 出现过的年级（新建班级时下拉用） */
+    static List<String> grades() throws ApiException {
+        return Json.strings(Http.getArr("/classes/grades", null));
+    }
+
+    // ---------- 在线座次（网页端 SeatSheet.vue 同一套接口） ----------
+
+    /** {class_id, display, can_edit, sheet(可能为 null), students[]}；学生名单只在 can_edit 时给 */
+    static JSONObject seatSheet(int cid) throws ApiException {
+        return Http.getObj("/classes/" + cid + "/seat-sheet", null);
+    }
+
+    static JSONObject saveSeatSheet(int cid, JSONObject sheet) throws ApiException {
+        return Http.asObj(Http.put("/classes/" + cid + "/seat-sheet", Json.of("sheet", sheet)));
+    }
+
+    static void deleteSeatSheet(int cid) throws ApiException {
+        Http.delete("/classes/" + cid + "/seat-sheet", null);
+    }
+
+    /** 一键排座：只算不存，返回 {assignments:[{cell,text,…}], seats, warnings[]} */
+    static JSONObject seatPlan(int cid, JSONObject body) throws ApiException {
+        return Http.asObj(Http.post("/classes/" + cid + "/seat-plan", body));
+    }
+
+    /** {totals: {学生 id: 总分}, recent: [{id, student_id, delta, reason, author_name, created_at}]} */
+    static JSONObject points(int cid) throws ApiException {
+        return Http.getObj("/classes/" + cid + "/points", null);
+    }
+
+    static JSONObject addPoint(int cid, int studentId, int delta, String reason) throws ApiException {
+        return Http.asObj(Http.post("/classes/" + cid + "/points",
+                Json.of("student_id", studentId, "delta", delta, "reason", reason)));
+    }
+
+    static JSONObject addPoints(int cid, List<Integer> ids, int delta, String reason) throws ApiException {
+        return Http.asObj(Http.post("/classes/" + cid + "/points/bulk",
+                Json.of("student_ids", ids, "delta", delta, "reason", reason)));
+    }
+
+    static JSONObject undoPoint(int cid, int pid) throws ApiException {
+        return Http.asObj(Http.delete("/classes/" + cid + "/points/" + pid, null));
+    }
+
+    // ---------- 课堂情况日志 ----------
+
+    static List<JSONObject> logs(int cid) throws ApiException {
+        return Json.list(Http.getArr("/classes/" + cid + "/logs", null));
+    }
+
+    static JSONObject saveLog(int cid, Integer lid, String date, String title, String content) throws ApiException {
+        JSONObject body = Json.of("lesson_date", date, "title", title, "content", content);
+        return Http.asObj(lid == null ? Http.post("/classes/" + cid + "/logs", body)
+                : Http.put("/classes/" + cid + "/logs/" + lid, body));
+    }
+
+    static void deleteLog(int cid, int lid) throws ApiException {
+        Http.delete("/classes/" + cid + "/logs/" + lid, null);
+    }
+
+    // ---------- 上机座次表文件（图片或 Excel） ----------
+
+    static JSONObject uploadSeatFile(int cid, Uri file) throws ApiException {
+        return Http.asObj(Http.upload("/classes/" + cid + "/seat", null, "file", file));
+    }
+
+    static JSONObject deleteSeatFile(int cid) throws ApiException {
+        return Http.asObj(Http.delete("/classes/" + cid + "/seat", null));
+    }
+
+    static Http.Download seatFile(int cid) throws ApiException {
+        return Http.download("GET", "/classes/" + cid + "/seat/file", null, null);
+    }
+
     /** 教师账号列表（管理员），分配班主任用 */
     static List<JSONObject> teachers() throws ApiException {
         return Json.list(Http.getArr("/auth/users", null));

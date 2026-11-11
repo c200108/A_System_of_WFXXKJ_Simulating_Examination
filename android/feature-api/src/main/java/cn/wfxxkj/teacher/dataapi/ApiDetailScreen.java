@@ -87,6 +87,7 @@ final class ApiDetailScreen extends Screen {
         a.add(Action.icon(on ? R.drawable.ic_stop : R.drawable.ic_play_arrow, on ? "暂停接收" : "恢复接收", this::togglePause));
         a.add(Action.menu(R.drawable.ic_download, "导出 Excel", this::export));
         a.add(Action.menu(R.drawable.ic_refresh, "刷新", this::reloadAll));
+        if (session().isAdmin()) a.add(Action.menu(R.drawable.ic_person, "转给其他老师", this::transfer));
         a.add(Action.menu(R.drawable.ic_delete, "删除这个 API", this::deleteApi));
         return a;
     }
@@ -557,6 +558,30 @@ final class ApiDetailScreen extends Screen {
 
     private void export() {
         Files.export(this, "正在导出…", () -> DataApiClient.export(id), Files.safeName(name) + "-数据.xlsx");
+    }
+
+    /** 管理员把这个 API 连同数据转给另一位老师（同网页「设置 → 转给其他老师」） */
+    private void transfer() {
+        runBusy("正在读取老师名单…", () -> DataApiClient.list(null), r -> {
+            List<cn.wfxxkj.teacher.core.ui.Option> opts = new ArrayList<>();
+            int owner = Json.num(info, "owner_id");
+            for (JSONObject t : Json.list(Json.arr(r, "teachers"))) {
+                if (Json.num(t, "id") == owner) continue;
+                opts.add(new cn.wfxxkj.teacher.core.ui.Option(Json.num(t, "id"), Json.str(t, "name")));
+            }
+            if (opts.isEmpty()) {
+                toast("没有别的老师可以转");
+                return;
+            }
+            Dialogs.choose(ctx(), "把「" + name + "」转给", opts, null, o -> Dialogs.confirm(ctx(), "转给其他老师",
+                    "把「" + name + "」和它的全部数据转给 " + o.label + "？转过去以后归 " + o.label + " 管理。", "转过去", false,
+                    () -> runBusy("正在转交…", () -> DataApiClient.transfer(id, ((Number) o.value).intValue()), a -> {
+                        info = a;
+                        ApiListScreen.version++;
+                        toast("已转给 " + o.label);
+                        reloadAll();
+                    })));
+        });
     }
 
     private void deleteApi() {

@@ -23,7 +23,8 @@ import cn.wfxxkj.teacher.core.ui.V;
 final class TextImportSheet {
     private TextImportSheet() {}
 
-    static void show(final Screen s, String mode, String difficulty, String[] difficulties, final Runnable onDone) {
+    static void show(final Screen s, String mode, String difficulty, String[] difficulties,
+                     java.util.List<JSONObject> themes, Integer defaultTheme, final Runnable onDone) {
         Context c = s.ctx();
         Sheet sh = new Sheet(c, "上传 txt 批量导入");
         Form f = new Form(c);
@@ -31,6 +32,8 @@ final class TextImportSheet {
         final Form.Choice diff = f.choice("难度", Option.of(difficulties),
                 difficulty.isEmpty() ? difficulties[0] : difficulty);
         f.row(lang, diff);
+        final Form.Choice theme = themes.isEmpty() ? null
+                : f.choice("归到主题", TextEditSheet.themeOptions(themes), defaultTheme);
         final Form.Choice split = f.choice("分段方式", Option.pairs("line", "一行一段", "blank", "空行分段"), "line");
         LinearLayout tips = V.vbox(c);
         TextView t1 = V.notice(c, "一行一段：文件里每行就是一段练习文本，空行自动忽略。多数情况用这个。\n"
@@ -41,7 +44,8 @@ final class TextImportSheet {
         sh.content(f.view());
         sh.buttons("取消", null, "选择 .txt 文件", () -> s.pickFile(new String[]{"text/plain", "application/octet-stream"}, uri -> {
             final String m = lang.string(), d = diff.string(), sp = split.string();
-            s.runBusy("正在导入…", () -> TypingApi.importTxt(m, d, sp, uri), r -> {
+            final Integer th = theme == null || theme.value() == null ? null : ((Number) theme.value()).intValue();
+            s.runBusy("正在导入…", () -> TypingApi.importTxt(m, d, sp, th, uri), r -> {
                 sh.dismiss();
                 onDone.run();
                 showResult(c, r);

@@ -36,6 +36,7 @@ final class ClassDetailScreen extends Screen {
     private SearchBox search;
     private GridBox stats;
     private LinearLayout ownerRow;
+    private TextView seatInfo;
     private int seen = -1;
 
     ClassDetailScreen(JSONObject cls, List<JSONObject> teachers) {
@@ -93,6 +94,21 @@ final class ClassDetailScreen extends Screen {
         stats = new GridBox(c, 56, 5, 6);
         V.addTop(card, stats, 12);
         h.addView(card, V.matchWrap());
+
+        // 在线座次、课堂日志、上机座次表文件（网页端「班级」页的三样）
+        LinearLayout seat = V.card(c);
+        LinearLayout btns = V.hbox(c);
+        btns.addView(V.button(c, R.drawable.ic_table_view, "在线座次", V.BTN_TONAL, v -> push(new SeatScreen(cls))),
+                V.weight(1));
+        LinearLayout.LayoutParams second = V.weight(1);
+        second.setMarginStart(dp(8));
+        btns.addView(V.button(c, R.drawable.ic_edit_note, "课堂日志", V.BTN_TONAL,
+                v -> push(new ClassLogScreen(cls, canManage()))), second);
+        seat.addView(btns, V.matchWrap());
+        seatInfo = V.text(c, "", V.CAPTION);
+        V.clickable(seatInfo, 6, v -> seatFileMenu());
+        V.addTop(seat, seatInfo, 10);
+        V.addTop(h, seat, 12);
 
         search = new SearchBox(c, "按学号或姓名找人");
         search.setOnSearch(k -> filter());
@@ -156,6 +172,10 @@ final class ClassDetailScreen extends Screen {
 
     private void renderHeader() {
         Context c = ctx();
+        String sn = Json.str(cls, "seat_name");
+        seatInfo.setText(sn.isEmpty()
+                ? "上机座次表文件：还没有" + (canManage() ? "（点这里上传图片或 Excel）" : "")
+                : "上机座次表文件：" + sn + "（点这里查看" + (canManage() ? "、更换或删除" : "") + "）");
         Palette p = Palette.of(c);
         ownerRow.removeAllViews();
         String o = Json.str(cls, "owner_name");
@@ -234,6 +254,42 @@ final class ClassDetailScreen extends Screen {
         if (!canManage()) return null;
         return Action.icon(R.drawable.ic_person_add, "添加学生",
                 () -> StudentForm.open(this, null, pickable(), Kit.id(cls), row -> load()));
+    }
+
+    /** 上机座次表文件（图片或 Excel）：查看 / 上传更换 / 删除 */
+    private void seatFileMenu() {
+        final int id = Kit.id(cls);
+        final String sn = Json.str(cls, "seat_name");
+        List<Action> a = new ArrayList<>();
+        if (!sn.isEmpty()) {
+            a.add(Action.menu(R.drawable.ic_download, "下载查看「" + sn + "」",
+                    () -> Files.export(this, "正在下载…", () -> StudentApi.seatFile(id), sn)));
+        }
+        if (canManage()) {
+            a.add(Action.menu(R.drawable.ic_upload_file, sn.isEmpty() ? "上传座次表（图片或 Excel）" : "换一个文件",
+                    () -> pickFile(new String[]{"image/*", Files.XLSX, Files.XLS, "application/octet-stream"},
+                            uri -> runBusy("正在上传…", () -> StudentApi.uploadSeatFile(id, uri), row -> {
+                                cls = row;
+                                Kit.touch();
+                                renderHeader();
+                                toast("座次表已上传");
+                            }))));
+            if (!sn.isEmpty()) {
+                a.add(Action.menu(R.drawable.ic_delete, "删除座次表文件", () -> cn.wfxxkj.teacher.core.ui.Dialogs.confirm(ctx(),
+                        "删除座次表文件", "删掉「" + sn + "」？在线座次不受影响。", "删除", true,
+                        () -> runBusy("正在删除…", () -> StudentApi.deleteSeatFile(id), row -> {
+                            cls = row;
+                            Kit.touch();
+                            renderHeader();
+                            toast("已删除");
+                        }))).danger());
+            }
+        }
+        if (a.isEmpty()) {
+            toast("这个班还没有上传座次表文件");
+            return;
+        }
+        cn.wfxxkj.teacher.core.ui.Dialogs.actions(ctx(), "上机座次表文件", a);
     }
 
     private void export() {
