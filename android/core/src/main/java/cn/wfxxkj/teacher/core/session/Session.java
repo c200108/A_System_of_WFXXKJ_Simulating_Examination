@@ -103,6 +103,11 @@ public final class Session {
         return user.optLong("id", 0);
     }
 
+    /** 部署时建的那个系统管理员（数据备份与系统更新只有他能用） */
+    public boolean isRoot() {
+        return user.optBoolean("is_root", false);
+    }
+
     public boolean isAdmin() {
         return "admin".equals(user.optString("role"));
     }

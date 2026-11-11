@@ -51,6 +51,16 @@ final class PaperApi {
         Http.delete("/papers/" + id, null);
     }
 
+    /** 批量删除（进回收站），返回 {deleted, exams, failed} */
+    static JSONObject bulkDelete(List<Object> ids) throws ApiException {
+        return Http.postObj("/papers/bulk-delete", Json.of("ids", Json.array(ids)));
+    }
+
+    /** 批量导出：fmt = xlsx / html / both，服务器打成一个 zip */
+    static Http.Download bulkExport(List<Object> ids, String fmt) throws ApiException {
+        return Http.download("POST", "/papers/bulk-export", null, Json.of("ids", Json.array(ids), "fmt", fmt));
+    }
+
     /** 把整份卷子（generate / paper 的返回）导成 Excel */
     static Http.Download exportXlsx(JSONObject paper) throws ApiException {
         return Http.download("POST", "/papers/export/xlsx", null, paper);

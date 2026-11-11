@@ -147,4 +147,56 @@ final class MeApi {
     static JSONObject siteConfig() throws ApiException {
         return Http.getObj("/config", null);
     }
+
+    // ---------- 回收站（每位老师都有；老师只看自己删的，管理员看所有人删的） ----------
+
+    /** {items: [{id, kind, kind_name, title, detail, deleted_by_name, deleted_at, days_left}], kinds, keep_days} */
+    static JSONObject recycle() throws ApiException {
+        return Http.getObj("/recycle", null);
+    }
+
+    static JSONObject recycleRestore(List<Integer> ids) throws ApiException {
+        return Http.postObj("/recycle/restore", Json.of("ids", ids));
+    }
+
+    static JSONObject recycleDestroy(List<Integer> ids) throws ApiException {
+        return Http.postObj("/recycle/destroy", Json.of("ids", ids));
+    }
+
+    /** 清空（管理员） */
+    static void recycleClear() throws ApiException {
+        Http.delete("/recycle", null);
+    }
+
+    // ---------- 数据备份与系统更新（只有部署时建的系统管理员） ----------
+
+    /** {agent: {installed…}, busy: 任务或 null, recent: [任务…]} */
+    static JSONObject systemStatus() throws ApiException {
+        return Http.getObj("/system/status", null);
+    }
+
+    /** {id, action, label, status: queued/running/ok/failed/lost, message, log} */
+    static JSONObject systemJob(String id) throws ApiException {
+        return Http.getObj("/system/jobs/" + id, null);
+    }
+
+    static Http.Download exportBackup() throws ApiException {
+        return Http.download("GET", "/system/backup/export", null, null);
+    }
+
+    static JSONObject importBackup(Uri file, String password) throws ApiException {
+        java.util.Map<String, String> f = new java.util.HashMap<>();
+        f.put("password", password);
+        return Http.asObj(Http.upload("/system/backup/import", null, "file", file, f));
+    }
+
+    static JSONObject updateFromGithub(String password) throws ApiException {
+        return Http.asObj(Http.post("/system/update/github", Params.of("password", password)));
+    }
+
+    static JSONObject updateFromZip(Uri file, String password) throws ApiException {
+        java.util.Map<String, String> f = new java.util.HashMap<>();
+        f.put("password", password);
+        return Http.asObj(Http.upload("/system/update/upload", null, "file", file, f));
+    }
 }

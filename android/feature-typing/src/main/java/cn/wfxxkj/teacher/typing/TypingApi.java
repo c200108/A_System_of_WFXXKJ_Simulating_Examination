@@ -154,9 +154,30 @@ final class TypingApi {
         return DIFFICULTIES;
     }
 
-    static List<JSONObject> texts(String mode, String difficulty, String keyword) throws ApiException {
+    static List<JSONObject> texts(String mode, String difficulty, String keyword, Integer themeId) throws ApiException {
         return Json.list(Http.getArr("/typing/texts",
-                Params.of("mode", mode).add("difficulty", difficulty).add("keyword", keyword)));
+                Params.of("mode", mode).add("difficulty", difficulty).add("keyword", keyword).add("theme_id", themeId)));
+    }
+
+    // ---------- 主题（服务端 2.15.0 起） ----------
+
+    /** 主题列表：{id, name, is_enabled, sort_order, is_builtin, counts:{chinese:{简单:8}}, total} */
+    static List<JSONObject> themes() throws ApiException {
+        return Json.list(Http.getArr("/typing/themes", null));
+    }
+
+    static JSONObject createTheme(String name) throws ApiException {
+        return Http.postObj("/typing/themes", Json.of("name", name));
+    }
+
+    /** 改名 / 启用停用 / 排序，只传要改的 */
+    static JSONObject updateTheme(int id, JSONObject patch) throws ApiException {
+        return Http.asObj(Http.put("/typing/themes/" + id, patch));
+    }
+
+    /** 删主题，返回 {moved}：它下面的文本归回「信息生活」 */
+    static JSONObject deleteTheme(int id) throws ApiException {
+        return Http.asObj(Http.delete("/typing/themes/" + id, null));
     }
 
     /** {english:{简单:12,...}, chinese:{...}}，只数启用的 */
@@ -164,9 +185,9 @@ final class TypingApi {
         return Http.getObj("/typing/texts/stats", null);
     }
 
-    static JSONObject createText(String mode, String difficulty, String content) throws ApiException {
+    static JSONObject createText(String mode, String difficulty, String content, Integer themeId) throws ApiException {
         return Http.asObj(Http.post("/typing/texts",
-                Json.of("mode", mode, "difficulty", difficulty, "content", content)));
+                Json.of("mode", mode, "difficulty", difficulty, "content", content, "theme_id", themeId)));
     }
 
     /** 改难度、内容或启用状态，只传要改的 */
@@ -178,15 +199,17 @@ final class TypingApi {
         Http.delete("/typing/texts/" + id, null);
     }
 
-    /** action：delete / enable / disable，返回实际处理了几段 */
-    static int bulkTexts(Collection<?> ids, String action) throws ApiException {
-        JSONObject r = Http.asObj(Http.post("/typing/texts/bulk", Json.of("ids", Json.array(ids), "action", action)));
+    /** action：delete / enable / disable / theme（改到 themeId），返回实际处理了几段 */
+    static int bulkTexts(Collection<?> ids, String action, Integer themeId) throws ApiException {
+        JSONObject r = Http.asObj(Http.post("/typing/texts/bulk",
+                Json.of("ids", Json.array(ids), "action", action, "theme_id", themeId)));
         return Json.num(r, "affected");
     }
 
     /** 上传 txt 批量导入：{added, skipped, too_short, total} */
-    static JSONObject importTxt(String mode, String difficulty, String split, Uri file) throws ApiException {
+    static JSONObject importTxt(String mode, String difficulty, String split, Integer themeId, Uri file) throws ApiException {
         return Http.asObj(Http.upload("/typing/texts/import",
-                Params.of("mode", mode).add("difficulty", difficulty).add("split", split), "file", file));
+                Params.of("mode", mode).add("difficulty", difficulty).add("split", split).add("theme_id", themeId),
+                "file", file));
     }
 }

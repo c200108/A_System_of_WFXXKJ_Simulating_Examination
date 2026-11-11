@@ -33,7 +33,8 @@ import cn.wfxxkj.teacher.core.ui.V;
  * <ul>
  *   <li>上方两张小卡：中文 / 英文各难度启用了多少段，少于 10 段标黄提醒；</li>
  *   <li>语言、难度点选，内容可搜；</li>
- *   <li>卡片上直接开关启用；点卡片编辑；长按多选后批量启用 / 停用 / 删除；</li>
+ *   <li>主题点选筛选，「管理主题」里新增、改名、启停、排序、删除；</li>
+ *   <li>卡片上直接开关启用；点卡片编辑；长按多选后批量启用 / 停用 / 改主题 / 删除；</li>
  *   <li>右下角「添加一段」，右上角「上传 txt 批量导入」。</li>
  * </ul>
  */
@@ -45,6 +46,10 @@ final class TextListScreen extends Screen {
     private String mode = "chinese";
     private String difficulty = "";
     private String keyword = "";
+    /** 筛选的主题，null = 全部主题 */
+    private Integer themeId;
+    /** 主题列表（老服务器没有主题时是空的，主题相关的入口全部藏起来） */
+    private List<JSONObject> themes = new ArrayList<>();
     private String[] difficulties = TypingApi.DIFFICULTIES;
     private int seq;
 
@@ -53,6 +58,7 @@ final class TextListScreen extends Screen {
     private GridBox summary;
     private ChipRow modeRow;
     private ChipRow diffRow;
+    private ChipRow themeRow;
     private TextView countText;
 
     @Override
@@ -83,7 +89,7 @@ final class TextListScreen extends Screen {
         list.addHeader(buildHeader(c));
         list.setEmpty("这个筛选条件下还没有文本", "点右下角「添加一段」，或上传 txt 批量导入", "添加一段", this::openCreate);
         list.setOnRefresh(this::load);
-        list.setOnItemClick((it, pos) -> TextEditSheet.show(this, it, mode, difficulty, difficulties, this::load));
+        list.setOnItemClick((it, pos) -> TextEditSheet.show(this, it, mode, difficulty, difficulties, themes, defaultTheme(), this::load));
         list.enableSelection(it -> it.optLong("id"), n -> {
             bar.show(n, "段");
             invalidateChrome();
@@ -93,6 +99,7 @@ final class TextListScreen extends Screen {
         bar.add("全选", V.BTN_TONAL, v -> list.selectAll());
         SelectBar.needSelection(bar.add("启用", V.BTN_TONAL, v -> bulk("enable")));
         SelectBar.needSelection(bar.add("停用", V.BTN_OUTLINE, v -> bulk("disable")));
+        SelectBar.needSelection(bar.add("改主题", V.BTN_OUTLINE, v -> bulkTheme()));
         SelectBar.needSelection(bar.add("删除", V.BTN_DANGER_TONAL, v -> bulk("delete")));
         return bar.wrap(list);
     }
@@ -117,6 +124,15 @@ final class TextListScreen extends Screen {
         renderDiffRow();
         V.addTop(h, diffRow, 2);
 
+        themeRow = new ChipRow(c);
+        themeRow.setVisibility(View.GONE);
+        themeRow.setOnPicked(o -> {
+            String v = String.valueOf(o.value);
+            themeId = v.isEmpty() ? null : Integer.valueOf(v);
+            load();
+        });
+        V.addTop(h, themeRow, 2);
+
         SearchBox sb = new SearchBox(c, "搜内容");
         sb.setOnSearch(k -> {
             keyword = k;
@@ -139,6 +155,39 @@ final class TextListScreen extends Screen {
             difficulty = String.valueOf(op.value);
             load();
         });
+    }
+
+    private void renderThemeRow() {
+        List<Option> o = new ArrayList<>();
+        o.add(new Option("", "全部主题"));
+        boolean found = false;
+        for (JSONObject t : themes) {
+            o.add(new Option(String.valueOf(Json.num(t, "id")), Json.str(t, "name") + (Json.bool(t, "is_enabled") ? "" : "（停用）")));
+            if (themeId != null && themeId == Json.num(t, "id")) found = true;
+        }
+        if (!found) themeId = null;
+        themeRow.setOptions(o, themeId == null ? "" : String.valueOf(themeId));
+        themeRow.setVisibility(themes.isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
+    /** 主题 id → 名称；不在列表里（或没有主题）的归「信息生活」 */
+    String themeName(JSONObject text) {
+        if (themes.isEmpty()) return "";
+        int id = Json.num(text, "theme_id");
+        for (JSONObject t : themes) if (Json.num(t, "id") == id) return Json.str(t, "name");
+        for (JSONObject t : themes) if (Json.bool(t, "is_builtin")) return Json.str(t, "name");
+        return "信息生活";
+    }
+
+    /** 新建 / 导入时默认归的主题：正在筛的那个，否则内置主题 */
+    Integer defaultTheme() {
+        if (themeId != null) return themeId;
+        for (JSONObject t : themes) if (Json.bool(t, "is_builtin")) return Json.num(t, "id");
+        return null;
+    }
+
+    List<JSONObject> themes() {
+        return themes;
     }
 
     private void renderSummary(JSONObject stats) {
@@ -187,11 +236,14 @@ final class TextListScreen extends Screen {
             a.add(Action.icon(R.drawable.ic_select_all, "全选当前", () -> list.selectAll()));
             a.add(Action.menu("批量启用", () -> bulk("enable")));
             a.add(Action.menu("批量停用", () -> bulk("disable")));
+            if (!themes.isEmpty()) a.add(Action.menu("批量改主题", this::bulkTheme));
             a.add(Action.menu(R.drawable.ic_delete, "批量删除", () -> bulk("delete")).danger());
             a.add(Action.menu("退出多选", () -> list.stopSelection()));
             return a;
         }
         a.add(Action.icon(R.drawable.ic_upload_file, "上传 txt 批量导入", this::openImport));
+        if (!themes.isEmpty()) a.add(Action.menu(R.drawable.ic_edit, "管理主题", () ->
+                push(new ThemeScreen(mode, difficulties, this::load))));
         a.add(Action.menu(R.drawable.ic_done_all, "多选（批量启用 / 停用 / 删除）", () -> list.startSelection()));
         a.add(Action.menu(R.drawable.ic_refresh, "刷新", this::load));
         return a;
@@ -227,10 +279,25 @@ final class TextListScreen extends Screen {
     private void load() {
         final int my = ++seq;
         final String m = mode, d = difficulty, k = keyword;
+        final Integer th = themeId;
         list.loading();
-        run(() -> new Object[]{TypingApi.texts(m, d, k), TypingApi.textStats()}, r -> {
+        run(() -> {
+            List<JSONObject> ts;
+            try {
+                ts = TypingApi.themes();
+            } catch (cn.wfxxkj.teacher.core.net.ApiException e) {
+                if (e.code != 404) throw e;
+                ts = new ArrayList<>(); // 服务端 2.15.0 以前没有主题
+            }
+            List<JSONObject> items = TypingApi.texts(m, d, k, th);
+            JSONObject stats = TypingApi.textStats();
+            return new Object[]{items, stats, ts};
+        }, r -> {
             if (my != seq) return;
             @SuppressWarnings("unchecked") List<JSONObject> items = (List<JSONObject>) r[0];
+            @SuppressWarnings("unchecked") List<JSONObject> ts = (List<JSONObject>) r[2];
+            themes = ts;
+            renderThemeRow();
             // 换了筛选，勾选清掉，免得误删看不见的那些（同网页）
             if (list.isSelecting()) list.stopSelection();
             list.setItems(items);
@@ -247,11 +314,11 @@ final class TextListScreen extends Screen {
     // ---------------------------------------------------------------- 操作
 
     private void openCreate() {
-        TextEditSheet.show(this, null, mode, difficulty, difficulties, this::load);
+        TextEditSheet.show(this, null, mode, difficulty, difficulties, themes, defaultTheme(), this::load);
     }
 
     private void openImport() {
-        TextImportSheet.show(this, mode, difficulty, difficulties, this::load);
+        TextImportSheet.show(this, mode, difficulty, difficulties, themes, defaultTheme(), this::load);
     }
 
     private void toggleActive(final JSONObject row, final boolean on, final Switch sw) {
@@ -287,7 +354,7 @@ final class TextListScreen extends Screen {
         String label = "";
         for (String[] b : BULK) if (b[0].equals(action)) label = b[1];
         final String l = label;
-        Runnable go = () -> runBusy("正在" + l + "…", () -> TypingApi.bulkTexts(ids, action), n -> {
+        Runnable go = () -> runBusy("正在" + l + "…", () -> TypingApi.bulkTexts(ids, action, null), n -> {
             list.stopSelection();
             toast("已" + l + " " + n + " 段");
             load();
@@ -298,6 +365,25 @@ final class TextListScreen extends Screen {
         } else {
             go.run();
         }
+    }
+
+    /** 把勾选的文本挪到另一个主题 */
+    private void bulkTheme() {
+        final List<Object> ids = list.selectedKeys();
+        if (ids.isEmpty()) {
+            toast("先勾选要处理的文本");
+            return;
+        }
+        List<Option> o = new ArrayList<>();
+        for (JSONObject t : themes) o.add(new Option(Json.num(t, "id"), Json.str(t, "name")));
+        Dialogs.choose(ctx(), "把选中的 " + ids.size() + " 段改到哪个主题", o, null, op -> {
+            final Integer tid = ((Number) op.value).intValue();
+            runBusy("正在改主题…", () -> TypingApi.bulkTexts(ids, "theme", tid), n -> {
+                list.stopSelection();
+                toast("已把 " + n + " 段改到「" + op.label + "」");
+                load();
+            });
+        });
     }
 
     // ---------------------------------------------------------------- 卡片
@@ -347,6 +433,8 @@ final class TextListScreen extends Screen {
             tags.removeAllViews();
             String d = Json.str(r, "difficulty");
             tags.addView(V.tag(c, d, TypingUi.difficultyTone(d)));
+            String theme = themeName(r);
+            if (!theme.isEmpty()) V.addStart(tags, V.tag(c, theme, Tone.VIOLET), 6);
             if (!active) V.addStart(tags, V.tag(c, "已停用", Tone.NEUTRAL), 6);
             String src = Json.str(r, "source");
             binding = true;

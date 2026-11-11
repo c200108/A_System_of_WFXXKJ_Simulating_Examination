@@ -35,6 +35,7 @@ public class MeHomeScreen extends Screen implements Session.Listener {
     private LinearLayout content;
     private LinearLayout userCard;
     private View adminRows;
+    private View systemRow;
     private View changelogRow;
     private LinearLayout feedbackRow;
     private TextView pendingTag;
@@ -81,6 +82,14 @@ public class MeHomeScreen extends Screen implements Session.Listener {
                 "新增教师、重置密码、分配班级、权限", null, v -> push(new UsersScreen()));
         MeUi.addRow(account, adminRows);
         content.addView(account, V.matchWrap());
+
+        // 数据
+        content.addView(MeUi.groupTitle(c, "数据"));
+        LinearLayout recycle = V.row(c, R.drawable.ic_delete, Tone.DANGER, "回收站", "删掉的东西先放几天，可以还原",
+                null, v -> push(new RecycleScreen()));
+        systemRow = V.row(c, R.drawable.ic_refresh, Tone.PRIMARY, "数据备份与系统更新", "导出导入数据、一键升级服务器",
+                null, v -> push(new SystemScreen()));
+        content.addView(MeUi.group(c, recycle, systemRow), V.matchWrap());
 
         // 交流
         content.addView(MeUi.groupTitle(c, "交流"));
@@ -168,6 +177,8 @@ public class MeHomeScreen extends Screen implements Session.Listener {
         // 账号管理、更新日志只有管理员能进（和网页菜单一致）
         setRowVisible(adminRows, admin);
         setRowVisible(changelogRow, admin);
+        // 数据备份与系统更新只有 root 管理员（网页端同样只给 ADMIN_USERNAME 那个账号）
+        setRowVisible(systemRow, session().isRoot());
     }
 
     /** 隐藏一行时把它上面的分隔线一起藏掉 */

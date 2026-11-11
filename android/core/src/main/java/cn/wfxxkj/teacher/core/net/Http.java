@@ -116,7 +116,14 @@ public final class Http {
      * field 是表单字段名（后端都叫 file）。
      */
     public static Object upload(String path, Params query, String field, Uri file) throws ApiException {
+        return upload(path, query, field, file, null);
+    }
+
+    /** 同上，再带几个普通表单字段（如系统管理员导入数据要带的 password） */
+    public static Object upload(String path, Params query, String field, Uri file,
+                                java.util.Map<String, String> fields) throws ApiException {
         Multipart mp = new Multipart(field, file);
+        if (fields != null) mp.fields.putAll(fields);
         Response r = send("POST", path, query, null, mp, true);
         String text = new String(r.bytes, StandardCharsets.UTF_8).trim();
         if (text.isEmpty()) return null;
@@ -176,6 +183,7 @@ public final class Http {
         final String field;
         final Uri uri;
         final String boundary = "----wfxx" + UUID.randomUUID().toString().replace("-", "");
+        final java.util.Map<String, String> fields = new java.util.LinkedHashMap<>();
 
         Multipart(String field, Uri uri) {
             this.field = field;
@@ -215,7 +223,8 @@ public final class Http {
             conn = (HttpURLConnection) new URL(url).openConnection();
             conn.setRequestMethod(method);
             conn.setConnectTimeout(CONNECT_TIMEOUT);
-            conn.setReadTimeout(READ_TIMEOUT);
+            // 系统管理员导出 / 导入整库数据、上传升级包：服务器要打包 / 体检，比普通请求慢得多
+            conn.setReadTimeout(url.contains("/api/system/") ? 600_000 : READ_TIMEOUT);
             conn.setUseCaches(false);
             conn.setRequestProperty("Accept", "application/json, */*");
             conn.setRequestProperty("User-Agent", s.userAgent());
@@ -297,6 +306,10 @@ public final class Http {
         conn.setChunkedStreamingMode(64 * 1024);
         conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + mp.boundary);
         OutputStream os = conn.getOutputStream();
+        for (java.util.Map.Entry<String, String> f : mp.fields.entrySet()) {
+            os.write(("--" + mp.boundary + "\r\nContent-Disposition: form-data; name=\"" + f.getKey() + "\"\r\n\r\n"
+                    + f.getValue() + "\r\n").getBytes(StandardCharsets.UTF_8));
+        }
         String head = "--" + mp.boundary + "\r\n"
                 + "Content-Disposition: form-data; name=\"" + mp.field + "\"; filename=\""
                 + name.replace("\"", "") + "\"\r\n"

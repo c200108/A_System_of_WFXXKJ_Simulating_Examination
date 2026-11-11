@@ -22,6 +22,11 @@ final class DataApiClient {
         return Http.postObj("/data-apis", Json.of("name", name, "description", desc, "template", template));
     }
 
+    /** 把 API 转给另一位老师（管理员），返回新的详情 */
+    static JSONObject transfer(int id, int ownerId) throws ApiException {
+        return Http.postObj("/data-apis/" + id + "/transfer", Json.of("owner_id", ownerId));
+    }
+
     static JSONObject get(int id) throws ApiException {
         return Http.getObj("/data-apis/" + id, null);
     }
