@@ -148,6 +148,34 @@ def _not_done(body: TypingRecordIn) -> str:
     return tip
 
 
+def _cheated(body: TypingRecordIn) -> str:
+    """速度快得不可能、或者字比按键多出一大截（粘贴进来的），返回原因；正常返回空串（2.22.1）。
+
+    速度按「正确字数 ÷ 用时」算，和成绩里的速度同一个口径；用时不足 1 秒按 1 秒算。
+    键盘模块看的是每分钟按键数。上限在 config.yaml 的 typing.max_speed_* 里改，填 0 不限。
+    按键数只有网页端报（keystrokes），exe 和旧网页不带就不查这一条。
+    """
+    c = site.typing
+    secs = max(1.0, float(body.duration))
+    per_min = 60.0 / secs
+    if body.module == "键盘":
+        if c.max_keys_per_min and body.typed_chars * per_min > c.max_keys_per_min:
+            return (f"按键速度异常（每分钟 {round(body.typed_chars * per_min)} 键，上限 {c.max_keys_per_min}），"
+                    "这次不记成绩")
+        return ""
+    correct = max(0, min(body.correct_chars, body.typed_chars))
+    cap = c.max_speed_chinese if body.module == "中文" else c.max_speed_english
+    if cap and correct * per_min > cap:
+        return (f"打字速度异常（每分钟 {round(correct * per_min)} 字，超过上限 {cap}），"
+                "像是粘贴进来的，这次不记成绩。请自己一个字一个字地打")
+    ratio = c.min_keys_per_char_chinese if body.module == "中文" else c.min_keys_per_char_english
+    if body.keystrokes is not None and ratio > 0 and body.typed_chars >= 10:
+        if body.keystrokes < body.typed_chars * ratio:
+            return (f"输入了 {body.typed_chars} 个字却只按了 {body.keystrokes} 次键，像是粘贴进来的，"
+                    "这次不记成绩。请自己一个字一个字地打")
+    return ""
+
+
 @router.get("/passage", summary="按难度随机取一篇练习文本（公开）")
 def get_passage(
     request: Request,
@@ -238,7 +266,7 @@ def submit_record(
         raise HTTPException(status_code=400, detail="请填写班级和姓名")
     if body.module not in MODULES:
         raise HTTPException(status_code=400, detail=f"模块只能是 {'/'.join(MODULES)}")
-    why = _not_done(body)
+    why = _not_done(body) or _cheated(body)
     if why:
         raise HTTPException(status_code=400, detail=why)
     # 放在最后判：前面几条不过的根本没交上，不该占这一分钟的名额

@@ -12,6 +12,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
+import { createTypingGuard, devtoolsOpen } from '../typingGuard'
 
 // 键盘五排，和原页面一致
 const KB_ROWS = [
@@ -182,8 +183,32 @@ const progress = computed(() =>
   target.value ? Math.round((typed.value.length / target.value.length) * 100) : 0
 )
 
+// ---------- 防作弊（2.22.1）：拦粘贴 / 拖放 / 复制快捷键 / 开发者工具，数按键 ----------
+const guard = createTypingGuard({
+  isRunning: () => running.value && mode.value !== 'free',
+  onBlocked: msg => ElMessage.warning(msg),
+  onDevtools: () => abortRun('检测到打开了开发者工具（F12）。这次练习作废，不记成绩；关掉开发者工具后重新开始。')
+})
+// 上一次输入后框里的内容：来路不明的一大段字直接退回到这里
+let lastTyped = ''
+
+/** 作废这次练习（不交成绩） */
+function abortRun(msg) {
+  if (!running.value) return
+  running.value = false
+  clearInterval(timer)
+  guard.stopProbe()
+  ElMessageBox.alert(msg, '这次练习不算数', { type: 'error' })
+}
+
 function onInput() {
   if (!running.value) return
+  const added = typed.value.length - lastTyped.length
+  if (!guard.checkGrowth(added, mode.value)) {
+    typed.value = lastTyped
+    return
+  }
+  lastTyped = typed.value
   if (typed.value.length >= target.value.length) finish()
 }
 
@@ -203,6 +228,9 @@ function fmt(s) {
 
 // ---------- 开始 / 结束 ----------
 async function start() {
+  if (devtoolsOpen()) {
+    return ElMessageBox.alert('请先关掉开发者工具（F12）再开始练习。', '不能开始', { type: 'warning' })
+  }
   if (!me.student_class.trim() || !me.student_name.trim()) {
     return ElMessage.warning('请先填写班级和姓名')
   }
@@ -227,7 +255,9 @@ async function start() {
       return
     }
     typed.value = ''
+    lastTyped = ''
     await nextTick()
+    guard.attach(inputRef.value)
     inputRef.value?.focus()
   }
 
@@ -235,6 +265,7 @@ async function start() {
   elapsed.value = 0
   leftSec.value = me.limit * 60
   running.value = true
+  guard.resetRun()
   startedAt = Date.now()
   clearInterval(timer)
   timer = setInterval(tick, 300)
@@ -279,6 +310,7 @@ async function finish(manual = false) {
   }
   running.value = false
   clearInterval(timer)
+  guard.stopProbe()
   const secs = (Date.now() - startedAt) / 1000
 
   const payload =
@@ -290,7 +322,10 @@ async function finish(manual = false) {
           correct_chars: correctCount.value,
           // 服务端靠这两个判「打完一半没有」
           target_chars: target.value.length,
-          time_limit: me.limit
+          time_limit: me.limit,
+          // 这次练习在输入框里按了多少次键（含输入法打拼音的键）。服务端拿它和字数比，
+          // 字比键多出一大截的就是粘贴进来的，不收
+          keystrokes: guard.state.keys
         }
 
   await send({
@@ -334,6 +369,7 @@ function switchMode(m) {
 }
 
 onMounted(async () => {
+  guard.install()
   try {
     conf.value = await api.typingConfig()
     me.difficulty = conf.value.default_difficulty
@@ -359,6 +395,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  guard.uninstall()
   clearInterval(timer)
   clearTimeout(freeLitTimer)
   window.removeEventListener('keydown', onKeydown)
@@ -785,6 +822,9 @@ h1 small {
   min-height: 22px;
 }
 .display {
+  /* 原文不让选中，免得复制出去再粘回来 */
+  user-select: none;
+  -webkit-user-select: none;
   padding: 18px;
   font-size: 19px;
   line-height: 2.05;

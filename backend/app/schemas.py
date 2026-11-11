@@ -695,6 +695,8 @@ class TypingRecordIn(BaseModel):
     # 「打完一半才能交」靠这两个数判；不带的是旧版学生端，中文英文交不上来
     target_chars: int = Field(default=0, ge=0)
     time_limit: int = Field(default=0, ge=0)
+    # 2.22.1 起网页端带：这次练习在输入框里按了几次键。None = exe / 旧网页，不查
+    keystrokes: int | None = Field(default=None, ge=0)
 
 
 class TypingResultOut(BaseModel):
