@@ -177,11 +177,14 @@ public class FeedbackScreen extends Screen implements FeedbackCard.Handler {
         final String cat = String.valueOf(filter.value() == null ? "" : filter.value());
         final boolean admin = isAdmin();
         run(() -> {
-            Object[] r = new Object[3];
-            r[0] = MeApi.feedbackList(cat);
-            if (admin) r[1] = MeApi.feedbackAll();
-            r[2] = MeApi.feedbackPending();
-            return r;
+            // 不要写成 new Object[3] 再 if (admin) r[1] = …：R8（AGP 8.7.3）会把它压成一条
+            // filled-new-array，非管理员那条路上 r[1] 用的寄存器没赋值，安卓直接拒绝加载这个类
+            // （VerifyError）。R8 又把多个页面的后台任务并进同一个类，结果点「学生 → 班级」就闪退。
+            // 每个位置都先在局部变量里给定值（含 null），再一次性建数组。
+            List<JSONObject> pub = MeApi.feedbackList(cat);
+            List<JSONObject> all = admin ? MeApi.feedbackAll() : null;
+            Integer pendingCount = MeApi.feedbackPending();
+            return new Object[]{pub, all, pendingCount};
         }, r -> {
             loadedOnce = true;
             @SuppressWarnings("unchecked") List<JSONObject> pub = (List<JSONObject>) r[0];
