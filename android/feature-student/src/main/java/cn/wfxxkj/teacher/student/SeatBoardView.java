@@ -147,7 +147,15 @@ final class SeatBoardView extends View {
         boolean first = sheet == null;
         sheet = s;
         measureGrid();
-        if (first) fitted = false;
+        if (first) {
+            // 第一次拿到表：铺满屏幕宽。界面早就量好了尺寸（数据是后来才回来的），onSizeChanged 不会再来，这里直接适应；
+            // 还没量好的话留给 onSizeChanged
+            fitted = false;
+            if (getWidth() > 0) {
+                fitted = true;
+                fit();
+            }
+        }
         clamp();
         invalidate();
     }

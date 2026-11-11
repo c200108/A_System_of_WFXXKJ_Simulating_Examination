@@ -17,8 +17,8 @@ android {
         minSdk 29          // 安卓 10
         targetSdk 35       // 安卓 15；更新的安卓照样能装
         // 版本号跟系统的产品线走：5.x = 教师端 APP
-        versionCode 50200
-        versionName '5.2.0'
+        versionCode 50201
+        versionName '5.2.1'
     }
 
     signingConfigs {

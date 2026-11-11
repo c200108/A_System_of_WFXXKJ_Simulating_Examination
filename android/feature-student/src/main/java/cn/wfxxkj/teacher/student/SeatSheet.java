@@ -454,7 +454,11 @@ final class SeatSheet {
                     h = "" + h.charAt(0) + h.charAt(0) + h.charAt(1) + h.charAt(1) + h.charAt(2) + h.charAt(2);
                 }
                 if (h.length() == 6) return 0xFF000000 | Integer.parseInt(h, 16);
-                if (h.length() == 8) return (int) Long.parseLong(h, 16);
+                if (h.length() == 8) {
+                    // CSS 的 8 位写法是 #RRGGBBAA，安卓要 AARRGGBB
+                    long hv = Long.parseLong(h, 16);
+                    return (int) (((hv & 0xFF) << 24) | (hv >>> 8));
+                }
                 return def;
             }
             Matcher m = Pattern.compile("rgba?\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*(?:,\\s*([0-9.]+)\\s*)?\\)")
