@@ -250,6 +250,14 @@ class TypingConf(_Base):
     passage_per_minute: int = Field(default=3, ge=0)         # 同一台电脑每分钟最多换几次文本
     # 公开打字页（/dazi）手填的班级姓名必须在学生名单里才能交（2.12.0）
     require_roster: bool = True
+    # 防作弊（2.22.1）：复制粘贴刷出来的「8000 字/分、用时 1 秒」不收。填 0 = 不限
+    max_speed_chinese: int = Field(default=200, ge=0)   # 中文每分钟最多多少字（正确字数）
+    max_speed_english: int = Field(default=500, ge=0)   # 英文每分钟最多多少个字母（约 100 词/分）
+    max_keys_per_min: int = Field(default=400, ge=0)    # 「认识键盘」每分钟最多按多少键
+    # 网页端会报这次在输入框里按了多少次键（含输入法拼音、五笔编码的键）。
+    # 字数 > 按键数 ÷ 这个比例，说明有大段文字不是敲进来的。exe 和旧网页不报，就不查这一条
+    min_keys_per_char_chinese: float = Field(default=0.6, ge=0)
+    min_keys_per_char_english: float = Field(default=0.9, ge=0)
     # 文本库：{难度: [段落, ...]}，改这里不用重新构建，restart backend 即可
     english: dict[str, list[str]] = Field(default_factory=dict)
     chinese: dict[str, list[str]] = Field(default_factory=dict)

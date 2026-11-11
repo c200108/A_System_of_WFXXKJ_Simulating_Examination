@@ -204,6 +204,13 @@ typing:
   submit_interval_sec: 60 # 同一台电脑两次交成绩至少隔多少秒
   passage_per_minute: 3 # 同一台电脑每分钟最多换几次练习文本（exe 的「换一段」、网页的「开始」都算）
   require_roster: true # 免登录的打字页（/dazi）填的班级、姓名必须和学生名单对得上才能交成绩
+  # 防作弊（2.22.1）：超过这个速度的成绩不收（复制粘贴刷出来的），填 0 = 不限
+  max_speed_chinese: 200 # 中文每分钟最多多少字
+  max_speed_english: 500 # 英文每分钟最多多少个字母（约 100 词/分）
+  max_keys_per_min: 400 # 「认识键盘」每分钟最多按多少键
+  # 网页端会报按键次数：字数比「按键数 × 这个数」还多出一截，就是粘贴进来的，不收
+  min_keys_per_char_chinese: 0.6
+  min_keys_per_char_english: 0.9
   star_thresholds: # 正确率达到 base 给两星，base+12 给三星
     简单: 68
     中等: 80
