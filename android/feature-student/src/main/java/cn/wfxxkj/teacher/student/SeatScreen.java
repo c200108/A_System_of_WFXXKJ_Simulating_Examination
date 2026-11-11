@@ -56,6 +56,8 @@ final class SeatScreen extends Screen {
     private SeatSheet.Roster roster = new SeatSheet.Roster(null);
     private final Map<String, Integer> points = new HashMap<>();
     private boolean canEdit, dirty, selecting, loaded;
+    /** 摆的是默认空表，服务器上还没有这个班的座次 */
+    private boolean fresh;
 
     private SeatBoardView board;
     private StateView state;
@@ -78,6 +80,7 @@ final class SeatScreen extends Screen {
         if (selecting) return "多选：点格子勾选，已选 " + pickedStudents().size() + " 位同学";
         if (dirty) return "有改动还没保存";
         if (!loaded) return null;
+        if (fresh) return canEdit ? "学校默认空表，还没保存过 · 可以「一键排座」" : "这个班还没有排座次（显示的是默认空表）";
         return canEdit ? "点学生加减分，长按拖动换座" : "只能查看（不是你带的班）";
     }
 
@@ -100,7 +103,7 @@ final class SeatScreen extends Screen {
             board.fit();
             showZoom();
         }));
-        bar.addView(V.spring(ctx), V.fill());
+        bar.addView(V.spring(ctx));
         bar.addView(V.button(ctx, "课堂日志", V.BTN_TEXT, v -> push(new ClassLogScreen(cls, canEdit))));
         col.addView(bar, V.matchWrap());
 
@@ -194,7 +197,15 @@ final class SeatScreen extends Screen {
             if (r[1] != null) readTotals(Json.obj((JSONObject) r[1], "totals"));
             loaded = true;
             JSONObject s = got.optJSONObject("sheet");
-            if (s == null) {
+            JSONObject tpl = s == null ? defaultTemplate() : null;
+            fresh = s == null && tpl != null;
+            if (fresh) {
+                // 没保存过座次的班：和网页一样先摆出学校那张默认空表（frontend/public/seat-default.xlsx 转的 JSON），
+                // 保存了才写到服务器
+                SeatSheet ns = new SeatSheet(tpl);
+                ns.seatRanges = SeatSheet.toRanges(ns.detectSeats(roster));
+                setSheet(ns);
+            } else if (s == null) {
                 sheet = null;
                 if (canEdit) {
                     state.empty("还没有在线座次表",
@@ -258,7 +269,7 @@ final class SeatScreen extends Screen {
             return a;
         }
         if (canEdit && sheet != null) {
-            a.add(Action.icon(R.drawable.ic_check, "保存", this::save).enabled(dirty));
+            a.add(Action.icon(R.drawable.ic_check, "保存", this::save).enabled(dirty || (fresh && canEdit)));
             a.add(Action.menu(R.drawable.ic_check_circle, "多选（批量加减分 / 分组 / 设备故障）", this::startSelecting));
             a.add(Action.menu(R.drawable.ic_shuffle, "一键排座", this::openPlan));
             a.add(Action.menu(R.drawable.ic_groups, "小组", this::manageGroups));
@@ -266,7 +277,7 @@ final class SeatScreen extends Screen {
         }
         a.add(Action.menu(R.drawable.ic_edit_note, "课堂日志", () -> push(new ClassLogScreen(cls, canEdit))));
         a.add(Action.menu(R.drawable.ic_refresh, "重新载入", () -> confirmDiscard(this::load)));
-        if (canEdit && sheet != null) {
+        if (canEdit && sheet != null && !fresh) {
             a.add(Action.menu(R.drawable.ic_delete, "清空座次表", this::clearSheet).danger());
         }
         return a;
@@ -302,6 +313,7 @@ final class SeatScreen extends Screen {
         final JSONObject body = sheet.toJson();
         runBusy("正在保存…", () -> StudentApi.saveSeatSheet(cid, body), row -> {
             dirty = false;
+            fresh = false;
             Kit.touch();
             invalidateChrome();
             toast("座次表已保存");
@@ -318,6 +330,19 @@ final class SeatScreen extends Screen {
                     toast("已清空");
                     load();
                 }));
+    }
+
+    /** APP 里带的学校默认空表；读不出来返回 null（退回「新建座次表」） */
+    private JSONObject defaultTemplate() {
+        try (java.io.InputStream in = ctx().getAssets().open("seat-default.json")) {
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            return new JSONObject(new String(out.toByteArray(), "UTF-8"));
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /** 没有座次表时建一张简单的：每列一组座位号 + 座位，第一行是讲台 */
@@ -698,7 +723,7 @@ final class SeatScreen extends Screen {
                 });
                 row.addView(dot, new LinearLayout.LayoutParams(dp(28), dp(28)));
                 V.addStart(row, V.text(c, g.optString("name") + "  · " + n + " 人", V.BODY), 10);
-                row.addView(V.spring(c), V.fill());
+                row.addView(V.spring(c));
                 row.addView(V.button(c, "改名", V.BTN_TEXT, v -> Dialogs.prompt(c, "小组改名", "如 第1组、红队",
                         g.optString("name"), 1, "确定", t -> {
                             if (t.trim().isEmpty()) return;
