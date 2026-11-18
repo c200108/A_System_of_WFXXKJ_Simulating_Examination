@@ -274,10 +274,131 @@ def test_agent_downloads_then_runs(tmp_path):
         proj = _fake_project(tmp_path)
         d = _queue(proj, "update-github", {})
         env = {**os.environ, "UPDATE_ZIP_URL": f"http://127.0.0.1:{srv.server_port}/main.zip",
-               "HOME": str(tmp_path)}
+               **_no_github(srv), "HOME": str(tmp_path)}
         subprocess.run(["bash", str(proj / "scripts" / "host-agent.sh")], check=True, timeout=60, env=env)
     finally:
         srv.shutdown()
     log = (d / "log.txt").read_text(encoding="utf-8")
     assert "已下载：main.zip" in log and "args=main.zip" in log, log
     assert json.loads((d / "status.json").read_text())["status"] == "ok"
+
+
+def _no_github(srv) -> dict:
+    """测试里不许真去问 GitHub：比版本用的三个地址都指到本地（不存在的就当问不到）。"""
+    base = f"http://127.0.0.1:{srv.server_port}"
+    return {"UPDATE_GIT_URL": "/nonexistent/repo.git", "UPDATE_API_URL": f"{base}/sha",
+            "UPDATE_SEED_URL": f"{base}/changelog_seed.py"}
+
+
+SHA_A = "a" * 40
+SHA_B = "b" * 40
+
+
+def _serve(site: Path):
+    import functools
+    import http.server
+    import threading
+
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(site))
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def _commented_zip(sha: str) -> bytes:
+    """GitHub 打的 main 压缩包，注释就是提交号"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        top = "A_System_of_WFXXKJ_Simulating_Examination-main"
+        for name, text in {f"{top}/scripts/update-from-zip.sh": SPY, f"{top}/docker-compose.yml": "x",
+                           f"{top}/backend/Dockerfile": "x"}.items():
+            zf.writestr(name, text)
+        zf.comment = sha.encode()
+    return buf.getvalue()
+
+
+@needs_root_bash
+def test_agent_skips_download_when_commit_is_latest(tmp_path):
+    """一键更新先比提交号：和 GitHub 上一样就不下载、不升级，状态写「已经是最新版本」。"""
+    if not shutil.which("curl"):
+        pytest.skip("没有 curl")
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "sha").write_text(SHA_A)
+    (site / "main.zip").write_bytes(_project_zip(script=SPY))
+    srv = _serve(site)
+    try:
+        proj = _fake_project(tmp_path)
+        (proj / "backend" / "app").mkdir(parents=True)
+        shutil.copy(REPO / "backend" / "app" / "changelog_seed.py", proj / "backend" / "app" / "changelog_seed.py")
+        jobs = proj / "data" / "host-jobs"
+        d = _queue(proj, "update-github", {})
+        (jobs / "deployed-commit").write_text(SHA_A + "\n")
+        env = {**os.environ, "UPDATE_ZIP_URL": f"http://127.0.0.1:{srv.server_port}/main.zip",
+               **_no_github(srv), "HOME": str(tmp_path)}
+        subprocess.run(["bash", str(proj / "scripts" / "host-agent.sh")], check=True, timeout=60, env=env)
+    finally:
+        srv.shutdown()
+    log = (d / "log.txt").read_text(encoding="utf-8")
+    st = json.loads((d / "status.json").read_text())
+    assert st["status"] == "ok" and st["message"].startswith("已经是最新版本"), st
+    assert "已下载" not in log and "args=" not in log, log
+
+
+@needs_root_bash
+def test_agent_skips_by_version_list_when_commit_unknown(tmp_path):
+    """本机还没记过提交号：退回比更新日志里的版本号，一样也不下载，顺手把提交号记下来。"""
+    if not shutil.which("curl"):
+        pytest.skip("没有 curl")
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "sha").write_text(SHA_A)
+    shutil.copy(REPO / "backend" / "app" / "changelog_seed.py", site / "changelog_seed.py")
+    srv = _serve(site)
+    try:
+        proj = _fake_project(tmp_path)
+        (proj / "backend" / "app").mkdir(parents=True)
+        shutil.copy(REPO / "backend" / "app" / "changelog_seed.py", proj / "backend" / "app" / "changelog_seed.py")
+        d = _queue(proj, "update-github", {})
+        env = {**os.environ, "UPDATE_ZIP_URL": f"http://127.0.0.1:{srv.server_port}/main.zip",
+               **_no_github(srv), "HOME": str(tmp_path)}
+        subprocess.run(["bash", str(proj / "scripts" / "host-agent.sh")], check=True, timeout=60, env=env)
+    finally:
+        srv.shutdown()
+    st = json.loads((d / "status.json").read_text())
+    assert st["status"] == "ok" and st["message"].startswith("已经是最新版本"), st
+    assert (proj / "data" / "host-jobs" / "deployed-commit").read_text().strip() == SHA_A
+
+
+@needs_root_bash
+def test_agent_updates_when_newer_and_records_commit(tmp_path):
+    """GitHub 上有新提交：照常下载升级，升级成功后把压缩包注释里的提交号记成本机版本。"""
+    if not shutil.which("curl"):
+        pytest.skip("没有 curl")
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "sha").write_text(SHA_B)
+    (site / "main.zip").write_bytes(_commented_zip(SHA_B))
+    srv = _serve(site)
+    try:
+        proj = _fake_project(tmp_path)
+        jobs = proj / "data" / "host-jobs"
+        d = _queue(proj, "update-github", {})
+        (jobs / "deployed-commit").write_text(SHA_A + "\n")
+        env = {**os.environ, "UPDATE_ZIP_URL": f"http://127.0.0.1:{srv.server_port}/main.zip",
+               **_no_github(srv), "HOME": str(tmp_path)}
+        subprocess.run(["bash", str(proj / "scripts" / "host-agent.sh")], check=True, timeout=60, env=env)
+    finally:
+        srv.shutdown()
+    log = (d / "log.txt").read_text(encoding="utf-8")
+    st = json.loads((d / "status.json").read_text())
+    assert st["status"] == "ok" and st["message"] == "完成", (st, log)
+    assert "有新提交" in log and "args=main.zip" in log, log
+    assert (jobs / "deployed-commit").read_text().strip() == SHA_B
+
+
+def test_status_reports_code_version(client, auth, jobs):
+    got = client.get("/api/system/status", headers=auth).json()
+    assert got["version"].startswith("2.") and got["commit"] == ""
+    (jobs / "deployed-commit").write_text(SHA_A + "\n")
+    assert client.get("/api/system/status", headers=auth).json()["commit"] == SHA_A

@@ -355,6 +355,7 @@ export const api = {
   feedbackReplyDelete: rid => http.delete(`/feedback/replies/${rid}`),
   feedbackLike: id => http.post(`/feedback/${id}/like`),
   feedbackPendingCount: () => http.get('/feedback/pending-count'),
+  feedbackNews: () => http.get('/feedback/news', { silent: true }),
   feedbackReview: (id, status, note = '') =>
     http.patch(`/feedback/${id}/review`, { status, note }),
   feedbackReviewBulk: (ids, status) =>
@@ -414,6 +415,7 @@ export const api = {
   dataApi: id => http.get(`/data-apis/${id}`),
   dataApiUpdate: (id, data) => http.put(`/data-apis/${id}`, data),
   dataApiDelete: id => http.delete(`/data-apis/${id}`),
+  dataApiBulk: (ids, action, extra = {}) => http.post('/data-apis/bulk', { ids, action, ...extra }),
   dataApiRotate: (id, which, enable = true) => http.post(`/data-apis/${id}/rotate-token`, { which, enable }),
   dataApiTransfer: (id, owner_id) => http.post(`/data-apis/${id}/transfer`, { owner_id }),
   dataApiRecords: (id, params) => http.get(`/data-apis/${id}/records`, { params }),

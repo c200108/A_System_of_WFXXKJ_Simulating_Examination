@@ -393,3 +393,41 @@ def test_AI提示词_跟着设置变(client, teacher_auth, kids):
     assert "「七年级1班」" in p and "下拉框" in p, "关联了班级就让学生从下拉里选"
     assert "只算最新一条" in p
     assert "https://teach.example.com" in p and "file://" in p
+
+
+# ---------------------------------------------------------------- 批量（2.23.0）
+def test_批量暂停恢复删除_老师只动得了自己的(client, auth, teacher_auth, teacher2_auth):
+    a1 = _new(client, teacher_auth, "批量甲1")
+    a2 = _new(client, teacher_auth, "批量甲2")
+    b = _new(client, teacher2_auth, "批量乙")
+    ids = [a1["id"], a2["id"], b["id"]]
+    res = client.post("/api/data-apis/bulk", json={"ids": ids, "action": "pause"}, headers=teacher_auth)
+    assert res.status_code == 200, res.text
+    got = res.json()
+    assert got["done"] == [a1["id"], a2["id"]] and [f["id"] for f in got["failed"]] == [b["id"]]
+    assert client.get(f"/api/data-apis/{a1['id']}", headers=teacher_auth).json()["status"] == "paused"
+    assert client.get(f"/api/data-apis/{b['id']}", headers=teacher2_auth).json()["status"] == "active"
+    client.post("/api/data-apis/bulk", json={"ids": [a1["id"]], "action": "resume"}, headers=teacher_auth)
+    assert client.get(f"/api/data-apis/{a1['id']}", headers=teacher_auth).json()["status"] == "active"
+
+    res = client.post("/api/data-apis/bulk", json={"ids": [a1["id"], a2["id"]], "action": "delete"}, headers=teacher_auth)
+    assert res.json()["done"] == [a1["id"], a2["id"]]
+    assert client.get(f"/api/data-apis/{a1['id']}", headers=teacher_auth).status_code == 404
+    kinds = [x["kind"] for x in client.get("/api/recycle", headers=teacher_auth).json()["items"]]
+    assert kinds.count("data_api") >= 2, "删掉的进回收站"
+
+
+def test_批量转给只有管理员(client, auth, teacher_auth, teacher2_auth):
+    a = _new(client, teacher_auth, "批量转交")
+    to = _new(client, teacher2_auth, "取乙的id")["owner_id"]
+    res = client.post("/api/data-apis/bulk", json={"ids": [a["id"]], "action": "transfer", "owner_id": to},
+                      headers=teacher_auth)
+    assert res.status_code == 403
+    res = client.post("/api/data-apis/bulk", json={"ids": [a["id"]], "action": "transfer", "owner_id": to},
+                      headers=auth)
+    assert res.status_code == 200 and res.json()["done"] == [a["id"]]
+    assert client.get(f"/api/data-apis/{a['id']}", headers=teacher2_auth).json()["owner_id"] == to
+    assert client.post("/api/data-apis/bulk", json={"ids": [a["id"]], "action": "boom"},
+                       headers=auth).status_code == 400
+    assert client.post("/api/data-apis/bulk", json={"ids": [], "action": "pause"},
+                       headers=auth).status_code == 400

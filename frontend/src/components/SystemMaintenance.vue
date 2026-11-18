@@ -8,6 +8,8 @@
  * - 导入数据：传 exam-data 压缩包 → 后端体检 + 试算 → 服务器上的主机助手跑 data-import.sh、重建容器；
  * - 一键更新：从 GitHub 下载 main 压缩包，或者自己传一个，主机助手照
  *   「unzip -p … update-from-zip.sh > u.sh → bash u.sh <压缩包>」升级，文件名叫什么都行。
+ *   从 GitHub 更新时主机助手**先比版本**（提交号 / 更新日志版本号），已经是最新就不下载。
+ * - 下载学生最新客户端：浏览器直接问 GitHub 最新正式版（Latest）的附件清单，点哪个下哪个。
  *
  * 导入、更新期间后端会重启，问进度会断一会儿 —— 那是正常的，接着问，不弹错。
  */
@@ -91,7 +93,11 @@ async function poll() {
 function finished(j) {
   status.value && (status.value.busy = null)
   if (j.status === 'ok') {
-    if (j.action === 'import') {
+    if ((j.message || '').startsWith('已经是最新版本')) {
+      ElMessageBox.alert(`${j.message}。服务器上的代码和 GitHub 上的一致，没有下载任何东西。`, '已经是最新版本', {
+        type: 'success'
+      })
+    } else if (j.action === 'import') {
       ElMessageBox.alert('数据已导入，容器已重建。刷新页面后核对一下题目数、学生数。', '导入完成', { type: 'success' })
     } else {
       ElMessageBox.alert('已经升级到最新版本，数据库和上传文件原样保留。点确定刷新页面，加载新版网页。', '更新完成', {
@@ -218,6 +224,50 @@ async function doUpdateZip() {
   }
 }
 
+// ---------------------------------------------------------------- 学生客户端
+const RELEASES = 'https://github.com/c200108/A_System_of_WFXXKJ_Simulating_Examination/releases'
+const clientDlg = ref(false)
+const clientLoading = ref(false)
+const clientErr = ref('')
+const clientRel = ref(null)
+
+/** 学生端附件按渠道分组：联网版 / 机房版（文件名带 lan），组里按 Release 上的顺序 */
+const clientGroups = computed(() => {
+  const assets = (clientRel.value?.assets || []).filter(a => /\.exe$/i.test(a.name))
+  const sizeMB = a => (a.size / 1024 / 1024).toFixed(1) + ' MB'
+  const pick = lan =>
+    assets
+      .filter(a => /^exam-client-lan-/i.test(a.name) === lan)
+      .map(a => ({ ...a, mb: sizeMB(a), win7: /win32-runtime/i.test(a.name) }))
+  return [
+    { key: 'online', title: '联网版（内置在线服务器地址，学生打开就能登录）', items: pick(false) },
+    { key: 'lan', title: '机房版（学生在登录页填教师机地址）', items: pick(true) }
+  ].filter(g => g.items.length)
+})
+
+async function openClients() {
+  clientDlg.value = true
+  if (clientRel.value) return
+  clientLoading.value = true
+  clientErr.value = ''
+  try {
+    // 学生端只发在 GitHub Releases（公开仓库），浏览器直接问，不占学校服务器
+    const ctl = new AbortController()
+    const t = setTimeout(() => ctl.abort(), 10000)
+    const res = await fetch('https://api.github.com/repos/c200108/A_System_of_WFXXKJ_Simulating_Examination/releases/latest', {
+      signal: ctl.signal,
+      headers: { Accept: 'application/vnd.github+json' }
+    })
+    clearTimeout(t)
+    if (!res.ok) throw new Error(`GitHub 返回 ${res.status}`)
+    clientRel.value = await res.json()
+  } catch (e) {
+    clientErr.value = e?.name === 'AbortError' ? '连 GitHub 超时' : e?.message || String(e)
+  } finally {
+    clientLoading.value = false
+  }
+}
+
 async function copy(text) {
   try {
     await navigator.clipboard.writeText(text)
@@ -284,11 +334,23 @@ onUnmounted(stopPolling)
         <div class="row">
           <div class="what">
             <b>途径一：从 GitHub 自动下载</b>
-            <span>服务器自己下载仓库最新的 main 压缩包并升级，数据无损。</span>
+            <span>
+              先和 GitHub 上的比版本，已经是最新就不下载；不是最新才下载 main 压缩包升级，数据无损。
+              <template v-if="status?.version">
+                本机现在是服务端 <b>{{ status.version }}</b><template v-if="status.commit">（提交 {{ status.commit.slice(0, 7) }}）</template>。
+              </template>
+            </span>
           </div>
           <el-button type="primary" :disabled="!agentOk || busy || !!uploading" @click="doUpdateGithub">
             一键更新
           </el-button>
+        </div>
+        <div class="row">
+          <div class="what">
+            <b>下载学生最新客户端</b>
+            <span>从 GitHub 拿学生端最新正式版的 exe（联网版、机房版、姓名登录版都在），发到学生机上。</span>
+          </div>
+          <el-button @click="openClients">下载学生客户端</el-button>
         </div>
         <div class="row col">
           <div class="what">
@@ -341,10 +403,74 @@ onUnmounted(stopPolling)
       </details>
       <pre v-if="job.log" ref="logBox" class="log">{{ job.log }}</pre>
     </div>
+
+    <el-dialog v-model="clientDlg" title="下载学生最新客户端" width="640px" append-to-body>
+      <div v-loading="clientLoading" class="clients">
+        <el-alert v-if="clientErr" type="warning" :closable="false" show-icon>
+          <template #title>读不到 GitHub 上的版本（{{ clientErr }}）</template>
+          这台电脑可能连不上 GitHub，可以直接打开
+          <a :href="RELEASES + '/latest'" target="_blank" rel="noopener">GitHub 发布页</a> 下载。
+        </el-alert>
+        <template v-else-if="clientRel">
+          <p class="rel">
+            最新正式版 <b>{{ clientRel.tag_name }}</b>
+            <span class="muted">· {{ (clientRel.published_at || '').slice(0, 10) }} 发布 ·</span>
+            <a :href="clientRel.html_url" target="_blank" rel="noopener">看发布说明</a>
+          </p>
+          <p class="muted tip">Win7 学生机发标着「Win7 选这个」的 32 位内置运行库版；姓名登录版先选班级、账号填中文姓名。</p>
+          <div v-for="g in clientGroups" :key="g.key" class="cgroup">
+            <h5>{{ g.title }}</h5>
+            <a v-for="a in g.items" :key="a.id" class="casset" :href="a.browser_download_url" rel="noopener">
+              <span class="cname">{{ a.label || a.name }}<el-tag v-if="a.win7" size="small" type="success" effect="plain">Win7 选这个</el-tag></span>
+              <span class="muted">{{ a.name }} · {{ a.mb }}</span>
+            </a>
+          </div>
+          <p v-if="!clientGroups.length" class="muted">这一版没有附带学生端 exe，去 <a :href="RELEASES" target="_blank" rel="noopener">发布页</a> 找上一版。</p>
+        </template>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <style scoped>
+.clients {
+  min-height: 120px;
+}
+.rel {
+  margin: 0 0 4px;
+}
+.tip {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+}
+.cgroup h5 {
+  margin: 12px 0 6px;
+  font-size: 14px;
+}
+.casset {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  text-decoration: none;
+  color: inherit;
+}
+.casset:hover {
+  border-color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+.cname {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+}
+.casset .muted {
+  font-size: 12px;
+}
 .agent p {
   margin: 6px 0 0;
 }

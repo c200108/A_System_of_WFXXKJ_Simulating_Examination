@@ -287,7 +287,21 @@ def status(_: User = Depends(require_root)):
     recent = []
     if jobs.is_dir():
         recent = [_job_view(d) for d in sorted(jobs.iterdir(), reverse=True)[:8] if d.is_dir()]
-    return {"agent": _agent(), "busy": _busy(), "recent": recent, "repo_zip_url": REPO_ZIP_URL}
+    deployed = ""
+    try:
+        deployed = (_jobs_root() / "deployed-commit").read_text(encoding="utf-8").strip()[:40]
+    except OSError:
+        pass
+    return {"agent": _agent(), "busy": _busy(), "recent": recent, "repo_zip_url": REPO_ZIP_URL,
+            "version": _code_version(), "commit": deployed}
+
+
+def _code_version() -> str:
+    """本机代码的服务端版本号：更新日志种子里最大的 2.x（APP 5.x、学生端 4.x 不算）。"""
+    from ..changelog_seed import VERSIONS
+
+    vs = [v for v, _, _ in VERSIONS if v.startswith("2.")]
+    return max(vs, key=lambda v: tuple(int(x) for x in re.findall(r"\d+", v))) if vs else ""
 
 
 @router.get("/jobs/{job_id}", summary="一个任务的进度和日志")

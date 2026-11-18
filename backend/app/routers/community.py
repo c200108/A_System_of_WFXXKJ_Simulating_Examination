@@ -237,6 +237,48 @@ def pending_count(_: User = Depends(get_current_user), db: Session = Depends(get
     return {"pending": n or 0}
 
 
+NEWS_HOURS = 24   # 反馈区最新消息在组卷页顶上挂多久
+
+
+def _snip(text: str, n: int = 60) -> str:
+    t = " ".join((text or "").split())
+    return t if len(t) <= n else t[:n] + "…"
+
+
+@router.get("/feedback/news", summary="反馈区最新一条消息（24 小时内的，组卷页顶上黄条提醒用）")
+def feedback_news(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """「最新消息」= 最近公开出来的一件事：一条反馈审核通过（按审核时间算，待审核的不算，
+    公开区里看不到的不提醒），或者已公开的反馈下面新来一条回复。只看最近 24 小时，没有就返回 null。"""
+    from datetime import timedelta
+
+    since = clock.now() - timedelta(hours=NEWS_HOURS)
+    out = None
+    fb = db.scalars(
+        select(Feedback).where(Feedback.status == "approved",
+                               func.coalesce(Feedback.reviewed_at, Feedback.created_at) >= since)
+        .order_by(func.coalesce(Feedback.reviewed_at, Feedback.created_at).desc()).limit(1)
+    ).first()
+    if fb:
+        out = {"kind": "feedback", "id": f"f{fb.id}", "feedback_id": fb.id, "author": fb.author,
+               "category": fb.category, "text": _snip(fb.content), "at": fb.reviewed_at or fb.created_at}
+    rp = db.execute(
+        select(FeedbackReply, Feedback)
+        .join(Feedback, Feedback.id == FeedbackReply.feedback_id)
+        .where(Feedback.status == "approved", FeedbackReply.created_at >= since)
+        .order_by(FeedbackReply.created_at.desc()).limit(1)
+    ).first()
+    if rp:
+        r, f = rp
+        if out is None or r.created_at >= out["at"]:
+            out = {"kind": "reply", "id": f"r{r.id}", "feedback_id": f.id,
+                   "author": r.author or "老师", "is_admin": bool(r.is_admin),
+                   "category": f.category, "text": _snip(r.content), "about": _snip(f.content, 24),
+                   "at": r.created_at}
+    if out:
+        out["until"] = out["at"] + timedelta(hours=NEWS_HOURS)
+    return {"news": out}
+
+
 @router.post("/feedback/{fid}/reply", response_model=FeedbackOut, summary="在反馈下回复（教师）")
 def reply_feedback(
     fid: int,

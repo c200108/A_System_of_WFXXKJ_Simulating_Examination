@@ -383,3 +383,42 @@ def test_version_order_is_numeric_not_alphabetical(client, auth):
         by_date.setdefault(v["released_on"], []).append(version_key(v["version"]))
     for day, keys in by_date.items():
         assert keys == sorted(keys, reverse=True), f"{day} 这天的版本顺序乱了：{keys}"
+
+
+# ---------------------------------------------------------------- 组卷页黄条（2.23.0）
+def test_feedback_news_latest_public_event(client, auth, teacher_auth, monkeypatch):
+    from datetime import timedelta
+
+    from app import clock
+
+    real = clock.now
+    # 别的测试也审过反馈、发过回复：把时间往后拨，让这里的才是「最新」
+    monkeypatch.setattr(clock, "now", lambda: real() + timedelta(hours=1))
+    assert client.get("/api/feedback/news").status_code == 401
+    fid = _post_approved(client, auth, content="组卷页能不能显示反馈最新消息" + "啊" * 80)
+    news = client.get("/api/feedback/news", headers=teacher_auth).json()["news"]
+    assert news["kind"] == "feedback" and news["feedback_id"] == fid
+    assert news["text"].endswith("…") and len(news["text"]) <= 61
+    assert news["until"] > news["at"]
+
+    # 待审核的不算
+    _post(client, content="还没审的这条不该出现在黄条上")
+    assert client.get("/api/feedback/news", headers=teacher_auth).json()["news"]["feedback_id"] == fid
+
+    # 新回复比反馈更新：黄条换成回复
+    monkeypatch.setattr(clock, "now", lambda: real() + timedelta(hours=2))
+    r = client.post(f"/api/feedback/{fid}/reply", json={"reply": "已经安排上了"}, headers=auth)
+    assert r.status_code == 200, r.text
+    news = client.get("/api/feedback/news", headers=teacher_auth).json()["news"]
+    assert news["kind"] == "reply" and news["text"] == "已经安排上了" and news["is_admin"] is True
+
+
+def test_feedback_news_expires_after_a_day(client, auth, teacher_auth, monkeypatch):
+    from datetime import timedelta
+
+    from app import clock
+
+    _post_approved(client, auth, content="过一天就不提醒了")
+    real = clock.now
+    monkeypatch.setattr(clock, "now", lambda: real() + timedelta(hours=30))
+    assert client.get("/api/feedback/news", headers=teacher_auth).json()["news"] is None

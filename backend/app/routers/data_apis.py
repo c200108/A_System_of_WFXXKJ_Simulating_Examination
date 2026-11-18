@@ -68,6 +68,12 @@ class TransferIn(BaseModel):
     owner_id: int
 
 
+class BulkIn(BaseModel):
+    ids: list[int] = Field(default_factory=list)
+    action: str                     # pause / resume / delete / transfer（transfer 只有管理员）
+    owner_id: int | None = None     # transfer 转给谁
+
+
 class FlagIn(BaseModel):
     ids: list[int]
     flag: str = "invalid"           # normal / invalid
@@ -310,6 +316,44 @@ def delete_api(api_id: int, me: User = Depends(get_current_user), db: Session = 
     db.delete(api)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/bulk", summary="批量处理勾选的 API：暂停 / 恢复接收、删除、转给其他老师")
+def bulk_apis(body: BulkIn, me: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """和逐个点一样的规矩：老师只能动自己的，管理员能动所有人的；转给别的老师只有管理员。
+    看不到的（别人的、已经删了的）记进 failed，不算错。整批一个事务。"""
+    if body.action not in ("pause", "resume", "delete", "transfer"):
+        raise HTTPException(status_code=400, detail="不认识的批量操作")
+    ids = list(dict.fromkeys(body.ids))
+    if not ids:
+        raise HTTPException(status_code=400, detail="没有选中任何 API")
+    to = None
+    if body.action == "transfer":
+        if me.role != "admin":
+            raise HTTPException(status_code=403, detail="只有管理员能把 API 转给别的老师")
+        to = db.get(User, body.owner_id or 0)
+        if not to or not to.is_active:
+            raise HTTPException(status_code=404, detail="这位老师不存在或已停用")
+    found = {a.id: a for a in db.scalars(_visible(select(DataApi).where(DataApi.id.in_(ids)), me))}
+    done, failed = [], []
+    for aid in ids:
+        api = found.get(aid)
+        if api is None:
+            failed.append({"id": aid, "reason": "这个 API 不存在（可能已经被删了）"})
+            continue
+        if body.action == "pause":
+            api.status = "paused"
+        elif body.action == "resume":
+            api.status = "active"
+        elif body.action == "transfer":
+            api.owner_id = to.id
+        else:
+            recycle.trash(db, me, "data_api", f"API「{api.name}」", DataApi, [api.id],
+                          detail=f"含 {api.record_count or 0} 条数据")
+            db.delete(api)
+        done.append(aid)
+    db.commit()
+    return {"done": done, "failed": failed}
 
 
 # ---------------------------------------------------------------- 数据表单

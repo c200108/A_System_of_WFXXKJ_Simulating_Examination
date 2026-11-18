@@ -4,10 +4,13 @@
  *
  * 老师建一个 API，拿到接收地址和写入密钥，自己做的答题网页、自评互评表往里送数据。
  * 各老师的 API 互不相通；管理员看全部，可按老师筛选。真正拦人的在后端（routers/data_apis.py）。
+ *
+ * 多选（2.23.0）：点「多选」后卡片左上角出勾选框，点卡片就是勾选；批量暂停 / 恢复接收、删除（进回收站），
+ * 管理员还能批量转给另一位老师。
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
 import { currentUser } from '../auth'
 
@@ -66,6 +69,81 @@ async function create() {
   }
 }
 
+// ---------------------------------------------------------------- 多选
+const selecting = ref(false)
+const picked = ref(new Set())
+const bulkBusy = ref(false)
+const transferTo = ref(null)
+const pickedRows = computed(() => rows.value.filter(r => picked.value.has(r.id)))
+const allShownPicked = computed(() => shown.value.length > 0 && shown.value.every(r => picked.value.has(r.id)))
+
+function startSelect() {
+  selecting.value = true
+  picked.value = new Set()
+}
+function stopSelect() {
+  selecting.value = false
+  picked.value = new Set()
+  transferTo.value = null
+}
+function toggle(r) {
+  const s = new Set(picked.value)
+  s.has(r.id) ? s.delete(r.id) : s.add(r.id)
+  picked.value = s
+}
+function toggleAll() {
+  const s = new Set(picked.value)
+  if (allShownPicked.value) shown.value.forEach(r => s.delete(r.id))
+  else shown.value.forEach(r => s.add(r.id))
+  picked.value = s
+}
+function onCard(r) {
+  if (selecting.value) toggle(r)
+  else router.push(`/js/api/${r.id}`)
+}
+
+const BULK = { pause: '暂停接收', resume: '恢复接收', delete: '删除', transfer: '转给' }
+
+async function bulk(action) {
+  const list = pickedRows.value
+  if (!list.length) return ElMessage.warning('先勾选要处理的 API')
+  let extra = {}
+  let label = BULK[action]
+  if (action === 'transfer') {
+    if (!transferTo.value) return ElMessage.warning('先选要转给哪位老师')
+    const t = teachers.value.find(x => x.id === transferTo.value)
+    label = `转给 ${t?.name || ''}`
+    extra = { owner_id: transferTo.value }
+    await ElMessageBox.confirm(`把选中的 ${list.length} 个 API 连同数据${label}？转过去以后归这位老师管理。`, '批量转给其他老师', {
+      type: 'warning',
+      confirmButtonText: '转过去'
+    })
+  } else if (action === 'delete') {
+    const n = list.reduce((s, r) => s + (r.record_count || 0), 0)
+    await ElMessageBox.confirm(
+      `删除选中的 ${list.length} 个 API（共 ${n} 条数据）？会放进回收站 7 天，可以在「我的账号 → 回收站」还原。` +
+        '删除后，接了这些 API 的网页再提交会被拒收。',
+      '批量删除',
+      { type: 'warning', confirmButtonText: '删除', confirmButtonClass: 'el-button--danger' }
+    )
+  } else if (action === 'pause') {
+    await ElMessageBox.confirm(`暂停选中的 ${list.length} 个 API？暂停期间第三方网页再提交会被拒收，已收的数据不动。`, '批量暂停接收', {
+      type: 'warning',
+      confirmButtonText: '暂停'
+    })
+  }
+  bulkBusy.value = true
+  try {
+    const res = await api.dataApiBulk(list.map(r => r.id), action, extra)
+    const bad = res.failed?.length ? `，${res.failed.length} 个已经不在了` : ''
+    ElMessage.success(`已${label} ${res.done.length} 个${bad}`)
+    stopSelect()
+    await load()
+  } finally {
+    bulkBusy.value = false
+  }
+}
+
 function fmt(t) {
   return t ? String(t).replace('T', ' ').slice(0, 16) : '还没收到过'
 }
@@ -86,16 +164,46 @@ function fmt(t) {
           <el-option v-for="t in teachers" :key="t.id" :label="t.name" :value="t.id" />
         </el-select>
         <el-input v-model="keyword" placeholder="搜索名称、描述" clearable style="width: 180px" />
+        <el-button v-if="!selecting" :disabled="!rows.length" @click="startSelect">多选</el-button>
         <el-button type="primary" @click="openCreate">＋ 新建 API</el-button>
       </div>
+    </div>
+
+    <div v-if="selecting" class="bulkbar">
+      <el-checkbox :model-value="allShownPicked" :indeterminate="picked.size > 0 && !allShownPicked" @change="toggleAll">
+        全选
+      </el-checkbox>
+      <span class="picked">已选 <b>{{ picked.size }}</b> 个</span>
+      <el-button size="small" :disabled="!picked.size" :loading="bulkBusy" @click="bulk('resume')">恢复接收</el-button>
+      <el-button size="small" :disabled="!picked.size" :loading="bulkBusy" @click="bulk('pause')">暂停接收</el-button>
+      <template v-if="isAdmin">
+        <el-select v-model="transferTo" size="small" placeholder="转给老师" style="width: 120px">
+          <el-option v-for="t in teachers" :key="t.id" :label="t.name" :value="t.id" />
+        </el-select>
+        <el-button size="small" :disabled="!picked.size || !transferTo" :loading="bulkBusy" @click="bulk('transfer')">
+          转过去
+        </el-button>
+      </template>
+      <el-button size="small" type="danger" plain :disabled="!picked.size" :loading="bulkBusy" @click="bulk('delete')">
+        删除
+      </el-button>
+      <el-button size="small" link @click="stopSelect">退出多选</el-button>
     </div>
 
     <div v-loading="loading" class="grid">
       <el-empty v-if="!loading && !rows.length" description="还没有 API">
         <el-button type="primary" @click="openCreate">新建第一个 API</el-button>
       </el-empty>
-      <el-card v-for="r in shown" :key="r.id" class="card" shadow="hover" @click="router.push(`/js/api/${r.id}`)">
+      <el-card
+        v-for="r in shown"
+        :key="r.id"
+        class="card"
+        :class="{ on: selecting && picked.has(r.id) }"
+        shadow="hover"
+        @click="onCard(r)"
+      >
         <div class="card-top">
+          <el-checkbox v-if="selecting" :model-value="picked.has(r.id)" @click.stop @change="toggle(r)" />
           <span class="name">{{ r.name }}</span>
           <el-tag size="small" :type="r.status === 'active' ? 'success' : 'info'">
             {{ r.status === 'active' ? '接收中' : '已暂停' }}
@@ -149,6 +257,11 @@ function fmt(t) {
 .grid { margin-top: 16px; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; min-height: 120px; }
 .grid .el-empty { grid-column: 1 / -1; }
 .card { cursor: pointer; }
+.card.on { border-color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
+.card-top .name { flex: 1; min-width: 0; }
+.bulkbar { margin-top: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px;
+  border: 1px solid var(--el-border-color-lighter); border-radius: 8px; background: var(--el-fill-color-light); }
+.picked { font-size: 13px; color: var(--el-text-color-secondary); margin-right: 4px; }
 .card-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .name { font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .desc { margin: 6px 0 12px; color: var(--el-text-color-secondary); font-size: 13px; height: 38px; overflow: hidden;
