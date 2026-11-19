@@ -234,6 +234,8 @@ const clientErr = ref('')
 const clientCat = ref(null)
 const clientAddr = ref(window.location.origin)
 const clientBusy = ref('')
+// 默认把地址写进 exe（文件名不变）；勾上才导出「原名@地址.exe」那种改名的（4.15.0 以前的老 exe 只能这样）
+const clientByName = ref(false)
 const isLocalhost = computed(() => /\/\/(localhost|127\.|\[::1\])/i.test(clientAddr.value))
 
 const clientItems = computed(() =>
@@ -438,9 +440,11 @@ onUnmounted(stopPolling)
             <b v-if="clientCat.version">{{ clientCat.version }}</b>
           </p>
           <p class="muted tip">
-            两种导出：<b>改文件名</b>（文件名后面带上地址，哪个版本的 exe 都认，但别人改了名就没了）；
-            <b>写进 exe</b>（文件名不变，地址写在 exe 里，4.15.0 起的 exe 才支持）。
-            Win7 学生机发标着「Win7 选这个」的 32 位内置运行库版。
+            点「下载」：地址写进 exe 里，文件名不变（4.15.0 起的 exe）。Win7 学生机发标着「Win7 选这个」的 32 位内置运行库版。
+            <br />
+            备用办法：把 exe 改名成「原名@地址.exe」（端口前的冒号换成下划线），文件名里的地址优先于写进 exe 的；
+            名字改回去就又用写进 exe 的那个。
+            <el-checkbox v-model="clientByName" size="small" class="byname">这次直接导出改好名的</el-checkbox>
           </p>
           <div v-for="a in clientItems" :key="a.name" class="casset">
             <span class="cname">
@@ -448,8 +452,12 @@ onUnmounted(stopPolling)
               <span class="muted">{{ a.name }} · {{ a.mb }}</span>
             </span>
             <span class="cbtns">
-              <el-button size="small" :loading="clientBusy === a.name + 'name'" @click="exportClient(a, 'name')">改文件名</el-button>
-              <el-button size="small" type="primary" :loading="clientBusy === a.name + 'slot'" @click="exportClient(a, 'slot')">写进 exe</el-button>
+              <el-button
+                size="small"
+                type="primary"
+                :loading="!!clientBusy && clientBusy.startsWith(a.name)"
+                @click="exportClient(a, clientByName ? 'name' : 'slot')"
+              >下载</el-button>
             </span>
           </div>
           <p v-if="!clientItems.length" class="muted">没有找到学生端 exe。</p>
@@ -465,6 +473,10 @@ onUnmounted(stopPolling)
 }
 .caddr {
   margin: 4px 0 10px;
+}
+.byname {
+  margin-left: 4px;
+  height: auto;
 }
 .cbtns {
   flex: none;
