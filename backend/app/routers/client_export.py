@@ -9,7 +9,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
-from ..deps import require_root
+try:
+    from ..deps import require_root
+except ImportError:            # 机房版没有「部署时建的那个系统管理员」这一层，管理员就能导
+    from ..deps import require_admin as require_root
 from ..models import User
 
 router = APIRouter(prefix="/api/system", tags=["系统维护"])
