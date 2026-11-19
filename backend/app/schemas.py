@@ -857,6 +857,15 @@ class FeedbackOut(ORMModel):
     # 只在管理端的列表里有值；公开列表永远是 approved，不必看
     status: str = "approved"
     created_at: datetime | None = None
+    # 置顶（2.23.2）：现在是否置顶中、置顶到什么时候（空 = 不限期）
+    pinned: bool = False
+    pinned_until: datetime | None = None
+
+
+class FeedbackPinIn(BaseModel):
+    """置顶多久：0 = 不限期，1～30 天。"""
+
+    days: int = Field(default=0, ge=0, le=30)
 
 
 class FeedbackReplyIn(BaseModel):

@@ -511,6 +511,10 @@ class Feedback(Base):
     reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     review_note: Mapped[str] = mapped_column(String(255), default="")  # 拒绝原因，只给管理端看
+    # 置顶（2.23.2）：管理员把一条已公开的反馈置顶，教师端每个页面顶上的黄条就显示它。
+    # pinned_at 为空 = 没置顶；pinned_until 为空 = 不限期，否则到这个时间自动不再置顶
+    pinned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    pinned_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now(), index=True)
 
     replies: Mapped[list["FeedbackReply"]] = relationship(

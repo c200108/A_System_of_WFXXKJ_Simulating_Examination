@@ -3,7 +3,6 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { siteConfig } from '../siteConfig'
 import { api, download, safeName } from '../api'
-import FeedbackNews from '../components/FeedbackNews.vue'
 
 const CN = siteConfig.paper.section_numerals
 
@@ -267,7 +266,6 @@ function printPaper() {
 </script>
 
 <template>
-  <FeedbackNews />
   <el-row :gutter="16">
     <!-- ============ 左：设置 ============ -->
     <el-col :xs="24" :sm="24" :md="10" :lg="8" class="no-print setting-col">

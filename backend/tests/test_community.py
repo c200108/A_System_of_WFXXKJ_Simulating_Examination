@@ -385,40 +385,83 @@ def test_version_order_is_numeric_not_alphabetical(client, auth):
         assert keys == sorted(keys, reverse=True), f"{day} 这天的版本顺序乱了：{keys}"
 
 
-# ---------------------------------------------------------------- 组卷页黄条（2.23.0）
-def test_feedback_news_latest_public_event(client, auth, teacher_auth, monkeypatch):
-    from datetime import timedelta
+# ---------------------------------------------------------------- 置顶黄条（2.23.2）
+def _clear_pins():
+    from app.database import SessionLocal
+    from app.models import Feedback
 
-    from app import clock
+    with SessionLocal() as db:
+        for f in db.query(Feedback).filter(Feedback.pinned_at.is_not(None)):
+            f.pinned_at = f.pinned_until = None
+        db.commit()
 
-    real = clock.now
-    # 别的测试也审过反馈、发过回复：把时间往后拨，让这里的才是「最新」
-    monkeypatch.setattr(clock, "now", lambda: real() + timedelta(hours=1))
+
+def _news(client, headers):
+    res = client.get("/api/feedback/news", headers=headers)
+    assert res.status_code == 200, res.text
+    return res.json()["items"]
+
+
+def test_黄条只显示置顶的(client, auth, teacher_auth):
+    _clear_pins()
     assert client.get("/api/feedback/news").status_code == 401
-    fid = _post_approved(client, auth, content="组卷页能不能显示反馈最新消息" + "啊" * 80)
-    news = client.get("/api/feedback/news", headers=teacher_auth).json()["news"]
-    assert news["kind"] == "feedback" and news["feedback_id"] == fid
-    assert news["text"].endswith("…") and len(news["text"]) <= 61
-    assert news["until"] > news["at"]
+    fid = _post_approved(client, auth, content="黄条只显示置顶的" + "啊" * 100)
+    assert _news(client, teacher_auth) == [], "最新消息不再自动上黄条"
 
-    # 待审核的不算
-    _post(client, content="还没审的这条不该出现在黄条上")
-    assert client.get("/api/feedback/news", headers=teacher_auth).json()["news"]["feedback_id"] == fid
+    res = client.put(f"/api/feedback/{fid}/pin", json={"days": 0}, headers=auth)
+    assert res.status_code == 200 and res.json()["pinned"] is True and res.json()["pinned_until"] is None
+    client.post(f"/api/feedback/{fid}/reply", json={"reply": "已经安排上了"}, headers=auth)
+    items = _news(client, teacher_auth)
+    assert len(items) == 1 and items[0]["feedback_id"] == fid
+    assert items[0]["text"].endswith("…") and items[0]["reply_count"] == 1
+    assert items[0]["last_reply"]["text"] == "已经安排上了" and items[0]["pinned_until"] is None
+    # 公开列表里置顶的排最前
+    assert client.get("/api/feedback").json()[0]["id"] == fid
 
-    # 新回复比反馈更新：黄条换成回复
-    monkeypatch.setattr(clock, "now", lambda: real() + timedelta(hours=2))
-    r = client.post(f"/api/feedback/{fid}/reply", json={"reply": "已经安排上了"}, headers=auth)
-    assert r.status_code == 200, r.text
-    news = client.get("/api/feedback/news", headers=teacher_auth).json()["news"]
-    assert news["kind"] == "reply" and news["text"] == "已经安排上了" and news["is_admin"] is True
+    assert client.delete(f"/api/feedback/{fid}/pin", headers=auth).json()["pinned"] is False
+    assert _news(client, teacher_auth) == []
 
 
-def test_feedback_news_expires_after_a_day(client, auth, teacher_auth, monkeypatch):
+def test_置顶只给管理员_只能置顶公开的(client, auth, teacher_auth):
+    _clear_pins()
+    fid = _post_approved(client, auth, content="只有管理员能置顶")
+    assert client.put(f"/api/feedback/{fid}/pin", json={"days": 3}, headers=teacher_auth).status_code == 403
+    pending = _post(client, content="还没审的不能置顶").json()["id"]
+    assert client.put(f"/api/feedback/{pending}/pin", json={"days": 3}, headers=auth).status_code == 409
+    assert client.put(f"/api/feedback/{fid}/pin", json={"days": 31}, headers=auth).status_code == 422
+    # 撤下（拒绝）后黄条上就没有了
+    client.put(f"/api/feedback/{fid}/pin", json={"days": 3}, headers=auth)
+    _approve(client, auth, fid)
+    client.patch(f"/api/feedback/{fid}/review", json={"status": "rejected"}, headers=auth)
+    assert _news(client, teacher_auth) == []
+
+
+def test_最多置顶5条(client, auth, teacher_auth):
+    _clear_pins()
+    ids = [_post_approved(client, auth, content=f"置顶第 {i} 条") for i in range(6)]
+    for fid in ids[:5]:
+        assert client.put(f"/api/feedback/{fid}/pin", json={"days": 0}, headers=auth).status_code == 200
+    res = client.put(f"/api/feedback/{ids[5]}/pin", json={"days": 0}, headers=auth)
+    assert res.status_code == 409 and "最多同时置顶 5 条" in res.json()["detail"]
+    # 已经置顶的改期限不受限
+    assert client.put(f"/api/feedback/{ids[0]}/pin", json={"days": 7}, headers=auth).status_code == 200
+    assert len(_news(client, teacher_auth)) == 5
+    client.delete(f"/api/feedback/{ids[1]}/pin", headers=auth)
+    assert client.put(f"/api/feedback/{ids[5]}/pin", json={"days": 0}, headers=auth).status_code == 200
+    _clear_pins()
+
+
+def test_置顶到期自动不显示(client, auth, teacher_auth, monkeypatch):
     from datetime import timedelta
 
     from app import clock
 
-    _post_approved(client, auth, content="过一天就不提醒了")
+    _clear_pins()
+    fid = _post_approved(client, auth, content="置顶 2 天")
+    got = client.put(f"/api/feedback/{fid}/pin", json={"days": 2}, headers=auth).json()
+    assert got["pinned_until"]
+    assert len(_news(client, teacher_auth)) == 1
     real = clock.now
-    monkeypatch.setattr(clock, "now", lambda: real() + timedelta(hours=30))
-    assert client.get("/api/feedback/news", headers=teacher_auth).json()["news"] is None
+    monkeypatch.setattr(clock, "now", lambda: real() + timedelta(days=2, minutes=1))
+    assert _news(client, teacher_auth) == []
+    assert client.get("/api/feedback").json()[0].get("pinned") is not True or         client.get("/api/feedback").json()[0]["id"] != fid

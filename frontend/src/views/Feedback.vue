@@ -249,6 +249,41 @@ async function remove(row) {
 
 const fmt = t => String(t).replace('T', ' ').slice(0, 16)
 
+// ---------- 管理员：置顶（2.23.2）----------
+// 置顶的反馈显示在教师端每个页面顶上的黄条里，最多 5 条；可以不限期，也可以 1～30 天
+const PIN_DAYS = [0, ...Array.from({ length: 30 }, (_, i) => i + 1)]
+const pinRow = ref(null)
+const pinDays = ref(0)
+const pinning = ref(false)
+const pinnedCount = computed(() => list.value.filter(f => f.pinned).length)
+
+function openPin(row) {
+  pinRow.value = row
+  pinDays.value = 0
+}
+
+async function savePin() {
+  pinning.value = true
+  try {
+    await api.feedbackPin(pinRow.value.id, pinDays.value)
+    pinRow.value = null
+    await load()
+    window.dispatchEvent(new Event('feedback-pins-changed'))
+    ElMessage.success(pinDays.value ? `已置顶 ${pinDays.value} 天，教师端每个页面顶上都会提醒` : '已置顶（不限期），教师端每个页面顶上都会提醒')
+  } finally {
+    pinning.value = false
+  }
+}
+
+async function unpin(row) {
+  await api.feedbackUnpin(row.id)
+  await load()
+  window.dispatchEvent(new Event('feedback-pins-changed'))
+  ElMessage.success('已取消置顶')
+}
+
+const pinLabel = f => (f.pinned_until ? `置顶到 ${fmt(f.pinned_until).slice(5)}` : '置顶 · 不限期')
+
 const pendingRows = computed(() => manageRows.value.filter(r => r.status === 'pending'))
 const rejectedRows = computed(() => manageRows.value.filter(r => r.status === 'rejected'))
 </script>
@@ -332,6 +367,29 @@ const rejectedRows = computed(() => manageRows.value.filter(r => r.status === 'r
     </el-card>
 
     <!-- 点缩略图看大图 -->
+    <el-dialog
+      :model-value="!!pinRow"
+      title="置顶这条反馈"
+      width="min(92vw, 420px)"
+      align-center
+      @close="pinRow = null"
+    >
+      <p class="pintip">
+        置顶后显示在教师端每个页面顶上的黄条里。最多同时置顶 5 条（现在 {{ pinnedCount }} 条）。
+      </p>
+      <el-form label-width="72px">
+        <el-form-item label="置顶多久">
+          <el-select v-model="pinDays" style="width: 180px">
+            <el-option v-for="d in PIN_DAYS" :key="d" :label="d ? `${d} 天` : '不限期'" :value="d" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="pinRow = null">取消</el-button>
+        <el-button type="primary" :loading="pinning" @click="savePin">置顶</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="previewOpen" title="查看配图" width="min(90vw, 900px)" align-center>
       <img v-if="preview" :src="preview" class="bigpic" alt="配图" />
     </el-dialog>
@@ -359,9 +417,12 @@ const rejectedRows = computed(() => manageRows.value.filter(r => r.status === 'r
             {{ f.category }}
           </el-tag>
           <time>{{ fmt(f.created_at) }}</time>
+          <el-tag v-if="f.pinned" size="small" type="warning" effect="dark">{{ pinLabel(f) }}</el-tag>
           <span class="grow" />
-          <!-- 管理员才有撤下和删除 -->
+          <!-- 管理员才有置顶、撤下和删除 -->
           <template v-if="isAdmin">
+            <el-button v-if="f.pinned" link type="warning" @click="unpin(f)">取消置顶</el-button>
+            <el-button v-else link type="primary" @click="openPin(f)">置顶</el-button>
             <el-button link type="warning" @click="review(f, 'rejected')">撤下</el-button>
             <el-button link type="danger" @click="remove(f)">删除</el-button>
           </template>
@@ -830,5 +891,10 @@ h1 {
   align-items: center;
   gap: 8px;
   margin-top: 8px;
+}
+.pintip {
+  margin: 0 0 12px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
 }
 </style>

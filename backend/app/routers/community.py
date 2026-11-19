@@ -32,6 +32,7 @@ from ..schemas import (
     ChangelogVersionOut,
     FeedbackIn,
     FeedbackOut,
+    FeedbackPinIn,
     FeedbackReplyIn,
     FeedbackReplyOut,
     FeedbackReviewBulkIn,
@@ -78,8 +79,16 @@ def _images(row: Feedback) -> list[str]:
         return []
 
 
+def _pinned(row: Feedback, now=None) -> bool:
+    """这条现在是不是置顶中：置顶过、没到期、而且还在公开区。"""
+    if row.pinned_at is None or row.status != "approved":
+        return False
+    return row.pinned_until is None or row.pinned_until > (now or clock.now())
+
+
 def _out(row: Feedback, me: User | None) -> FeedbackOut:
     """一条反馈的公开视图。contact 不在 FeedbackOut 里，构造不出来也就漏不出去。"""
+    pinned = _pinned(row)
     return FeedbackOut(
         id=row.id,
         author=row.author,
@@ -91,6 +100,8 @@ def _out(row: Feedback, me: User | None) -> FeedbackOut:
         like_count=len(row.likes),
         liked_by_me=bool(me) and any(lk.user_id == me.id for lk in row.likes),
         created_at=row.created_at,
+        pinned=pinned,
+        pinned_until=row.pinned_until if pinned else None,
     )
 
 
@@ -201,7 +212,9 @@ def list_feedback(
     if category:
         stmt = stmt.where(Feedback.category == category)
     rows = db.scalars(stmt.order_by(Feedback.created_at.desc()).limit(limit)).all()
-    return [_out(r, me) for r in rows]
+    out = [_out(r, me) for r in rows]
+    # 置顶的排在最前面（2.23.2），其余照旧按时间
+    return [o for o in out if o.pinned] + [o for o in out if not o.pinned]
 
 
 @router.get("/feedback/all", summary="全部反馈，含待审核和联系方式（管理员）")
@@ -237,7 +250,7 @@ def pending_count(_: User = Depends(get_current_user), db: Session = Depends(get
     return {"pending": n or 0}
 
 
-NEWS_HOURS = 24   # 反馈区最新消息在组卷页顶上挂多久
+MAX_PINS = 5      # 最多同时置顶几条（黄条再多就挤满一屏了）
 
 
 def _snip(text: str, n: int = 60) -> str:
@@ -245,38 +258,71 @@ def _snip(text: str, n: int = 60) -> str:
     return t if len(t) <= n else t[:n] + "…"
 
 
-@router.get("/feedback/news", summary="反馈区最新一条消息（24 小时内的，组卷页顶上黄条提醒用）")
+@router.get("/feedback/news", summary="置顶的反馈（教师端每个页面顶上的黄条用）")
 def feedback_news(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """「最新消息」= 最近公开出来的一件事：一条反馈审核通过（按审核时间算，待审核的不算，
-    公开区里看不到的不提醒），或者已公开的反馈下面新来一条回复。只看最近 24 小时，没有就返回 null。"""
+    """2.23.2 起黄条只显示管理员**置顶**的反馈（最多 5 条），不再自动显示最新消息。
+    置顶可以不限期，也可以 1～30 天，到期自动不显示。
+
+    每条带一个 id：反馈号 + 置顶时间。老师点 × 关掉的按这个 id 记在浏览器里，
+    同一条取消后再置顶，id 变了，会重新提醒。"""
+    now = clock.now()
+    rows = db.scalars(
+        select(Feedback).where(Feedback.status == "approved", Feedback.pinned_at.is_not(None))
+        .order_by(Feedback.pinned_at.desc())
+    ).all()
+    items = []
+    for f in rows:
+        if not _pinned(f, now):
+            continue
+        last = f.replies[-1] if f.replies else None
+        items.append({
+            "id": f"p{f.id}-{f.pinned_at:%Y%m%d%H%M%S}", "feedback_id": f.id,
+            "author": f.author, "category": f.category, "text": _snip(f.content, 80),
+            "reply_count": len(f.replies),
+            "last_reply": ({"author": last.author or "老师", "is_admin": bool(last.is_admin),
+                            "text": _snip(last.content, 40)} if last else None),
+            "pinned_at": f.pinned_at, "pinned_until": f.pinned_until,
+        })
+    return {"items": items[:MAX_PINS]}
+
+
+@router.put("/feedback/{fid}/pin", response_model=FeedbackOut, summary="置顶一条反馈（管理员）")
+def pin_feedback(
+    fid: int,
+    body: FeedbackPinIn,
+    me: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """days=0 不限期，1～30 天到期自动取消。已经置顶的再点一次 = 改期限（重新提醒一遍）。"""
     from datetime import timedelta
 
-    since = clock.now() - timedelta(hours=NEWS_HOURS)
-    out = None
-    fb = db.scalars(
-        select(Feedback).where(Feedback.status == "approved",
-                               func.coalesce(Feedback.reviewed_at, Feedback.created_at) >= since)
-        .order_by(func.coalesce(Feedback.reviewed_at, Feedback.created_at).desc()).limit(1)
-    ).first()
-    if fb:
-        out = {"kind": "feedback", "id": f"f{fb.id}", "feedback_id": fb.id, "author": fb.author,
-               "category": fb.category, "text": _snip(fb.content), "at": fb.reviewed_at or fb.created_at}
-    rp = db.execute(
-        select(FeedbackReply, Feedback)
-        .join(Feedback, Feedback.id == FeedbackReply.feedback_id)
-        .where(Feedback.status == "approved", FeedbackReply.created_at >= since)
-        .order_by(FeedbackReply.created_at.desc()).limit(1)
-    ).first()
-    if rp:
-        r, f = rp
-        if out is None or r.created_at >= out["at"]:
-            out = {"kind": "reply", "id": f"r{r.id}", "feedback_id": f.id,
-                   "author": r.author or "老师", "is_admin": bool(r.is_admin),
-                   "category": f.category, "text": _snip(r.content), "about": _snip(f.content, 24),
-                   "at": r.created_at}
-    if out:
-        out["until"] = out["at"] + timedelta(hours=NEWS_HOURS)
-    return {"news": out}
+    row = db.get(Feedback, fid)
+    if not row:
+        raise HTTPException(status_code=404, detail="反馈不存在")
+    if row.status != "approved":
+        raise HTTPException(status_code=409, detail="只能置顶已经公开（审核通过）的反馈")
+    now = clock.now()
+    others = [f for f in db.scalars(select(Feedback).where(
+        Feedback.pinned_at.is_not(None), Feedback.id != row.id)) if _pinned(f, now)]
+    if len(others) >= MAX_PINS:
+        raise HTTPException(status_code=409,
+                            detail=f"最多同时置顶 {MAX_PINS} 条，先取消一条再置顶这条")
+    row.pinned_at = now
+    row.pinned_until = now + timedelta(days=body.days) if body.days else None
+    db.commit()
+    db.refresh(row)
+    return _out(row, me)
+
+
+@router.delete("/feedback/{fid}/pin", response_model=FeedbackOut, summary="取消置顶（管理员）")
+def unpin_feedback(fid: int, me: User = Depends(require_admin), db: Session = Depends(get_db)):
+    row = db.get(Feedback, fid)
+    if not row:
+        raise HTTPException(status_code=404, detail="反馈不存在")
+    row.pinned_at = row.pinned_until = None
+    db.commit()
+    db.refresh(row)
+    return _out(row, me)
 
 
 @router.post("/feedback/{fid}/reply", response_model=FeedbackOut, summary="在反馈下回复（教师）")

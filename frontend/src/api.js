@@ -360,6 +360,9 @@ export const api = {
   feedbackLike: id => http.post(`/feedback/${id}/like`),
   feedbackPendingCount: () => http.get('/feedback/pending-count'),
   feedbackNews: () => http.get('/feedback/news', { silent: true }),
+  // 置顶（管理员，2.23.2）：days = 0 不限期，1～30 天
+  feedbackPin: (id, days) => http.put(`/feedback/${id}/pin`, { days }),
+  feedbackUnpin: id => http.delete(`/feedback/${id}/pin`),
   feedbackReview: (id, status, note = '') =>
     http.patch(`/feedback/${id}/review`, { status, note }),
   feedbackReviewBulk: (ids, status) =>
