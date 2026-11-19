@@ -676,26 +676,50 @@ class TypingConfigOut(BaseModel):
     min_done_ratio: float = 0
     submit_interval_sec: int = 0
     passage_per_minute: int = 0
+    # 2.23.1：练习中多久同步一次输入内容（秒）。旧服务端没有这一项
+    sync_interval_sec: float = 1.5
+
+
+TYPING_ANSWER_MAX = 20000
+
+
+class TypingSessionIn(BaseModel):
+    """开始一次计分练习（2.23.1）。登录了的（学生平台、exe）班级姓名以账号为准，这两项不看。"""
+
+    module: str = Field(max_length=16)          # 键盘 / 英文 / 中文
+    difficulty: str = Field(default="", max_length=16)
+    time_limit: int = Field(default=0, ge=0)    # 分钟；0 = 不限时（exe）
+    student_name: str = Field(default="", max_length=64)
+    student_class: str = Field(default="", max_length=64)
+
+
+class TypingSessionOut(BaseModel):
+    session_id: str
+    text: str
+    time_limit: int = 0
+    sync_interval_sec: float = 1.5
+
+
+class TypingProgressIn(BaseModel):
+    """练习中途同步：输入框里现在的全部内容（键盘模块是按过的键依次排成的串）。"""
+
+    session_id: str = Field(max_length=64)
+    answer: str = Field(default="", max_length=TYPING_ANSWER_MAX)
 
 
 class TypingRecordIn(BaseModel):
-    """学生上报的原始量。速度/正确率/星级都由后端算，前端不参与。"""
+    """交成绩（2.23.1 起）：只交会话 id 和最终输入内容，速度、正确率、用时全由服务端算。
 
-    student_name: str = Field(max_length=64)
-    student_class: str = Field(max_length=64)
-    # 桌面端交上来的会带学号：令牌过期时服务端靠它把成绩认领到账号上，
-    # 和交卷那条路一个写法。网页端不带（它有令牌），留空即可。
-    student_no: str = Field(default="", max_length=64)
-    module: str                      # 键盘 / 英文 / 中文
-    difficulty: str = ""
-    typed_chars: int = Field(ge=0)   # 实际敲了多少（键盘模块是按键次数）
-    correct_chars: int = Field(ge=0) # 其中对了多少
-    duration: float = Field(ge=0)    # 秒
-    # 2.11.0 起：这段文本多长、限时几分钟（0 = 不限时，exe 就是不限时的）。
-    # 「打完一半才能交」靠这两个数判；不带的是旧版学生端，中文英文交不上来
-    target_chars: int = Field(default=0, ge=0)
-    time_limit: int = Field(default=0, ge=0)
-    # 2.22.1 起网页端带：这次练习在输入框里按了几次键。None = exe / 旧网页，不查
+    2.23 及以前的客户端报的是 typed_chars / correct_chars / duration 这些统计数，
+    一个 POST 就能造出任意成绩 —— 这些字段现在照收不误（免得旧客户端报 422 看不懂），
+    但一律不看，没带 session_id 的直接回「请刷新网页或更新学生端」。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    session_id: str = Field(default="", max_length=64)
+    answer: str = Field(default="", max_length=TYPING_ANSWER_MAX)
+    # 网页端带：这次练习在输入框里按了几次键（2.22.1）。None = exe，不查
     keystrokes: int | None = Field(default=None, ge=0)
 
 

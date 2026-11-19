@@ -73,7 +73,7 @@ from tools import uploads_archive
 
 # app_meta 记的是这台机器自己的状态（时钟校正挪到了哪），不能被别处的备份盖掉；
 # rate_hits 是最近一分钟的限频计数，搬过去没有意义
-SKIP_TABLES = {"alembic_version", "app_meta", "rate_hits"}
+SKIP_TABLES = {"alembic_version", "app_meta", "rate_hits", "typing_sessions"}
 SHOW = 20          # 每类问题最多列多少条，其余只报个数
 
 

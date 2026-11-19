@@ -6,6 +6,7 @@
 import pytest
 
 from app.siteconfig import site
+from tests.typing_support import legacy_submit
 
 
 @pytest.fixture(autouse=True)
@@ -23,7 +24,7 @@ def pupil(client, auth):
 
 
 def _submit(client, cls, name):
-    return client.post("/api/typing/records", json={
+    return legacy_submit(client, {
         "student_name": name, "student_class": cls, "module": "键盘", "difficulty": "简单",
         "typed_chars": 50, "correct_chars": 48, "duration": 60})
 

@@ -878,8 +878,10 @@ class ReviewPage(Page):
 class TypingPage(Page):
     """照搬网页端打字训练：取一段文本，照着敲，交成绩。
 
-    速度、正确率、星级**一律由后端算** —— 客户端只报"敲了多少、对了多少、
-    用了多久"，和网页端一个口径，两边的成绩才能放进同一张表里比。
+    速度、正确率、用时、星级**一律由后端算**（服务端 2.23.1 起连原始量也不报了）：
+    取文本就是向服务端领一次练习会话，练的时候每 1.5 秒把输入框内容同步上去，
+    交成绩只交会话 id 和最终内容。原来只报三个数，改个数字就能交上去一个满分。
+    同步失败（断网）不要紧，下次同步或交成绩时一起补上；服务端说「这次作废了」才停下来。
 
     防刷（服务端把关，这里提前说清楚）：
     - 要打完一半（config.yaml 的 min_done_ratio）才能交；
@@ -895,6 +897,9 @@ class TypingPage(Page):
     def load(self):
         self.started = None
         self.passage = ""
+        self.session = ""            # 这段文本对应的练习会话；交过一次就作废
+        self.synced = ""             # 上次同步上去的内容，没变就不再发
+        self.syncing = False
         self.ratio = 0.0             # 打完多少才能交，从服务端配置来；旧服务端没有这项就是 0
         self.frozen = None           # 被「每分钟只能交一次」挡回来、等着自动再交的那一次
         self.jobs = []               # 倒数用的 after，离开这一页时一起取消
@@ -943,6 +948,7 @@ class TypingPage(Page):
                                     cursor="hand2", command=self.submit)
         self.submit_btn.pack(side="right", ipadx=14, ipady=3)
         self.load_levels()
+        self.later(1500, self.sync_loop)
 
     def later(self, ms: int, fn):
         self.jobs.append(self.after(ms, fn))
@@ -969,17 +975,18 @@ class TypingPage(Page):
             self.fetch()
         in_thread(self, lambda: api.typing_config(self.app.server), done)
 
-    def fetch(self, fresh: bool = False):
-        """取练习文本。fresh=True 是点了「换一段」，一定去要新的；别的时候取过就用取过的。"""
+    def fetch(self, fresh: bool = False, keep_live: bool = False):
+        """取练习文本（= 领一次练习会话）。fresh=True 是点了「换一段」或者刚交完，一定去要新的；
+        别的时候取过就用取过的。keep_live：刚交完成绩，下面那行成绩别被「还没开始」盖掉。"""
         # **Tk 变量要在主线程读好再传进去。** 写成
-        # `lambda: api.typing_passage(..., self.mode.get())` 的话，那个 .get()
+        # `lambda: api.typing_start(..., self.mode.get())` 的话，那个 .get()
         # 是在工作线程里执行的 —— 那是从非主线程碰 Tcl，直接报
         # "main thread is not in main loop"，而且错误被吞在回调里，界面只会
         # 一直停在"正在加载"。踩过。
         mode, level = self.mode.get(), self.level.get()
         kept = self.app.typing_cache.get((mode, level))
         if kept and not fresh:
-            return self.show(kept)
+            return self.show(kept["text"], session=kept["sid"])
 
         self.msg.pack(anchor="w", padx=28, pady=(14, 0))
         self.msg.config(text="正在取练习文本…", fg=GRAY)
@@ -993,24 +1000,39 @@ class TypingPage(Page):
                 self.msg.pack(anchor="w", padx=28, pady=(14, 0))
                 self.msg.config(text=err, fg=RED)
                 return self.hold_swap(getattr(err, "wait", 0))
-            text = str(got or "")
-            if text:
-                self.app.typing_cache[(mode, level)] = text
-            self.show(text)
+            got = got or {}
+            text, sid = str(got.get("text") or ""), str(got.get("session_id") or "")
+            if text and sid:
+                self.app.typing_cache[(mode, level)] = {"text": text, "sid": sid}
+            self.show(text, session=sid, keep_live=keep_live)
             self.hold_swap(0)
-        in_thread(self, lambda: api.typing_passage(self.app.server, mode, level), done)
+        student = dict(self.app.student or {})
+        in_thread(self, lambda: api.typing_start(self.app.server, mode, level, student,
+                                                 token=self.app.token), done)
 
-    def show(self, text: str, empty: str = "（这个模式还没有练习文本）"):
+    def show(self, text: str, empty: str = "（这个模式还没有练习文本）", session: str = "",
+             keep_live: bool = False):
         self.msg.pack_forget()
         self.passage = text
+        self.session = session if text else ""
+        self.synced = ""
         self.text_view.config(state="normal")
         self.text_view.delete("1.0", "end")
         self.text_view.insert("end", text or empty)
         self.text_view.config(state="disabled")
         if not self.frozen:
+            self.entry.config(state="normal")
             self.entry.delete("1.0", "end")
             self.started = None
-            self.live.config(text="还没开始", fg=GRAY)
+            if not keep_live:
+                self.live.config(text="还没开始", fg=GRAY)
+
+    def drop_session(self):
+        """这个会话用不了了（交过、作废、过期）：从缓存里拿掉，下次切回来重新领。"""
+        for key, kept in list(self.app.typing_cache.items()):
+            if kept.get("sid") == self.session:
+                del self.app.typing_cache[key]
+        self.session = ""
 
     def hold_swap(self, wait: int):
         """「换一段」被服务端挡了（每分钟最多三次）就在按钮上倒数，到点再放开。"""
@@ -1020,7 +1042,7 @@ class TypingPage(Page):
         self.later(1000, lambda: self.hold_swap(wait - 1))
 
     def on_key(self, _event=None):
-        # 第一下敲键才开始计时 —— 从取到文本就计时的话，学生看题的时间也算进去了
+        # 第一下敲键才开始计时 —— 看题的时间不算（服务端也是从第一次同步上来有字才算）
         if self.started is None:
             self.started = time.time()
         self.after(10, self.tick)
@@ -1034,34 +1056,55 @@ class TypingPage(Page):
         self.live.config(text=f"已敲 {len(typed)} 字　正确 {right}　"
                               f"用时 {int(used)} 秒", fg=GRAY)
 
+    def sync_loop(self):
+        """每 1.5 秒把输入框内容同步给服务端（内容没变就不发）。"""
+        self.later(1500, self.sync_loop)
+        if not self.session or self.syncing or self.frozen:
+            return
+        typed = self.entry.get("1.0", "end-1c")      # Tk 在主线程里读
+        if typed == self.synced:
+            return
+        sid = self.session
+        self.syncing = True
+
+        def done(got, err):
+            self.syncing = False
+            if err or sid != self.session:
+                return                               # 连不上：下次再同步；换了段：不管了
+            if got:
+                # 服务端说这次练习不能用了（判成粘贴、过期、交过了）
+                self.drop_session()
+                self.entry.config(state="disabled")
+                self.started = None
+                return self.live.config(text=f"{got}（点「换一段」重新开始）", fg=RED)
+            self.synced = typed
+        in_thread(self, lambda: api.typing_progress(self.app.server, sid, typed,
+                                                    token=self.app.token), done)
+
     def submit(self):
         if self.frozen:
             return
         typed = self.entry.get("1.0", "end-1c")
         if self.started is None or not typed.strip():
             return self.live.config(text="先敲几个字再交", fg=AMBER)
-        if not self.passage:
-            return self.live.config(text="还没取到练习文本", fg=AMBER)
+        if not self.passage or not self.session:
+            return self.live.config(text="还没取到练习文本，点「换一段」再试", fg=AMBER)
         need = math.ceil(len(self.passage) * self.ratio) if self.ratio > 0 else 0
         if len(typed) < need:
             return self.live.config(
                 text=f"还没打完 {round(self.ratio * 100)}%：这段 {len(self.passage)} 字，"
                      f"已敲 {len(typed)} 字，至少要 {need} 字才能交", fg=AMBER)
-        right = sum(1 for a, b in zip(typed, self.passage) if a == b)
-        used = max(0.001, time.time() - self.started)
-        # 同上：Tk 变量在主线程里读好
-        self.send((self.mode.get(), self.level.get(), len(typed), right, used,
-                   len(self.passage)))
+        self.send((self.session, typed))
 
     def send(self, got_now: tuple):
-        mode, level, typed, right, used, target = got_now
+        sid, typed = got_now
         self.submit_btn.config(state="disabled")
 
         def done(got, err):
             wait = getattr(err, "wait", 0) if err else 0
             if wait:
-                # 同一台电脑每分钟只能交一次：这次的成绩扣着、停表（等的这几十秒不算用时），
-                # 输入框先锁上，倒数完自动再交
+                # 同一台电脑每分钟只能交一次：这次的内容和用时服务端已经定好，
+                # 输入框先锁上，倒数完自动再交，等的这几十秒不算用时
                 self.frozen = got_now
                 self.started = None
                 self.entry.config(state="disabled")
@@ -1074,12 +1117,16 @@ class TypingPage(Page):
             got = got or {}
             self.live.config(
                 text=f"已记录：{got.get('speed', 0)} 字/分　正确率 "
-                     f"{got.get('accuracy', 0)}%　{'★' * int(got.get('stars', 0) or 0)}",
+                     f"{got.get('accuracy', 0)}%　用时 {got.get('duration', 0)} 秒　"
+                     f"{'★' * int(got.get('stars', 0) or 0)}",
                 fg=GREEN)
             self.started = None
-        in_thread(self, lambda: api.typing_submit(
-            self.app.server, self.app.student, mode, level,
-            typed, right, used, token=self.app.token, target=target), done)
+            # 这个会话交过了，作废；换一段新的接着练（成绩那行留着）
+            if sid == self.session:
+                self.drop_session()
+                self.fetch(fresh=True, keep_live=True)
+        in_thread(self, lambda: api.typing_submit(self.app.server, sid, typed,
+                                                  token=self.app.token), done)
 
     def wait_then_send(self, wait: int):
         if wait <= 0:
@@ -1102,7 +1149,7 @@ class ExamApp:
         self.root.minsize(900, 620)
         self.root.configure(bg=BG)
         self.package: package.ExamPackage | None = None
-        # 打字练习取过的文本 {(模式, 难度): 正文}：服务端每台电脑每分钟只给换三次，
+        # 打字练习取过的文本 {(模式, 难度): {"text": 正文, "sid": 练习会话}}：服务端每台电脑每分钟只给换三次，
         # 刷新、切页都重新取的话几下就用完了。见 TypingPage
         self.typing_cache: dict = {}
         self.pictures: dict = {}          # 题目配图：{包里的文件名: 本地路径}

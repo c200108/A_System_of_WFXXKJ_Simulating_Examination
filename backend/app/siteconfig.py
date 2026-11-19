@@ -258,6 +258,14 @@ class TypingConf(_Base):
     # 字数 > 按键数 ÷ 这个比例，说明有大段文字不是敲进来的。exe 和旧网页不报，就不查这一条
     min_keys_per_char_chinese: float = Field(default=0.6, ge=0)
     min_keys_per_char_english: float = Field(default=0.9, ge=0)
+    # 计分会话（2.23.1）：练习中每一两秒同步一次输入内容，服务端按时间窗算平均速度。
+    # 输入法一次上屏一整个词组、断网后一口气补传都会冒出一截字，所以每个时间窗另外
+    # 宽限这么多字（上面的速度上限填 0 就不查）
+    burst_chars: int = Field(default=30, ge=0)
+    # 限时练习到点后，交成绩的请求晚到多少秒以内照收（网络慢）。再晚就只认到点前同步上来的内容
+    submit_grace_sec: int = Field(default=10, ge=0)
+    # 同一个出口 IP 每分钟最多开多少次练习。整个机房走一个出口 IP 的，这个数要大于机房人数。0 = 不限
+    sessions_per_ip_per_minute: int = Field(default=120, ge=0)
     # 文本库：{难度: [段落, ...]}，改这里不用重新构建，restart backend 即可
     english: dict[str, list[str]] = Field(default_factory=dict)
     chinese: dict[str, list[str]] = Field(default_factory=dict)

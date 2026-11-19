@@ -99,6 +99,21 @@ def age_rate_hits(seconds: int) -> None:
         db.commit()
 
 
+def age_typing_session(session_id: str, seconds: int) -> None:
+    """打字会话（服务端 2.23.1）的用时按服务端的钟算：把这次练习的开始时间往前挪，
+    等于已经敲了这么久 —— 自检里不真的等。"""
+    from datetime import timedelta
+
+    from app.database import SessionLocal
+    from app.models import TypingSession
+
+    with SessionLocal() as db:
+        s = db.get(TypingSession, session_id)
+        s.created_at -= timedelta(seconds=seconds)
+        s.started_at -= timedelta(seconds=seconds)
+        db.commit()
+
+
 @pytest.fixture(scope="session")
 def server():
     """一个真的后端，跑在 127.0.0.1 的随机端口上，库是临时的。"""

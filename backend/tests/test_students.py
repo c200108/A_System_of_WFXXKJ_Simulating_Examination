@@ -7,6 +7,7 @@
 """
 
 import pytest
+from tests.typing_support import legacy_submit
 
 
 @pytest.fixture(scope="module")
@@ -472,9 +473,7 @@ def test_cannot_set_password_to_student_no(client, auth):
 # ---------- 打字 ----------
 def test_typing_record_links_to_account(client, auth):
     hdr = _stoken(client, auth, no="20260141", grade="七年级", cls="7班")
-    res = client.post(
-        "/api/typing/records",
-        json={
+    res = legacy_submit(client, {
             "student_name": "冒名顶替",      # 带令牌时这两个字段应被账号覆盖
             "student_class": "冒充的班",
             "module": "中文",
@@ -482,9 +481,7 @@ def test_typing_record_links_to_account(client, auth):
             "duration": 60,
             "typed_chars": 100,
             "correct_chars": 95,
-        },
-        headers=hdr,
-    )
+        }, headers=hdr)
     assert res.status_code == 200, res.text
 
     mine = client.get("/api/student/typing/records", headers=hdr).json()
@@ -498,9 +495,7 @@ def test_typing_record_links_to_account(client, auth):
 
 def test_anonymous_typing_still_works(client):
     """公开的 /dazi 那条路不能被学生平台挤掉。"""
-    res = client.post(
-        "/api/typing/records",
-        json={
+    res = legacy_submit(client, {
             "student_name": "路人甲",
             "student_class": "六(1)班",
             "module": "英文",
@@ -521,8 +516,7 @@ def test_batch_errors_do_not_repeat_the_same_advice(client, auth):
     """
     text = "\n".join(f"这是第{i}行写错的内容没有空格分隔" for i in range(1, 10))
     body = client.post(
-        "/api/students/batch", json={"text": text}, headers=auth
-    ).json()
+        "/api/students/batch", json={"text": text}, headers=auth).json()
 
     assert body["added"] == 0 and body["error_count"] == 9
     assert len(body["errors"]) == 9

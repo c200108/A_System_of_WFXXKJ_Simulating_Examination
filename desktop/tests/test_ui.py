@@ -19,6 +19,7 @@ import pytest
 
 from client import api, exam_ui, store, ui
 
+from conftest import age_typing_session
 from test_flow import do_the_work
 
 
@@ -229,6 +230,7 @@ def test_exe里练的打字算进首页(app, server, exam):
     assert settle(app, until=lambda: getattr(page, "passage", "")), "练习文本没取回来"
     page.entry.insert("1.0", page.passage[:40])
     page.started = time.time() - 30          # 当作敲了半分钟
+    age_typing_session(page.session, 30)     # 用时按服务端的钟算（2.23.1）
     page.submit()
     assert settle(app, until=lambda: "已记录" in page.live.cget("text")),         page.live.cget("text")
 
@@ -623,7 +625,7 @@ def test_typing_page_fetches_a_passage(app, server, exam):
 
 
 def test_typing_result_comes_from_the_server(app, server, exam):
-    """速度、正确率、星级**都由后端算** —— 客户端只报敲了多少、对了多少、用了多久，
+    """速度、正确率、用时、星级**都由后端算**（2.23.1 起客户端只交会话 id 和敲出来的内容），
     和网页端一个口径，两边成绩才能放进同一张表里比。"""
     shell = signed_in(app, server)
     shell.go("typing")
@@ -633,6 +635,7 @@ def test_typing_result_comes_from_the_server(app, server, exam):
 
     page.entry.insert("end", page.passage[:12])
     page.started = time.time() - 6
+    age_typing_session(page.session, 6)
     page.submit()
     assert settle(app, until=lambda: "已记录" in page.live.cget("text")), \
         page.live.cget("text")
@@ -709,12 +712,19 @@ def test_打字一分钟只能交一次_挡回来的那次停表等着自动交(
     shell.go("typing")
     page = shell.body
     assert settle(app, until=lambda: page.passage), page.msg.cget("text")
+    first = page.session
     page.entry.insert("end", _half(page))
     page.started = time.time() - 60
+    age_typing_session(page.session, 60)
     page.submit()
     assert settle(app, until=lambda: "已记录" in page.live.cget("text")), page.live.cget("text")
+    # 交过的会话作废，自动换了一段新的（2.23.1），成绩那行还留着
+    assert settle(app, until=lambda: page.session and page.session != first), page.msg.cget("text")
+    assert "已记录" in page.live.cget("text")
 
+    page.entry.insert("end", _half(page))
     page.started = time.time() - 50
+    age_typing_session(page.session, 50)
     page.submit()
     assert settle(app, until=lambda: page.frozen), page.live.cget("text")
     assert "秒后自动交" in page.live.cget("text")

@@ -7,6 +7,7 @@
 import pytest
 
 from tests.test_typing import _student, _submit
+from tests.typing_support import legacy_submit
 
 
 @pytest.fixture(autouse=True)
@@ -80,9 +81,9 @@ def test_account_merges_old_unlinked_records(client, auth):
     me = _student(client, auth, "26091101", "排名甲")
     # 学号写错了没认上：以账号的班级姓名留了一条不挂账号的
     _go(client, "排名甲", 90, cls="八年级2班")
-    res = client.post("/api/typing/records", headers=me, json={
+    res = legacy_submit(client, {
         "student_name": "x", "student_class": "x", "module": "英文", "difficulty": "简单",
-        "typed_chars": 50, "correct_chars": 50, "duration": 60})
+        "typed_chars": 50, "correct_chars": 50, "duration": 60}, headers=me)
     r = res.json()
     assert (r["rank_total"], r["best_speed"], r["best_rank"]) == (1, 90, 1)
 

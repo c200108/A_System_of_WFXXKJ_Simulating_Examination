@@ -126,9 +126,10 @@ class ApiError(Exception):
     retry_after：服务器说「过几秒再来」（429，打字交得太快、换文本太勤）时的秒数，别的是 0。
     """
 
-    def __init__(self, message: str = "", retry_after: int = 0):
+    def __init__(self, message: str = "", retry_after: int = 0, status: int = 0):
         super().__init__(message)
         self.retry_after = retry_after
+        self.status = status         # 服务器回的 HTTP 状态码；连不上的是 0
 
 
 def _device_id() -> str:
@@ -349,7 +350,8 @@ def _request(url: str, body: dict | None = None, timeout: int = TIMEOUT,
             wait = int(resp.headers.get("Retry-After") or 0) if resp.status == 429 else 0
         except ValueError:
             wait = 0
-        raise ApiError(str(detail or f"服务器拒绝了（{resp.status}）"), retry_after=wait)
+        raise ApiError(str(detail or f"服务器拒绝了（{resp.status}）"), retry_after=wait,
+                       status=resp.status)
 
     global _last_etag
     _last_etag = (resp.headers.get("ETag") or "").strip('"')
@@ -532,42 +534,43 @@ def typing_config(server: str) -> dict:
     return _json(f"{base(server)}/api/typing/config")
 
 
-# 两套叫法：取文本的接口用 english/chinese，交成绩的接口用「英文」「中文」。
-# 映射放在这儿，别让界面去记这件事
-PASSAGE_MODE = {"中文": "chinese", "英文": "english"}
+def typing_start(server: str, module: str, difficulty: str, student: dict,
+                 token: str = "") -> dict:
+    """开始一次计分练习（服务端 2.23.1）：领会话和练习文本。
 
+    返回 {"session_id": …, "text": 原文, "sync_interval_sec": 1.5}。取不到抛 ApiError
+    （后端写好的中文，比如「同一台电脑每分钟最多换 3 次」）。
 
-def typing_passage(server: str, module: str, difficulty: str) -> str:
-    """取一段练习文本。返回正文，取不到就抛 ApiError（里面是后端写好的中文）。"""
-    query = urllib.parse.urlencode({"mode": PASSAGE_MODE.get(module, "chinese"),
-                                    "difficulty": difficulty})
-    got = _json(f"{base(server)}/api/typing/passage?{query}")
-    return str((got or {}).get("text") or "")
+    原来交成绩只报「敲了多少、对了多少、用了多久」三个数，改个数字就能交上去一个满分。
+    现在文本是服务端出的、时间是服务端记的，交成绩只交会话 id 和最终内容。
 
-
-def typing_submit(server: str, student: dict, module: str, difficulty: str,
-                  typed: int, correct: int, seconds: float, token: str = "",
-                  target: int = 0) -> dict:
-    """交一次打字成绩。**速度、正确率、星级都由后端算** —— 客户端只报原始量，
-    和网页端一个口径，免得两边算法飘开。
-
-    **令牌和学号一定要带上**：这条成绩要挂到学生账号上，首页那三个数字
-    （练习次数、最快速度、平均正确率）只统计挂上了账号的记录。不带的话成绩
-    照样入库、老师在成绩页也看得见，但学生自己的首页永远是 0 —— 这个坑
-    交卷那条路踩过一次（4.4.0 修的），打字这条当时漏了。
-
-    两样都带是有意的：令牌是正经凭据，但它会过期（默认 12 小时）；练了一下午
-    再交的时候令牌可能已经失效，这时服务端按学号认领，和交卷那条路一个写法。
-
-    target 是这段文本有多长：服务端要打完一半（min_done_ratio）才收，靠它判。
-    exe 不限时，time_limit 固定报 0。
+    **令牌一定要带**：成绩要挂到学生账号上，首页那三个数字才算得上。令牌过期了（默认
+    12 小时）也不怕，服务端按班级姓名对名单认领 —— 所以班级姓名也带上。exe 不限时，time_limit 报 0。
     """
-    return _json(f"{base(server)}/api/typing/records", {
+    return _json(f"{base(server)}/api/typing/sessions", {
+        "module": module, "difficulty": difficulty, "time_limit": 0,
         "student_name": student.get("name", ""),
         "student_class": student.get("cls", "") or student.get("student_class", ""),
-        "student_no": str(student.get("no", "") or student.get("student_no", "")),
-        "module": module, "difficulty": difficulty,
-        "typed_chars": int(typed), "correct_chars": int(correct),
-        "duration": float(seconds),
-        "target_chars": int(target), "time_limit": 0,
     }, token=token)
+
+
+def typing_progress(server: str, session_id: str, answer: str, token: str = "") -> str:
+    """练习中同步一次输入内容。**不抛异常**：
+
+    - 返回空串：同步上了，或者暂时连不上 / 服务器忙 —— 不要紧，下次同步或交成绩时一起补上；
+    - 返回一句话：这次练习不能用了（判成粘贴作废、过期、已经交过），界面停下来告诉学生。
+    """
+    try:
+        _json(f"{base(server)}/api/typing/sessions/progress",
+              {"session_id": session_id, "answer": answer}, timeout=5, token=token)
+    except ApiError as exc:
+        status = getattr(exc, "status", 0)
+        if 400 <= status < 500 and status != 429:
+            return str(exc)
+    return ""
+
+
+def typing_submit(server: str, session_id: str, answer: str, token: str = "") -> dict:
+    """交成绩：只交会话 id 和最终内容。速度、正确率、用时、星级全由服务端算。"""
+    return _json(f"{base(server)}/api/typing/records",
+                 {"session_id": session_id, "answer": answer}, token=token)

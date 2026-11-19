@@ -1,19 +1,21 @@
 """打字训练。
 
-学生端（/api/typing/config、/api/typing/records POST）**不需要登录**——
-和考试的 /api/take 一样，学生只填班级姓名。
+学生端（开练、同步进度、交成绩）**不需要登录**——和考试的 /api/take 一样，
+免登录页学生只填班级姓名；学生平台和 exe 带着令牌来，成绩挂到账号上。
 教师端（成绩、统计、导出、删除）需要登录。
 
-评分放在后端做：前端只上报"敲了多少、对了多少、用了多久"这三个原始量，
-速度、正确率、星级都由服务端算。这样改评分标准不用重新构建前端，
-学生也没法直接伪造一个满分成绩上来（虽然仍能伪造原始量，
-但校内工具没必要做到防作弊那一步）。
+评分全在后端（2.23.1 起连原始量也不收了）：开练时服务端出文本、记时间，
+练习中客户端隔一两秒同步一次输入内容，交成绩只交会话 id 和最终内容，
+正确字数、用时、速度、星级都由服务端算。见下面「计分会话」一节。
 """
 
 import io
+import json
 import math
 import re
+import secrets
 from datetime import date, datetime, time, timedelta
+from types import SimpleNamespace
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
@@ -24,7 +26,9 @@ from sqlalchemy.orm import Session
 from .. import clock
 from ..database import get_db
 from ..deps import get_current_user, get_optional_student, require_delete_permission
-from ..models import SchoolClass, Student, TypingRecord, TypingText, TypingTheme, User
+from ..models import (
+    SchoolClass, Student, TypingRecord, TypingSession, TypingText, TypingTheme, User,
+)
 from ..schemas import (
     IdsIn,
     TypingRecordPage,
@@ -36,7 +40,10 @@ from ..schemas import (
     TypingThemeIn,
     TypingThemeOut,
     TypingThemeUpdate,
+    TypingProgressIn,
     TypingRecordIn,
+    TypingSessionIn,
+    TypingSessionOut,
     TypingRecordOut,
     TypingResultOut,
     TypingStatsOut,
@@ -90,6 +97,7 @@ def get_config():
         min_done_ratio=c.min_done_ratio,
         submit_interval_sec=c.submit_interval_sec,
         passage_per_minute=c.passage_per_minute,
+        sync_interval_sec=SYNC_INTERVAL,
     )
 
 
@@ -123,7 +131,7 @@ def _roster_tip(student_class: str, student_name: str) -> str:
             "请按老师给的名单选班级、填姓名（姓名不要带空格）；确实不在名单里的请找老师添加")
 
 
-def _not_done(body: TypingRecordIn) -> str:
+def _not_done(body) -> str:
     """中文英文没打完「一半」（min_done_ratio）就不收，返回原因；够了返回空串。
 
     **限时练习过了一半时间也算够**：拼出来的文本有 7～9 段，英文简单难度一篇就四五百个字母，
@@ -148,7 +156,7 @@ def _not_done(body: TypingRecordIn) -> str:
     return tip
 
 
-def _cheated(body: TypingRecordIn) -> str:
+def _cheated(body) -> str:
     """速度快得不可能、或者字比按键多出一大截（粘贴进来的），返回原因；正常返回空串（2.22.1）。
 
     速度按「正确字数 ÷ 用时」算，和成绩里的速度同一个口径；用时不足 1 秒按 1 秒算。
@@ -232,6 +240,218 @@ def check_student(
     return {"ok": ok, "tip": "" if ok else _roster_tip(student_class, student_name)}
 
 
+# ---------------------------------------------------------------- 计分会话（2.23.1）
+# 原来交成绩只报「敲了多少、对了多少、用了多久」三个数，一个 POST 就能造出任意成绩。
+# 现在：
+#   1. POST /sessions 开练：服务端出文本、记下开始时间，回一个随机会话 id（凭据，不进网址）；
+#   2. POST /sessions/progress 练习中每 1.5 秒同步一次输入框内容，服务端按时间窗算平均速度，
+#      快得不像人敲的直接作废这次练习。同步失败（断网）不要紧，下次同步或交成绩时一口气补上；
+#   3. POST /records 交成绩：只带会话 id 和最终内容，正确字数拿服务端存的原文比，
+#      用时按服务端的钟算（限时练习按「时限 + 宽限」封顶），一个会话只能交一次。
+# 免登录页的班级姓名仍然只能信学生自己填的；能写程序按节奏模拟敲键的也挡不住 ——
+# 这一层堵的是「改个数字就交上去」和「整段粘贴」。
+KEYBOARD_TARGET = "`1234567890-=qwertyuiop[]\\asdfghjkl;'zxcvbnm,./ "
+SESSION_TTL = timedelta(hours=2)        # 领了会话两小时内要交，过了作废
+SESSION_KEEP = timedelta(hours=3)       # 三小时以前的会话随手清掉（成绩在 typing_records，不受影响）
+SYNC_INTERVAL = 1.5                     # 客户端多久同步一次（秒），配置接口带给客户端
+FIRST_SYNC_ALLOWANCE = 3.0              # 不限时（exe）从第一次同步往前倒推这么多秒算开始
+MAX_CHECKS = 80                         # 每个会话最多留多少个同步打点
+OLD_CLIENT = "学生端版本太旧，交不了成绩：请刷新网页或更新学生端后重新练习"
+
+
+def _score(module: str, target: str, answer: str) -> tuple[int, int]:
+    """(敲了多少, 对了多少)。键盘模块的 answer 是按过的键依次排成的串，按对了才往下走一格。"""
+    if module == "键盘":
+        pos = correct = 0
+        for ch in answer:
+            if pos < len(target) and ch.lower() == target[pos]:
+                correct += 1
+                pos += 1
+        return len(answer), correct
+    return len(answer), sum(1 for a, b in zip(answer, target) if a == b)
+
+
+def _cap_per_min(module: str) -> int:
+    c = site.typing
+    if module == "键盘":
+        return c.max_keys_per_min
+    return c.max_speed_chinese if module == "中文" else c.max_speed_english
+
+
+def _measure(module: str, typed: int, correct: int) -> int:
+    """限速看的量：键盘看按键数，中文英文看正确字数（和成绩里的速度一个口径）。"""
+    return typed if module == "键盘" else correct
+
+
+def _checks(s: TypingSession) -> list:
+    try:
+        got = json.loads(s.checks or "[]")
+    except ValueError:
+        got = []
+    return got if isinstance(got, list) and got else [[0.0, 0]]
+
+
+def _too_fast(s: TypingSession, checks: list, t: float, m: int) -> str:
+    """按时间窗看平均速度：从之前任何一个同步打点到现在，多出来的量都不能超过
+    「上限 × 这段时间 + 宽限字数」。
+
+    宽限字数（burst_chars）是给输入法一次上屏一整句、断网后一口气补传留的；
+    时间窗越长，宽限占的比例越小，所以长时间的平均速度还是卡在上限上。"""
+    cap = _cap_per_min(s.module)
+    if not cap:
+        return ""
+    burst = site.typing.burst_chars
+    for t0, m0 in checks:
+        if m - m0 > cap / 60.0 * max(0.0, t - t0) + burst:
+            what = "按键" if s.module == "键盘" else "字"
+            return (f"输入速度异常（{max(0.0, t - t0):.0f} 秒里多出 {m - m0} 个{what}），"
+                    "像是粘贴或者程序填进来的，这次练习作废、不记成绩。请自己一个字一个字地打")
+    return ""
+
+
+def _add_check(checks: list, t: float, m: int) -> list:
+    """记一个同步打点。离上一个不到 1 秒的不记；太多了丢掉中间旧的，起点 [0, 0] 一直留着。"""
+    if t - checks[-1][0] >= 1:
+        checks.append([round(t, 2), m])
+    if len(checks) > MAX_CHECKS:
+        checks = checks[:1] + checks[-(MAX_CHECKS - 1):]
+    return checks
+
+
+def _elapsed(s: TypingSession, now: datetime) -> float:
+    return max(0.0, (now - s.started_at).total_seconds())
+
+
+def _deadline(s: TypingSession) -> float:
+    """限时练习最晚认到第几秒：时限 + 宽限。不限时的返回 0。"""
+    return s.time_limit * 60 + site.typing.submit_grace_sec if s.time_limit else 0
+
+
+def _void(db: Session, s: TypingSession, why: str) -> None:
+    """判成作弊：作废这个会话（以后同步、交成绩都回这句话），提交后抛 400。"""
+    s.void_reason = why[:200]
+    db.commit()
+    raise HTTPException(status_code=400, detail=why)
+
+
+def _live_session(db: Session, session_id: str, me: Student | None) -> TypingSession:
+    """取会话并锁住这一行（MySQL；SQLite 本来就整库串行）。不能用的直接抛错。"""
+    s = db.scalar(select(TypingSession).where(TypingSession.id == session_id).with_for_update()) \
+        if session_id else None
+    if not s or clock.now() - s.created_at > SESSION_TTL:
+        raise HTTPException(status_code=410, detail="这次练习已经失效（可能超过了 2 小时），请重新开始")
+    if me and s.student_id is not None and s.student_id != me.id:
+        raise HTTPException(status_code=403, detail="这次练习不是你的账号开始的，请重新开始")
+    if s.used:
+        raise HTTPException(status_code=409, detail="这次练习的成绩已经交过了，请重新开始")
+    if s.void_reason:
+        raise HTTPException(status_code=400, detail=s.void_reason)
+    return s
+
+
+@router.post("/sessions", response_model=TypingSessionOut, summary="开始一次计分练习（公开）")
+def start_session(
+    body: TypingSessionIn,
+    request: Request,
+    me: Student | None = Depends(get_optional_student),
+    db: Session = Depends(get_db),
+):
+    """领文本、开始计时。学生平台和 exe 带令牌，班级姓名以账号为准；
+    免登录页手填班级姓名，开了名单校验的要对得上名单（和原来交成绩时一样的规矩，只是提前到开始时）。"""
+    _enabled()
+    if body.module not in MODULES:
+        raise HTTPException(status_code=400, detail=f"模块只能是 {'/'.join(MODULES)}")
+    if body.module != "键盘" and body.difficulty not in site.typing.difficulties:
+        raise HTTPException(status_code=400, detail=f"难度只能是 {'/'.join(site.typing.difficulties)}")
+    if body.time_limit and body.time_limit not in site.typing.time_limits:
+        raise HTTPException(status_code=400, detail="没有这个限时档位，刷新一下页面再选")
+
+    name, cls = body.student_name.strip(), body.student_class.strip()
+    if not me and name and cls:
+        # 对得上名单就挂到那个账号上（令牌过期的 exe 也靠这个认领；2.23.1 起不再认学号，
+        # 只报个学号就能把成绩挂到别人名下）。开了名单校验的，对不上就不让练
+        me = _on_roster(db, cls, name)
+        if not me and site.typing.require_roster:
+            raise HTTPException(status_code=400, detail=_roster_tip(cls, name))
+    if me:
+        name, cls = me.name, me.student_class
+    if not name or not cls:
+        raise HTTPException(status_code=400, detail="请填写班级和姓名")
+
+    # 按出口 IP 限（设备号是客户端自己报的，脚本随手换）；机房共用一个出口 IP，所以给得宽
+    ip = throttle.ip_of(request)
+    throttle.check(db, "typing_session", ip, site.typing.sessions_per_ip_per_minute, 60,
+                   "这个网络里开始练习的次数太多了")
+    who = throttle.device_of(request)
+    if body.module == "键盘":
+        text = KEYBOARD_TARGET
+    else:
+        n = site.typing.passage_per_minute
+        throttle.check(db, "passage", who, n, 60, f"换文本太频繁了，同一台电脑每分钟最多换 {n} 次")
+        mode = "chinese" if body.module == "中文" else "english"
+        text = build_passage(db, mode, body.difficulty)
+        if not text:
+            raise HTTPException(
+                status_code=404,
+                detail=f"启用的主题里，「{body.difficulty}」难度下还没有{body.module}文本，"
+                "请老师在「题库 → 练习文本」添加文本或启用主题",
+            )
+
+    now = clock.now()
+    db.execute(delete(TypingSession).where(TypingSession.created_at < now - SESSION_KEEP))
+    s = TypingSession(
+        id=secrets.token_urlsafe(32), student_id=me.id if me else None,
+        student_name=name[:64], student_class=cls[:64], module=body.module,
+        difficulty=body.difficulty, target=text, time_limit=body.time_limit,
+        created_at=now, started_at=now, progress="", checks=json.dumps([[0.0, 0]]),
+    )
+    db.add(s)
+    throttle.hit(db, "typing_session", ip)
+    if body.module != "键盘":
+        throttle.hit(db, "passage", who)
+    db.commit()
+    return TypingSessionOut(session_id=s.id, text=text, time_limit=s.time_limit,
+                            sync_interval_sec=SYNC_INTERVAL)
+
+
+@router.post("/sessions/progress", summary="练习中同步输入内容（公开）")
+def session_progress(
+    body: TypingProgressIn,
+    me: Student | None = Depends(get_optional_student),
+    db: Session = Depends(get_db),
+):
+    """客户端每 1.5 秒同步一次。回 200 就接着练；回 4xx 说明这次练习不能用了（作废 / 过期 / 交过了），
+    客户端停下来把 detail 告诉学生。网络错误、5xx、429 客户端不用管，下次再同步。"""
+    _enabled()
+    s = _live_session(db, body.session_id, me)
+    if s.finished_at:
+        return {"ok": True}
+    now = clock.now()
+    t = _elapsed(s, now)
+    if s.time_limit and t > _deadline(s):
+        return {"ok": False, "late": True}     # 到点了，内容停在到点前最后一次同步上
+    if s.last_progress_at and (now - s.last_progress_at).total_seconds() < 0.5:
+        return {"ok": True}
+    answer = body.answer if s.module == "键盘" else body.answer[:len(s.target)]
+    if answer == s.progress:
+        return {"ok": True}
+    checks = _checks(s)
+    if not s.time_limit and len(checks) == 1 and checks[0][1] == 0 and answer:
+        # 不限时（exe）：从开始敲才算时间，看文本的时间不算
+        s.started_at = max(s.created_at, now - timedelta(seconds=FIRST_SYNC_ALLOWANCE))
+        t = _elapsed(s, now)
+    typed, correct = _score(s.module, s.target, answer)
+    m = _measure(s.module, typed, correct)
+    why = _too_fast(s, checks, t, m)
+    if why:
+        _void(db, s, why)
+    s.progress = answer
+    s.checks = json.dumps(_add_check(checks, t, m))
+    s.last_progress_at = now
+    db.commit()
+    return {"ok": True}
+
+
 @router.post("/records", response_model=TypingResultOut, summary="学生交成绩（公开）")
 def submit_record(
     body: TypingRecordIn,
@@ -239,36 +459,40 @@ def submit_record(
     me: Student | None = Depends(get_optional_student),
     db: Session = Depends(get_db),
 ):
+    """只认会话：班级姓名、模块难度、原文、用时都是开练时服务端记下的，请求里带什么都不算数。"""
     _enabled()
-    # **认领到账号上。** 首页那三个数字（练习次数、最快速度、平均正确率）只统计
-    # 挂了账号的记录，没挂上的话成绩照样入库、老师也看得见，但学生自己的首页
-    # 永远是 0 —— 桌面端就踩过这个（交卷那条路 4.4.0 修过，打字这条漏了）。
-    #
-    # 令牌优先；没令牌或者令牌过期了，就按学号认领。学号是全校唯一的，
-    # 认得准；认不上（校外的公开页面、学号写错）就照旧留空，不挡着交成绩。
-    if not me and body.student_no.strip():
-        me = db.scalar(select(Student).where(
-            Student.student_no == body.student_no.strip(), Student.is_active.is_(True)))
+    if not body.session_id.strip():
+        raise HTTPException(status_code=400, detail=OLD_CLIENT)
+    s = _live_session(db, body.session_id.strip(), me)
 
-    # 免登录页手填的：班级 + 姓名必须在学生名单里（config.yaml 的 typing.require_roster）。
-    # 对上了就挂到那个学生账号上 —— 他自己的首页也能看到这次练习
-    if (not me and site.typing.require_roster
-            and body.student_class.strip() and body.student_name.strip()):
-        me = _on_roster(db, body.student_class, body.student_name)
-        if not me:
-            raise HTTPException(status_code=400, detail=_roster_tip(body.student_class, body.student_name))
+    if not s.finished_at:
+        # 第一次交：核对、算好用时，把「交的是什么、到第几秒」定下来存住。
+        # 下面被「每分钟只能交一次」挡回来的，客户端倒数完再交，直接用存住的这份
+        now = clock.now()
+        t = _elapsed(s, now)
+        answer = body.answer
+        if s.time_limit and t > _deadline(s):
+            # 到点后很久才交上来（断网之类）：只认到点前最后一次同步上来的内容
+            answer, t = s.progress or "", float(_deadline(s))
+        if s.module != "键盘":
+            answer = answer[:len(s.target)]
+        typed, correct = _score(s.module, s.target, answer)
+        why = _too_fast(s, _checks(s), t, _measure(s.module, typed, correct))
+        if why:
+            _void(db, s, why)
+        attempt = SimpleNamespace(
+            module=s.module, typed_chars=typed, correct_chars=correct, duration=t,
+            target_chars=len(s.target), time_limit=s.time_limit, keystrokes=body.keystrokes)
+        why = _not_done(attempt)
+        if why:
+            raise HTTPException(status_code=400, detail=why)   # 没打完：会话留着，可以接着练
+        why = _cheated(attempt)
+        if why:
+            _void(db, s, why)
+        s.progress = answer
+        s.finished_at = s.started_at + timedelta(seconds=t)
+        db.commit()
 
-    # 带着账号来的，班级姓名一律以账号为准，前端填什么都不算数，
-    # 免得改个输入框就把成绩记到别人头上。公开页面来的还是手填。
-    if me:
-        body.student_name, body.student_class = me.name, me.student_class
-    if not body.student_name.strip() or not body.student_class.strip():
-        raise HTTPException(status_code=400, detail="请填写班级和姓名")
-    if body.module not in MODULES:
-        raise HTTPException(status_code=400, detail=f"模块只能是 {'/'.join(MODULES)}")
-    why = _not_done(body) or _cheated(body)
-    if why:
-        raise HTTPException(status_code=400, detail=why)
     # 放在最后判：前面几条不过的根本没交上，不该占这一分钟的名额
     who = throttle.device_of(request)
     gap = site.typing.submit_interval_sec
@@ -276,21 +500,26 @@ def submit_record(
                    f"交得太快了，同一台电脑每 {gap} 秒只能交一次成绩" if gap != 60
                    else "交得太快了，同一台电脑每分钟只能交一次成绩")
 
-    typed = max(0, body.typed_chars)
-    correct = max(0, min(body.correct_chars, typed))
-    secs = max(1, round(body.duration))
-
+    typed, correct = _score(s.module, s.target, s.progress or "")
+    secs = max(1, round((s.finished_at - s.started_at).total_seconds()))
     accuracy = round(correct / typed * 100) if typed else 0
     # 键盘模块统计的是按键次数，算"字/分"没有意义，统一记 0
-    speed = 0 if body.module == "键盘" else round(correct / (secs / 60))
-    stars = _stars(accuracy, speed, body.difficulty)
+    speed = 0 if s.module == "键盘" else round(correct / (secs / 60))
+    stars = _stars(accuracy, speed, s.difficulty)
 
+    # 一个会话只能交一次：两个请求同时到，只有一个能把 used 从 0 改成 1
+    took = db.execute(update(TypingSession)
+                      .where(TypingSession.id == s.id, TypingSession.used.is_(False))
+                      .values(used=True))
+    if took.rowcount != 1:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="这次练习的成绩已经交过了，请重新开始")
     rec = TypingRecord(
-        student_id=me.id if me else None,
-        student_name=body.student_name.strip()[:64],
-        student_class=body.student_class.strip()[:64],
-        module=body.module,
-        difficulty=body.difficulty,
+        student_id=s.student_id,
+        student_name=s.student_name.strip()[:64],
+        student_class=s.student_class.strip()[:64],
+        module=s.module,
+        difficulty=s.difficulty,
         speed=speed,
         accuracy=accuracy,
         duration=secs,
@@ -302,8 +531,8 @@ def submit_record(
     db.commit()
 
     return TypingResultOut(
-        module=body.module, speed=speed, accuracy=accuracy,
-        duration=secs, stars=stars, difficulty=body.difficulty,
+        module=s.module, speed=speed, accuracy=accuracy,
+        duration=secs, stars=stars, difficulty=s.difficulty,
         **school_rank(db, rec),
     )
 

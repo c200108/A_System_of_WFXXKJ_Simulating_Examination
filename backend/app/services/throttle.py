@@ -29,6 +29,11 @@ def device_of(request: Request) -> str:
     dev = (request.headers.get("x-device-id") or "").strip()
     if _DEVICE.match(dev):
         return "d:" + dev
+    return ip_of(request)
+
+
+def ip_of(request: Request) -> str:
+    """只认 IP，不认客户端自己报的设备号（设备号随手就能换，防不住脚本）。"""
     # 服务器版前面是 nginx，它把真实地址放在 X-Real-IP 里；机房版直连，看 client
     ip = (request.headers.get("x-real-ip") or "").strip()
     if not ip and request.client:

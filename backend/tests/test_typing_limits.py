@@ -13,6 +13,7 @@ from sqlalchemy import update
 from app.database import SessionLocal
 from app.models import RateHit
 from app.siteconfig import site
+from tests.typing_support import legacy_submit
 
 
 @pytest.fixture(autouse=True)
@@ -35,7 +36,7 @@ def _body(**kw):
 
 
 def _post(client, headers, **kw):
-    return client.post("/api/typing/records", json=_body(**kw), headers=headers)
+    return legacy_submit(client, _body(**kw), headers=headers)
 
 
 def _age(seconds):
@@ -69,10 +70,11 @@ def test_限时练习练满一半时间也算(client):
     assert _post(client, _dev(), time_limit=0, duration=600, **long).status_code == 400, "exe 不限时，只认字数"
 
 
-def test_旧版学生端没报文本长度_中文英文交不上_键盘照常(client):
-    res = _post(client, _dev(), target_chars=0)
-    assert res.status_code == 400 and "版本太旧" in res.json()["detail"]
-    assert _post(client, _dev(), module="键盘", target_chars=0, typed_chars=5).status_code == 200
+def test_旧版学生端只报统计数_交不上_提示刷新或更新(client):
+    """2.23 及以前的网页、exe 交的是 typed_chars / correct_chars / duration，没有会话。"""
+    res = client.post("/api/typing/records", headers=_dev(), json=_body())
+    assert res.status_code == 400 and "请刷新网页或更新学生端后重新练习" in res.json()["detail"]
+    assert _post(client, _dev(), module="键盘", typed_chars=5, correct_chars=5).status_code == 200
 
 
 def test_同一台电脑每分钟只能交一次(client):
@@ -133,10 +135,12 @@ def test_填0就是不限(client, monkeypatch):
     me = _dev()
     for _ in range(5):
         assert _passage(client, me).status_code == 200
-        assert _post(client, me, typed_chars=1, target_chars=0).status_code == 200
+        assert _post(client, me, typed_chars=1, correct_chars=1).status_code == 200
 
 
 def test_限频计数不跟着数据导出导入():
     from tools import export_data, import_data
 
     assert "rate_hits" in export_data.SKIP_TABLES and "rate_hits" in import_data.SKIP_TABLES
+    # 打字会话是临时数据（2.23.1），也不进备份
+    assert "typing_sessions" in export_data.SKIP_TABLES and "typing_sessions" in import_data.SKIP_TABLES

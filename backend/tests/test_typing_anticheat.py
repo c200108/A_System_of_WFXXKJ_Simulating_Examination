@@ -6,13 +6,15 @@
 
 import uuid
 
+from tests.typing_support import legacy_submit
+
 
 def _post(client, **kw):
     body = {"student_name": "防作弊", "student_class": "七(9)班", "module": "中文",
             "difficulty": "简单", "typed_chars": 60, "correct_chars": 55, "duration": 60,
             "target_chars": 100, "time_limit": 0}
     body.update(kw)
-    return client.post("/api/typing/records", json=body, headers={"X-Device-Id": uuid.uuid4().hex})
+    return legacy_submit(client, body, headers={"X-Device-Id": uuid.uuid4().hex})
 
 
 def test_正常速度照收(client):
@@ -25,8 +27,11 @@ def test_截图里那种一秒打完的不收(client):
     res = _post(client, typed_chars=140, correct_chars=139, duration=1)
     assert res.status_code == 400
     assert "速度异常" in res.json()["detail"]
-    rows = client.post("/api/typing/records", json={}).status_code  # 不影响别的
-    assert rows == 422
+    # 截图那条成绩就是这么交上来的：旧写法只报统计数。2.23.1 起不认，叫学生刷新 / 更新
+    res = client.post("/api/typing/records", json={
+        "student_name": "防作弊", "student_class": "七(9)班", "module": "中文", "difficulty": "简单",
+        "typed_chars": 140, "correct_chars": 139, "duration": 60, "target_chars": 140})
+    assert res.status_code == 400 and "请刷新网页或更新学生端" in res.json()["detail"]
 
 
 def test_速度上限按模块(client):

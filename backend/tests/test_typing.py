@@ -4,6 +4,8 @@ import io
 
 from openpyxl import load_workbook
 
+from tests.typing_support import legacy_submit
+
 XLSX_MAGIC = b"PK\x03\x04"
 
 
@@ -18,7 +20,7 @@ def _submit(client, **kw):
         "duration": 60,
     }
     body.update(kw)
-    return client.post("/api/typing/records", json=body)
+    return legacy_submit(client, body)
 
 
 # ---------- 学生端：不需要登录 ----------
@@ -194,9 +196,9 @@ def test_带令牌交的成绩算进学生首页(client, auth):
     me = _student(client, auth, "26090101", "打字甲")
     assert _home(client, me)["typing_count"] == 0
 
-    res = client.post("/api/typing/records", headers=me, json={
+    res = legacy_submit(client, {
         "student_name": "随便填", "student_class": "随便填", "module": "中文",
-        "difficulty": "简单", "typed_chars": 120, "correct_chars": 114, "duration": 60})
+        "difficulty": "简单", "typed_chars": 120, "correct_chars": 114, "duration": 60}, headers=me)
     assert res.status_code == 200, res.text
 
     home = _home(client, me)
@@ -205,12 +207,12 @@ def test_带令牌交的成绩算进学生首页(client, auth):
     assert home["typing_avg_accuracy"] == 95
 
 
-def test_令牌过期了按学号认领(client, auth):
-    """桌面端两样都带：令牌是正经凭据，但练了一下午令牌可能已经过期，
-    这时服务端按学号认领 —— 和交卷那条路一个写法。"""
+def test_令牌过期了按名单认领_不再认学号(client, auth):
+    """2.23.1：只报个学号就能把成绩挂到别人账号上的口子关掉了。令牌过期的，
+    按开练时填的班级姓名对名单认领（和免登录页一样）。"""
     me = _student(client, auth, "26090102", "打字乙")
-    res = client.post("/api/typing/records", json={
-        "student_name": "打字乙", "student_class": "八年级2班", "student_no": "26090102",
+    res = legacy_submit(client, {
+        "student_name": "打字乙", "student_class": "八年级2班",
         "module": "英文", "difficulty": "中等", "typed_chars": 200, "correct_chars": 180,
         "duration": 120})
     assert res.status_code == 200, res.text
@@ -228,12 +230,13 @@ def test_不带令牌也不带学号的照旧能交(client, auth):
 
 def test_账号上的班级姓名说了算(client, auth):
     """带着账号来的，前端填的班级姓名一律不算数 —— 改个输入框就能把成绩
-    记到别人头上的口子不能开。按学号认领的那条路也一样。"""
-    _student(client, auth, "26090103", "打字丙")
-    client.post("/api/typing/records", json={
-        "student_name": "冒名顶替", "student_class": "别的班", "student_no": "26090103",
+    记到别人头上的口子不能开。"""
+    me = _student(client, auth, "26090103", "打字丙")
+    res = legacy_submit(client, {
+        "student_name": "冒名顶替", "student_class": "别的班",
         "module": "中文", "difficulty": "简单", "typed_chars": 50, "correct_chars": 50,
-        "duration": 30})
+        "duration": 30}, headers=me)
+    assert res.status_code == 200, res.text
     rows = client.get("/api/typing/records", headers=auth,
                       params={"keyword": "打字丙"}).json()
     assert rows and rows[0]["student_class"] == "八年级2班"

@@ -6,13 +6,14 @@
  * 前三个计时评分；自由打字是个练手的空板子 —— 不限时、不计分、不上报，
  * 敲什么键就在键盘图上亮什么键，用来熟悉键位和输入法。
  *
- * 速度/正确率/星级都由后端算，这里只上报"敲了多少、对了多少、用了多久"
- * 三个原始量 —— 改评分标准不用重新构建前端。
+ * 速度/正确率/星级/用时都由后端算（2.23.1 起连原始量也不报了）：开练向服务端领会话，
+ * 练习中隔一两秒同步输入内容，交成绩只交会话 id 和最终内容。见 typingSession.js。
  */
 import { computed, onMounted, onUnmounted, reactive, ref, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
 import { createTypingGuard, devtoolsOpen } from '../typingGuard'
+import { createTypingSession } from '../typingSession'
 
 // 键盘五排，和原页面一致
 const KB_ROWS = [
@@ -61,9 +62,12 @@ let waitTimer = null
 
 // ---------- 认识键盘 ----------
 const kb = reactive({ row: 0, ci: 0, total: 0, correct: 0, status: [] })
+// 按过的键依次排成的串，交给服务端自己数对了几个（按错的、功能键记成 ）
+let kbKeys = ''
 const kbTip = ref('点击「开始」后，按提示从第一排第一个键依次敲击。')
 
 function resetKb() {
+  kbKeys = ''
   kb.row = 0
   kb.ci = 0
   kb.total = 0
@@ -93,6 +97,7 @@ function onKeydown(e) {
   const target = KB_ROWS[kb.row][kb.ci]
   const pressed = e.key.length === 1 ? e.key.toLowerCase() : e.key
   kb.total++
+  kbKeys += pressed.length === 1 ? pressed : ''
 
   if (pressed === target) {
     kb.status[kb.row][kb.ci] = 'ok'
@@ -189,6 +194,12 @@ const guard = createTypingGuard({
   onBlocked: msg => ElMessage.warning(msg),
   onDevtools: () => abortRun('检测到打开了开发者工具（F12）。这次练习作废，不记成绩；关掉开发者工具后重新开始。')
 })
+// ---------- 计分会话（2.23.1）：服务端出文本、记时间，练习中同步输入内容 ----------
+const session = createTypingSession({
+  getAnswer: () => (mode.value === 'keyboard' ? kbKeys : typed.value),
+  onFatal: msg => abortRun(msg)
+})
+
 // 上一次输入后框里的内容：来路不明的一大段字直接退回到这里
 let lastTyped = ''
 
@@ -198,6 +209,7 @@ function abortRun(msg) {
   running.value = false
   clearInterval(timer)
   guard.stopProbe()
+  session.stop()
   ElMessageBox.alert(msg, '这次练习不算数', { type: 'error' })
 }
 
@@ -243,17 +255,25 @@ async function start() {
   }
   localStorage.setItem(LS_KEY, JSON.stringify({ n: me.student_name, c: me.student_class }))
 
+  // 开练向服务端领会话：文本是服务端出的，开始时间也记在服务端
+  const module = mode.value === 'keyboard' ? '键盘' : mode.value === 'english' ? '英文' : '中文'
+  try {
+    const res = await session.begin({
+      module,
+      difficulty: me.difficulty,
+      time_limit: me.limit,
+      student_name: me.student_name.trim(),
+      student_class: me.student_class.trim()
+    })
+    if (mode.value !== 'keyboard') target.value = res.text
+  } catch {
+    // 换文本太勤被挡（每分钟最多三次）、名单对不上之类：拦截器已经弹了原因，上一次的成绩卡片留着
+    return
+  }
   if (mode.value === 'keyboard') {
     resetKb()
     kbTip.value = `请按下 ${KB_LABEL[0][0]} 键`
   } else {
-    try {
-      const res = await api.typingPassage(mode.value, me.difficulty)
-      target.value = res.text
-    } catch {
-      // 换文本太勤被挡（每分钟最多三次）之类：上一次的成绩卡片留着，别先清掉
-      return
-    }
     typed.value = ''
     lastTyped = ''
     await nextTick()
@@ -305,41 +325,23 @@ async function finish(manual = false) {
       if (!running.value) return
       running.value = false
       clearInterval(timer)
+      session.stop()
       return
     }
   }
   running.value = false
   clearInterval(timer)
   guard.stopProbe()
-  const secs = (Date.now() - startedAt) / 1000
-
-  const payload =
-    mode.value === 'keyboard'
-      ? { module: '键盘', typed_chars: kb.total, correct_chars: kb.correct }
-      : {
-          module: mode.value === 'english' ? '英文' : '中文',
-          typed_chars: typed.value.length,
-          correct_chars: correctCount.value,
-          // 服务端靠这两个判「打完一半没有」
-          target_chars: target.value.length,
-          time_limit: me.limit,
-          // 这次练习在输入框里按了多少次键（含输入法打拼音的键）。服务端拿它和字数比，
-          // 字比键多出一大截的就是粘贴进来的，不收
-          keystrokes: guard.state.keys
-        }
-
-  await send({
-    student_name: me.student_name.trim(),
-    student_class: me.student_class.trim(),
-    difficulty: me.difficulty,
-    duration: secs,
-    ...payload
-  })
+  // 只交会话 id 和最终内容；速度、正确率、用时都由服务端按它自己存的原文和钟算
+  const answer = mode.value === 'keyboard' ? kbKeys : typed.value
+  // 这次在输入框里按了多少次键（含输入法打拼音的键）：服务端拿它和字数比，字比键多出一大截的是粘贴的
+  const extra = mode.value === 'keyboard' ? {} : { keystrokes: guard.state.keys }
+  await send(answer, extra)
 }
 
-async function send(payload) {
+async function send(answer, extra) {
   try {
-    result.value = await api.typingSubmit(payload)
+    result.value = await session.submit(answer, extra)
   } catch (err) {
     const st = err?.response?.status
     if (st === 429) {
@@ -350,7 +352,7 @@ async function send(payload) {
         waitLeft.value -= 1
         if (waitLeft.value <= 0) {
           clearInterval(waitTimer)
-          send(payload)
+          send(answer, extra)
         }
       }, 1000)
     } else if (!st || st >= 500) {
@@ -396,6 +398,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   guard.uninstall()
+  session.stop()
   clearInterval(timer)
   clearTimeout(freeLitTimer)
   window.removeEventListener('keydown', onKeydown)
@@ -562,6 +565,8 @@ onUnmounted(() => {
             :placeholder="mode === 'english' ? '在此输入上方英文' : '在此用输入法输入上方中文'"
             class="ta"
             @input="onInput"
+            @compositionstart="session.setComposing(true)"
+            @compositionend="session.setComposing(false)"
           />
           <div class="meta">
             <span>看上方文字逐字输入，错的会标红</span>

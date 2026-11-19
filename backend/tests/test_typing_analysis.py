@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import io
 
 import pytest
+from tests.typing_support import legacy_submit
 from openpyxl import load_workbook
 
 from app.services import typing_analysis as TA
@@ -89,7 +90,7 @@ def test_没有记录():
 
 # ================================================================ 接口
 def _submit(client, cls, name, typed, correct, module="中文", diff="简单"):
-    res = client.post("/api/typing/records", json={
+    res = legacy_submit(client, {
         "student_name": name, "student_class": cls, "module": module, "difficulty": diff,
         "typed_chars": typed, "correct_chars": correct, "duration": 60})
     assert res.status_code == 200, res.text

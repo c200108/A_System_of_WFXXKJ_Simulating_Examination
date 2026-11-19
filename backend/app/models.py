@@ -370,6 +370,40 @@ class ExamSubmission(Base):
     exam: Mapped[Exam] = relationship(back_populates="submissions")
 
 
+class TypingSession(Base):
+    """一次计分打字练习（2.23.1）：文本由服务端出、时间由服务端记、只能交一次。
+
+    原来交成绩只报「敲了多少、对了多少、用了多久」三个数，一个 POST 就能造出任意成绩。
+    现在开练先领一个会话（随机 id 当凭据），练的时候每隔一两秒把输入框内容同步上来，
+    交的时候服务端拿自己存的原文比对、按自己的钟算用时。
+
+    临时数据：3 小时以前的随手清掉，不进数据备份（tools/export_data.py 的 SKIP_TABLES）。
+    """
+
+    __tablename__ = "typing_sessions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    student_id: Mapped[int | None] = mapped_column(
+        ForeignKey("students.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    student_name: Mapped[str] = mapped_column(String(64))
+    student_class: Mapped[str] = mapped_column(String(64))
+    module: Mapped[str] = mapped_column(String(16))  # 键盘 / 英文 / 中文
+    difficulty: Mapped[str] = mapped_column(String(16), default="")
+    target: Mapped[str] = mapped_column(BIG_JSON)  # 这次的练习原文
+    time_limit: Mapped[int] = mapped_column(Integer, default=0)  # 分钟，0 = 不限时（exe）
+    created_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    # 计时起点。限时练习 = 领会话那一刻；不限时（exe）= 第一次同步上来有字的那一刻
+    started_at: Mapped[datetime] = mapped_column(DateTime)
+    progress: Mapped[str] = mapped_column(BIG_JSON, default="")  # 最近一次同步的输入内容
+    # 同步打点 [[第几秒, 正确字数], ...]，按时间窗算平均速度用
+    checks: Mapped[str] = mapped_column(BIG_JSON, default="")
+    last_progress_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    void_reason: Mapped[str] = mapped_column(String(200), default="")  # 判成作弊作废的原因
+    used: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+
+
 class TypingRecord(Base):
     """一次打字练习的成绩。
 

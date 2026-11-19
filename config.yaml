@@ -211,6 +211,10 @@ typing:
   # 网页端会报按键次数：字数比「按键数 × 这个数」还多出一截，就是粘贴进来的，不收
   min_keys_per_char_chinese: 0.6
   min_keys_per_char_english: 0.9
+  # 计分会话（2.23.1）：文本和计时都在服务端，练习中每一两秒同步一次输入内容
+  burst_chars: 30 # 按时间窗算速度时额外宽限的字数（输入法整句上屏、断网补传）
+  submit_grace_sec: 10 # 限时练习到点后，交成绩晚到这么多秒以内照收
+  sessions_per_ip_per_minute: 120 # 同一出口 IP 每分钟最多开几次练习，要大于一个机房的人数；0 = 不限
   star_thresholds: # 正确率达到 base 给两星，base+12 给三星
     简单: 68
     中等: 80

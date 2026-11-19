@@ -317,6 +317,10 @@ export const api = {
   typingConfig: () => http.get('/typing/config'),
   typingPassage: (mode, difficulty) =>
     http.get('/typing/passage', { params: { mode, difficulty } }),
+  // 计分练习（2.23.1）：开练领会话 → 练习中同步内容 → 交成绩只交会话 id 和最终内容
+  typingStart: data => http.post('/typing/sessions', data),
+  // 后台悄悄同步：出错不弹窗，由 typingSession.js 自己判断要不要停
+  typingProgress: data => http.post('/typing/sessions/progress', data, { silent: true, timeout: 10000 }),
   typingSubmit: data => http.post('/typing/records', data),
   typingRecords: params => http.get('/typing/records', { params }),
   typingStats: () => http.get('/typing/stats'),
