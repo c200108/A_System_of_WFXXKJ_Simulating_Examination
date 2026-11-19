@@ -467,6 +467,9 @@ class ShellFrame(ttk.Frame):
         self.reviewing: dict = {}          # 正在回看哪一场（"review" 页用）
         self._build()
         self.go(page)
+        # 课堂签到（4.15.0）：登录着就每几秒问一次教师端有没有发起签到，有就弹框锁住
+        from .checkin import Watcher
+        self.checkin = Watcher(self)
 
     def _build(self):
         side = tk.Frame(self, bg=SIDE, width=168)
@@ -571,6 +574,8 @@ class ShellFrame(ttk.Frame):
         # 退出登录时「3 秒后恢复刷新」的定时器还挂着的话，到点会去碰一个已经没了的按钮
         if getattr(self, "_refresh_job", None):
             self.after_cancel(self._refresh_job)
+        if getattr(self, "checkin", None):
+            self.checkin.stop()
         super().destroy()
 
 

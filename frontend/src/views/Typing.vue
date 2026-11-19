@@ -362,7 +362,7 @@ async function send(answer, extra) {
   }
 }
 
-// 选了难度就带出这个难度的默认限时（2.23.2：简单 5、中等 10、困难 20 分钟），学生还能再改
+// 选了难度就带出这个难度的默认限时（2.24.0：简单 5、中等 10、困难 20 分钟），学生还能再改
 function limitFor(d) {
   const c = conf.value || {}
   return c.default_limits?.[d] || c.default_limit || me.limit

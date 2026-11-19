@@ -1,4 +1,4 @@
-"""从本网站导出学生端 exe，带上本网站地址（2.23.2）。"""
+"""从本网站导出学生端 exe，带上本网站地址（2.24.0）。"""
 
 from pathlib import Path
 from urllib.parse import unquote

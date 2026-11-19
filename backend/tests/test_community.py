@@ -385,7 +385,7 @@ def test_version_order_is_numeric_not_alphabetical(client, auth):
         assert keys == sorted(keys, reverse=True), f"{day} 这天的版本顺序乱了：{keys}"
 
 
-# ---------------------------------------------------------------- 置顶黄条（2.23.2）
+# ---------------------------------------------------------------- 置顶黄条（2.24.0）
 def _clear_pins():
     from app.database import SessionLocal
     from app.models import Feedback

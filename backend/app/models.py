@@ -158,6 +158,65 @@ class StudentPoint(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
 
 
+class SeatTab(Base):
+    """在线座次的附加工作表（2.24.0）：班级的主座次表（classes.seat_sheet）是 sheet1，
+    每发起一次签到自动建一张，表名是发起时间（如 20261119/11:10），结构照搬 sheet1、姓名格清空，
+    学生签一个填一个。老师也能在网页上改、删。跟着班走。"""
+
+    __tablename__ = "seat_tabs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(32))
+    sheet: Mapped[str] = mapped_column(LONG_TEXT)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
+
+
+class Checkin(Base):
+    """一次课堂签到（2.24.0）：老师在班级详情里发起，持续 1～10 分钟。
+    本班登录着的学生桌面端弹框选座号签到，签到结果写进 tab_id 那张附加工作表。"""
+
+    __tablename__ = "checkins"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"), index=True)
+    tab_id: Mapped[int | None] = mapped_column(ForeignKey("seat_tabs.id", ondelete="SET NULL"), nullable=True)
+    started_by: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    started_at: Mapped[datetime] = mapped_column(DateTime)
+    ends_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
+class CheckinEntry(Base):
+    """一位学生签到一次。同一次签到里：一个学生一条、一个座号一人、一台电脑一人。"""
+
+    __tablename__ = "checkin_entries"
+    __table_args__ = (
+        UniqueConstraint("checkin_id", "student_id", name="uq_checkin_student"),
+        UniqueConstraint("checkin_id", "seat", name="uq_checkin_seat"),
+        UniqueConstraint("checkin_id", "device", name="uq_checkin_device"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    checkin_id: Mapped[int] = mapped_column(ForeignKey("checkins.id", ondelete="CASCADE"), index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"))
+    seat: Mapped[str] = mapped_column(String(16))
+    device: Mapped[str] = mapped_column(String(80))      # 学生端设备号（按网卡算），没有就用 ip:地址
+    ip: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
+
+
+class ClientOnline(Base):
+    """学生桌面端「我在线」的心跳（2.24.0）：登录后每隔几秒问一次有没有签到，顺便记一笔。
+    老师发起签到时看「已登录的学生」就看这里最近 20 秒内有心跳的。一个学生一行，覆盖着写。"""
+
+    __tablename__ = "client_online"
+
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), primary_key=True)
+    last_seen: Mapped[datetime] = mapped_column(DateTime, index=True)
+    device: Mapped[str] = mapped_column(String(80), default="", server_default="")
+    ip: Mapped[str] = mapped_column(String(64), default="", server_default="")
+
+
 class Student(Base):
     """学生账号。
 
@@ -511,7 +570,7 @@ class Feedback(Base):
     reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     review_note: Mapped[str] = mapped_column(String(255), default="")  # 拒绝原因，只给管理端看
-    # 置顶（2.23.2）：管理员把一条已公开的反馈置顶，教师端每个页面顶上的黄条就显示它。
+    # 置顶（2.24.0）：管理员把一条已公开的反馈置顶，教师端每个页面顶上的黄条就显示它。
     # pinned_at 为空 = 没置顶；pinned_until 为空 = 不限期，否则到这个时间自动不再置顶
     pinned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     pinned_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

@@ -213,7 +213,7 @@ def list_feedback(
         stmt = stmt.where(Feedback.category == category)
     rows = db.scalars(stmt.order_by(Feedback.created_at.desc()).limit(limit)).all()
     out = [_out(r, me) for r in rows]
-    # 置顶的排在最前面（2.23.2），其余照旧按时间
+    # 置顶的排在最前面（2.24.0），其余照旧按时间
     return [o for o in out if o.pinned] + [o for o in out if not o.pinned]
 
 
@@ -260,7 +260,7 @@ def _snip(text: str, n: int = 60) -> str:
 
 @router.get("/feedback/news", summary="置顶的反馈（教师端每个页面顶上的黄条用）")
 def feedback_news(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """2.23.2 起黄条只显示管理员**置顶**的反馈（最多 5 条），不再自动显示最新消息。
+    """2.24.0 起黄条只显示管理员**置顶**的反馈（最多 5 条），不再自动显示最新消息。
     置顶可以不限期，也可以 1～30 天，到期自动不显示。
 
     每条带一个 id：反馈号 + 置顶时间。老师点 × 关掉的按这个 id 记在浏览器里，

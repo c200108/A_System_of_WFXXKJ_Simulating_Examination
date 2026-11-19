@@ -16,10 +16,14 @@ import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, r
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download } from '../api'
 import { currentUser } from '../auth'
+import CheckinBox from '../components/CheckinBox.vue'
 
 // 在线座次：表格库（Jspreadsheet CE + ExcelJS）几百 KB，只有点开「查看」才下载
 const SeatSheet = defineAsyncComponent(() => import('../components/SeatSheet.vue'))
 const seatSheet = ref(null)
+// 课堂签到 + 在线座次附加工作表（2.24.0）：sheet1 是本班座次表，签到时自动多一张「20261119/11:10」
+const seatTabs = ref([])          // 附加工作表 [{id, name}]
+const seatTab = ref(null)         // 正在看的那张；null = sheet1
 // 课堂情况日志：座次表右边一栏，跟着座次面板一起懒加载
 const ClassLogs = defineAsyncComponent(() => import('../components/ClassLogs.vue'))
 const classLogs = ref(null)
@@ -211,9 +215,54 @@ const detailRows = ref([])        // 这个班的学生
 const detailLoading = ref(false)
 const detailKeyword = ref('')
 
+async function loadTabs() {
+  if (!detail.value) return
+  try {
+    seatTabs.value = await api.classSeatTabs(detail.value.id)
+  } catch {
+    seatTabs.value = []
+  }
+  if (seatTab.value && !seatTabs.value.some(t => t.id === seatTab.value.id)) seatTab.value = null
+}
+
+async function pickTab(t) {
+  if (seatSheet.value?.dirty) {
+    try {
+      await ElMessageBox.confirm('当前工作表改过还没保存，切过去会丢掉这些修改。', '切换工作表', {
+        confirmButtonText: '不保存，切过去',
+        type: 'warning'
+      })
+    } catch {
+      return
+    }
+  }
+  seatTab.value = t
+}
+
+async function deleteTab(t) {
+  await ElMessageBox.confirm(`删掉工作表「${t.name}」？签到记录还在，只是这张表没了。`, '删除工作表', { type: 'warning' })
+  await api.classSeatTabDelete(detail.value.id, t.id)
+  if (seatTab.value?.id === t.id) seatTab.value = null
+  await loadTabs()
+}
+
+async function onCheckinStarted(v) {
+  await loadTabs()
+  const t = seatTabs.value.find(x => x.id === v.tab_id)
+  if (t) seatTab.value = t
+}
+
+// 有人签到了：正看着那张签到表、又没手动改过，就重读一下，姓名一个个冒出来
+function onCheckinProgress(v) {
+  if (seatTab.value && seatTab.value.id === v.tab_id) seatSheet.value?.refresh?.()
+}
+
 async function openDetail(row) {
   panelFolded.value = false
+  seatTab.value = null
+  seatTabs.value = []
   detail.value = row
+  loadTabs()
   detailKeyword.value = ''
   detailRows.value = []
   detailLoading.value = true
@@ -529,7 +578,36 @@ async function doBulkOwner() {
         <el-button size="small" @click="panelFull = !panelFull">{{ panelFull ? '还原大小' : '全屏' }}</el-button>
         <el-button size="small" type="danger" plain @click="closeDetail">关闭</el-button>
       </header>
-      <SeatSheet ref="seatSheet" :key="detail.id" :cls="detail" :wide="panelFull" @saved="onSeatSaved" @roles="reloadRoster">
+      <div class="tabbar">
+        <button type="button" class="stab" :class="{ on: !seatTab }" @click="pickTab(null)">sheet1</button>
+        <button
+          v-for="t in seatTabs"
+          :key="t.id"
+          type="button"
+          class="stab"
+          :class="{ on: seatTab?.id === t.id }"
+          @click="pickTab(t)"
+        >
+          {{ t.name }}<span v-if="canSeat(detail)" class="sx" title="删掉这张工作表" @click.stop="deleteTab(t)">×</span>
+        </button>
+        <div class="flex-1" />
+        <CheckinBox
+          :key="'ck' + detail.id"
+          :cls="detail"
+          :can-edit="canSeat(detail)"
+          @started="onCheckinStarted"
+          @progress="onCheckinProgress"
+        />
+      </div>
+      <SeatSheet
+        ref="seatSheet"
+        :key="detail.id + '-' + (seatTab?.id || 0)"
+        :cls="detail"
+        :tab="seatTab"
+        :wide="panelFull"
+        @saved="onSeatSaved"
+        @roles="reloadRoster"
+      >
         <template #side>
           <ClassLogs
             ref="classLogs"
@@ -653,6 +731,35 @@ async function doBulkOwner() {
   right: auto;
   transform: translateX(-50%);
   width: min(1600px, 92vw);
+}
+.tabbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin-bottom: 8px;
+}
+.stab {
+  padding: 3px 10px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 6px 6px 0 0;
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-regular);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.stab.on {
+  background: var(--el-color-primary-light-9);
+  border-color: var(--el-color-primary);
+  color: var(--el-color-primary);
+  font-weight: 600;
+}
+.stab .sx {
+  margin-left: 6px;
+  color: var(--el-text-color-secondary);
+}
+.stab .sx:hover {
+  color: var(--el-color-danger);
 }
 .phead {
   display: flex;

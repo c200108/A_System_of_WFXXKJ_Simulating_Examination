@@ -48,7 +48,7 @@ KIND_NAMES = {
 }
 
 # 这些表的东西不进快照：用户账号从来不在这里删（只停用），限流计数、本机状态是临时数据
-SKIP_TABLES = {"users", "rate_hits", "app_meta", "recycle_items", "typing_sessions"}
+SKIP_TABLES = {"users", "rate_hits", "app_meta", "recycle_items", "typing_sessions", "client_online"}
 
 
 # ---------------------------------------------------------------- 值的存取

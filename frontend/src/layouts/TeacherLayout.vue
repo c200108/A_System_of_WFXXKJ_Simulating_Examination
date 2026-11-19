@@ -118,7 +118,7 @@ function onUserCommand(cmd) {
     </el-header>
 
     <el-main class="main">
-      <!-- 置顶的需求反馈（2.23.2）：每个页面顶上都有，登录了才显示 -->
+      <!-- 置顶的需求反馈（2.24.0）：每个页面顶上都有，登录了才显示 -->
       <FeedbackNews v-if="user" />
       <router-view />
     </el-main>

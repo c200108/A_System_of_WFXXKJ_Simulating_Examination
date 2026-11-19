@@ -24,7 +24,8 @@ import SeatGroups from './SeatGroups.vue'
 
 const props = defineProps({
   cls: { type: Object, required: true },        // 班级行（id / display / seat_kind / seat_name）
-  wide: { type: Boolean, default: false }       // 面板全屏：表格和右边一栏拉开一点
+  wide: { type: Boolean, default: false },      // 面板全屏：表格和右边一栏拉开一点
+  tab: { type: Object, default: null }          // 附加工作表 {id, name}（2.24.0）；null = sheet1
 })
 const emit = defineEmits(['saved', 'roles'])
 
@@ -260,8 +261,10 @@ async function load() {
     canEdit.value = got.can_edit
     students.value = got.students || []
     if (got.can_edit) loadPoints()
+    let sheet = got.sheet
+    if (props.tab) sheet = (await api.classSeatTab(props.cls.id, props.tab.id)).sheet
     await nextTick()
-    build(got.sheet || (await defaultSheet()))
+    build(sheet || (await defaultSheet()))
   } finally {
     loading.value = false
   }
@@ -271,6 +274,12 @@ async function save() {
   if (!ws) return
   saving.value = true
   try {
+    if (props.tab) {
+      await api.classSeatTabSave(props.cls.id, props.tab.id, snapshot())
+      dirty.value = false
+      ElMessage.success(`「${props.tab.name}」已保存`)
+      return
+    }
     const got = await api.classSeatSheetSave(props.cls.id, snapshot())
     dirty.value = false
     emit('saved', got)
@@ -999,7 +1008,16 @@ onBeforeUnmount(() => {
   clearTimeout(decoFrame)
   destroy()
 })
-defineExpose({ dirty, save, students })
+/** 签到时学生一个个签上来：没改过的话重新读一遍这张表（改过的不动，免得冲掉老师手上的修改） */
+async function refresh() {
+  if (dirty.value || !props.tab) return false
+  const got = await api.classSeatTab(props.cls.id, props.tab.id)
+  if (dirty.value) return false
+  build(got.sheet)
+  return true
+}
+
+defineExpose({ dirty, save, students, refresh })
 </script>
 
 <template>

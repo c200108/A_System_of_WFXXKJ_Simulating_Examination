@@ -1191,3 +1191,51 @@ def test_登录页教师端地址不带http前缀_也没有示例提示(app):
     app.server = "http://192.168.1.8:8000"           # 老版本存下来的带前缀
     app.swap(ui.LoginFrame(app))
     assert app.frame.vars["server"].get() == "192.168.1.8:8000"
+
+
+# ================================================================ 课堂签到（4.15.0）
+def test_课堂签到_弹框锁住_选座号签到_同一台电脑不能再给别人签(app, server, exam):
+    from conftest import call, teacher_token
+
+    from client import checkin
+
+    tk_ = teacher_token(server)
+    cid = next(c["id"] for c in call(server, "GET", "/api/classes", token=tk_)
+               if c["grade"] == "九年级" and c["name"] == "1班")
+    old = call(server, "GET", f"/api/classes/{cid}/seat-sheet", token=tk_)["sheet"]
+    call(server, "PUT", f"/api/classes/{cid}/seat-sheet",
+         {"sheet": {"data": [["A1", "", "A2", ""], ["A3", "", "A4", ""]]}}, tk_)
+    for no, name in (("26090181", "签到一"), ("26090182", "签到二")):
+        call(server, "POST", "/api/students", {"student_no": no, "name": name, "class_id": cid}, tk_)
+    k = call(server, "POST", f"/api/classes/{cid}/checkins", {"minutes": 2}, tk_)
+    try:
+        shell = signed_in(app, server, "26090181")
+        assert settle(app, until=lambda: shell.checkin.dialog is not None), "签到框没弹出来"
+        d = shell.checkin.dialog
+        assert app.root.grab_current() is not None, "签到框要锁住主窗口"
+        assert set(d.combo.cget("values")) >= {"A1", "A2", "A3", "A4"}
+        d.send()
+        assert "先在下拉框里选" in d.msg.cget("text")
+        d.seat.set("A2")
+        d.send()
+        assert settle(app, until=lambda: shell.checkin.dialog is None), d.msg.cget("text")
+        view = call(server, "GET", f"/api/classes/{cid}/checkins/current", token=tk_)["checkin"]
+        assert [(s["name"], s["seat"]) for s in view["signed"]] == [("签到一", "A2")]
+
+        # 同一台电脑换个账号：框照样弹，但签不了
+        app.sign_out()
+        shell = signed_in(app, server, "26090182")
+        assert settle(app, until=lambda: shell.checkin.dialog is not None)
+        d = shell.checkin.dialog
+        assert "A2" not in d.combo.cget("values"), "被签走的座号不再给选"
+        d.seat.set("A3")
+        d.send()
+        assert settle(app, until=lambda: "一台电脑只能签一个人" in d.msg.cget("text")), d.msg.cget("text")
+        assert shell.checkin.dialog is d, "没签上框不能关"
+    finally:
+        call(server, "POST", f"/api/classes/{cid}/checkins/{k['id']}/stop", token=tk_)
+        call(server, "PUT", f"/api/classes/{cid}/seat-sheet", {"sheet": old or {"data": []}}, tk_)
+    # 签到结束：下一轮一问，框自己关掉
+    shell.checkin.tick()
+    assert settle(app, until=lambda: shell.checkin.dialog is None), "签到结束了框还在"
+    assert checkin.IDLE > 0

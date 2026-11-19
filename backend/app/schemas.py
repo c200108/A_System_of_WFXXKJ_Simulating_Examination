@@ -672,7 +672,7 @@ class TypingConfigOut(BaseModel):
     time_limits: list[int] = []
     default_difficulty: str = "简单"
     default_limit: int = 0
-    # 2.23.2：各难度默认限时 {难度: 分钟}，选了难度就带出来
+    # 2.24.0：各难度默认限时 {难度: 分钟}，选了难度就带出来
     default_limits: dict[str, int] = {}
     # 防刷规则，客户端拿来提前提示（真正把关的是服务端）
     min_done_ratio: float = 0
@@ -859,7 +859,7 @@ class FeedbackOut(ORMModel):
     # 只在管理端的列表里有值；公开列表永远是 approved，不必看
     status: str = "approved"
     created_at: datetime | None = None
-    # 置顶（2.23.2）：现在是否置顶中、置顶到什么时候（空 = 不限期）
+    # 置顶（2.24.0）：现在是否置顶中、置顶到什么时候（空 = 不限期）
     pinned: bool = False
     pinned_until: datetime | None = None
 

@@ -168,7 +168,7 @@ export const api = {
     fd.append('password', password)
     return http.post('/system/backup/import', fd, { timeout: 0, onUploadProgress })
   },
-  // 从本网站导出学生端 exe，带上本网站地址（2.23.2）：how = name 改文件名 / slot 写进 exe
+  // 从本网站导出学生端 exe，带上本网站地址（2.24.0）：how = name 改文件名 / slot 写进 exe
   systemClients: () => http.get('/system/clients', { timeout: 30000 }),
   systemClientExport: (name, how, addr) =>
     http.get(`/system/clients/${encodeURIComponent(name)}`, { params: { how, addr }, responseType: 'blob', timeout: 0 }),
@@ -230,6 +230,14 @@ export const api = {
   classSeatSheetSave: (id, sheet) => http.put(`/classes/${id}/seat-sheet`, { sheet }),
   classSeatSheetDelete: id => http.delete(`/classes/${id}/seat-sheet`),
   classSeatPlan: (id, body) => http.post(`/classes/${id}/seat-plan`, body),
+  // 在线座次附加工作表（sheet1 之外，每次签到建一张）和课堂签到（2.24.0）
+  classSeatTabs: id => http.get(`/classes/${id}/seat-tabs`),
+  classSeatTab: (id, tid) => http.get(`/classes/${id}/seat-tabs/${tid}`),
+  classSeatTabSave: (id, tid, sheet) => http.put(`/classes/${id}/seat-tabs/${tid}`, { sheet }),
+  classSeatTabDelete: (id, tid) => http.delete(`/classes/${id}/seat-tabs/${tid}`),
+  checkinStart: (id, minutes) => http.post(`/classes/${id}/checkins`, { minutes }),
+  checkinCurrent: id => http.get(`/classes/${id}/checkins/current`, { silent: true, timeout: 8000 }),
+  checkinStop: (id, kid) => http.post(`/classes/${id}/checkins/${kid}/stop`),
   // 课堂情况日志：在线座次右边那一栏，每次上机一条
   classLogs: id => http.get(`/classes/${id}/logs`),
   classLogCreate: (id, body) => http.post(`/classes/${id}/logs`, body),
@@ -364,7 +372,7 @@ export const api = {
   feedbackLike: id => http.post(`/feedback/${id}/like`),
   feedbackPendingCount: () => http.get('/feedback/pending-count'),
   feedbackNews: () => http.get('/feedback/news', { silent: true }),
-  // 置顶（管理员，2.23.2）：days = 0 不限期，1～30 天
+  // 置顶（管理员，2.24.0）：days = 0 不限期，1～30 天
   feedbackPin: (id, days) => http.put(`/feedback/${id}/pin`, { days }),
   feedbackUnpin: id => http.delete(`/feedback/${id}/pin`),
   feedbackReview: (id, status, note = '') =>

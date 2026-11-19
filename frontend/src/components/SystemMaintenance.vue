@@ -225,7 +225,7 @@ async function doUpdateZip() {
 }
 
 // ---------------------------------------------------------------- 学生客户端
-// 2.23.2 起由本网站导出，自动带上本网站地址（原来直接下 GitHub 附件，里面烤的是开发者服务器的地址）。
+// 2.24.0 起由本网站导出，自动带上本网站地址（原来直接下 GitHub 附件，里面烤的是开发者服务器的地址）。
 // 两种方式：改文件名（…@地址.exe，老版 exe 也认）、写进 exe（文件名不变，4.15.0 起的 exe 才行）
 const RELEASES = 'https://github.com/c200108/A_System_of_WFXXKJ_Simulating_Examination/releases'
 const clientDlg = ref(false)

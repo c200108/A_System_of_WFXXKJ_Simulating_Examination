@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # 再把 exe 和清单放进这个目录。见 routers/client_update.py、desktop/README.md「自建更新源」
     client_updates_enabled: bool = False
     client_update_dir: str = "./data/client-updates"
-    # 「系统管理员 → 下载学生客户端」导出 exe（2.23.2，见 services/client_exe.py）：
+    # 「系统管理员 → 下载学生客户端」导出 exe（2.24.0，见 services/client_exe.py）：
     # 这个文件夹里放了 exe 就从这儿导（服务器连不上 GitHub 时用）；GitHub 下过的缓存在 client_cache_dir
     client_exe_dir: str = "./data/client-exe"
     client_cache_dir: str = "./data/client-cache"

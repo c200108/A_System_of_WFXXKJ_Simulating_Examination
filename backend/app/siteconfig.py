@@ -239,7 +239,7 @@ class TypingConf(_Base):
     time_limits: list[int] = Field(default_factory=lambda: [1, 2, 3, 5, 10, 20, 30])
     default_difficulty: str = "简单"
     default_limit: int = 3
-    # 网页打字页选了难度就自动带出这个限时（2.23.2），学生还能自己改。不在 time_limits 里的不算
+    # 网页打字页选了难度就自动带出这个限时（2.24.0），学生还能自己改。不在 time_limits 里的不算
     default_limits: dict[str, int] = Field(default_factory=lambda: {"简单": 5, "中等": 10, "困难": 20})
     # 每次练习从文本库里随机洗牌拼几段，保证限时练习有足够内容
     passages_per_round: list[int] = Field(default_factory=lambda: [7, 9])

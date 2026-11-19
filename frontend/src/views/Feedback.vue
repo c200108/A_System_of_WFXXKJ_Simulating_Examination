@@ -249,7 +249,7 @@ async function remove(row) {
 
 const fmt = t => String(t).replace('T', ' ').slice(0, 16)
 
-// ---------- 管理员：置顶（2.23.2）----------
+// ---------- 管理员：置顶（2.24.0）----------
 // 置顶的反馈显示在教师端每个页面顶上的黄条里，最多 5 条；可以不限期，也可以 1～30 天
 const PIN_DAYS = [0, ...Array.from({ length: 30 }, (_, i) => i + 1)]
 const pinRow = ref(null)

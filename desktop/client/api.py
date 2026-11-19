@@ -574,3 +574,16 @@ def typing_submit(server: str, session_id: str, answer: str, token: str = "") ->
     """交成绩：只交会话 id 和最终内容。速度、正确率、用时、星级全由服务端算。"""
     return _json(f"{base(server)}/api/typing/records",
                  {"session_id": session_id, "answer": answer}, token=token)
+
+
+# ================================================================ 课堂签到（4.15.0，服务端 2.24.0）
+def checkin_status(server: str, token: str) -> dict:
+    """有没有签到：{"active": bool, "poll": 秒, "checkin_id", "remaining", "seats": [{seat, taken}],
+    "signed": {seat} | None}。这一问也是在线心跳 —— 老师那边据此看「已登录的学生」。"""
+    return _json(f"{base(server)}/api/student/checkin", token=token, timeout=8)
+
+
+def checkin_sign(server: str, token: str, checkin_id, seat: str) -> dict:
+    """签到。座号被占、这台电脑已经给别人签过、时间到了都会抛 ApiError（后端写好的中文）。"""
+    return _json(f"{base(server)}/api/student/checkin",
+                 {"checkin_id": int(checkin_id), "seat": str(seat)}, token=token)

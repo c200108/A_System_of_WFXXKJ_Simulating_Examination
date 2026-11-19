@@ -244,7 +244,7 @@ def test_账号上的班级姓名说了算(client, auth):
                           params={"keyword": "冒名顶替"}).json()
 
 
-# ---------- 限时档位和各难度默认限时（2.23.2） ----------
+# ---------- 限时档位和各难度默认限时（2.24.0） ----------
 def test_限时多了20和30分钟_各难度带出默认限时(client):
     body = client.get("/api/typing/config").json()
     assert 20 in body["time_limits"] and 30 in body["time_limits"]
