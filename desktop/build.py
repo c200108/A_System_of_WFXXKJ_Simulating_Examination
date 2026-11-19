@@ -189,11 +189,42 @@ def ucrt_dir(bits: int) -> Path | None:
     return None
 
 
+def write_version_file(path: Path, version: str) -> Path:
+    """exe 的版本信息（文件属性里那一栏）。「备注」里留着地址槽（学生端 4.15.0）：
+    网站导出 exe 时把本网站的地址写进这一段，文件名不用改。见 client/slot.py。"""
+    import sys as _sys
+    _sys.path.insert(0, str(HERE))
+    from client import slot
+
+    nums = [int(x) for x in re.findall(r"\d+", version or "")][:3]
+    nums += [0] * (4 - len(nums))
+    ver = ".".join(str(n) for n in nums[:3]) or "0.0.0"
+    text = f"""# UTF-8
+VSVersionInfo(
+  ffi=FixedFileInfo(filevers={tuple(nums)}, prodvers={tuple(nums)}, mask=0x3f, flags=0x0,
+                    OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
+  kids=[
+    StringFileInfo([StringTable('080404b0', [
+      StringStruct('FileDescription', '信息技术考试客户端'),
+      StringStruct('FileVersion', '{ver}'),
+      StringStruct('ProductName', '信息技术考试客户端'),
+      StringStruct('ProductVersion', '{ver}'),
+      StringStruct('Comments', '{slot.placeholder()}')])]),
+    VarFileInfo([VarStruct('Translation', [2052, 1200])])
+  ]
+)
+"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
 def write_spec(spec: Path, *, icon: Path | None, ucrt: Path | None,
-               onefile: bool) -> Path:
+               onefile: bool, version_file: Path | None = None) -> Path:
     """写一份 .spec。**只有换运行库这件事非用 spec 不可** —— 命令行没法
     把 PyInstaller 已经收进去的 DLL 换掉，得在 Analysis 之后动 `a.binaries`。"""
     icon_line = f"icon=r'{icon}'," if icon else ""
+    version_line = f"version=r'{version_file}'," if version_file else ""
     data_line = (f"datas=[(r'{icon}', '图标')]," if icon else "datas=[],")
     swap = f"""
 # —— 把打包机（Win11）的 UCRT 换成 SDK 里那份兼容 Win7 的 ——
@@ -227,6 +258,7 @@ exe = EXE(
     argv_emulation=False, target_arch=None, codesign_identity=None,
     entitlements_file=None,
     {icon_line}
+    {version_line}
 )
 """
     spec.parent.mkdir(parents=True, exist_ok=True)
@@ -456,7 +488,8 @@ def main() -> int:
 
     spec = write_spec(HERE / "build" / f"{NAME}.spec",
                       icon=stage_icon(icon) if icon else None,
-                      ucrt=ucrt, onefile=not args.onedir)
+                      ucrt=ucrt, onefile=not args.onedir,
+                      version_file=write_version_file(HERE / "build" / "版本信息.txt", version))
     cmd = [py, "-m", "PyInstaller", "--clean", "--noconfirm",
            "--distpath", str(DIST),
            "--workpath", str(HERE / "build"),

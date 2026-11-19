@@ -82,15 +82,16 @@ def selftest(report: Path, server: str = "") -> int:
                      else "※ 没找到窗口图标，窗口会用 Tk 默认的那根羽毛")
 
         # ⑥ 这台机器会连哪儿。**装机时最常被问的就是这一句。**
-        #    地址有三个来源（exe 文件名、本机记录、打包时烤进去的），机房里很容易
+        #    地址有四个来源（exe 文件名、网站导出时写进 exe 的、本机记录、打包时烤进去的），机房里很容易
         #    对不上 —— 比如网管改了文件名，但这台机器上还留着上学期的记录。
-        #    三个都写出来，谁盖住谁一目了然。
-        from client.shell import baked_server, server_from_name
+        #    都写出来，谁盖住谁一目了然。
+        from client.shell import baked_server, server_from_name, slot_server
         from client.ui import default_server
         picked = server or default_server()
         lines.append("")
         lines.append(f"教师端地址：{api.norm(picked) if picked else '没有（学生要自己输）'}")
         lines.append(f"    文件名 {server_from_name() or '无'}"
+                     f"　｜　网站写入 {slot_server() or '无'}"
                      f"　｜　本机记录 {store.remembered_server() or '无'}"
                      f"　｜　打包内置 {baked_server() or '无'}")
         from client.shell import baked_name_login

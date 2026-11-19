@@ -168,6 +168,10 @@ export const api = {
     fd.append('password', password)
     return http.post('/system/backup/import', fd, { timeout: 0, onUploadProgress })
   },
+  // 从本网站导出学生端 exe，带上本网站地址（2.23.2）：how = name 改文件名 / slot 写进 exe
+  systemClients: () => http.get('/system/clients', { timeout: 30000 }),
+  systemClientExport: (name, how, addr) =>
+    http.get(`/system/clients/${encodeURIComponent(name)}`, { params: { how, addr }, responseType: 'blob', timeout: 0 }),
   updateFromGithub: password => {
     const fd = new FormData()
     fd.append('password', password)

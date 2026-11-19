@@ -82,6 +82,24 @@ def server_from_name() -> str:
     return tail
 
 
+_SLOT: list = []
+
+
+def slot_server() -> str:
+    """网站导出 exe 时写进 exe 里的教师端地址（学生端 4.15.0，见 client/slot.py）。
+
+    「系统管理员 → 下载学生客户端」选「写进 exe」导出的就带着这个，文件名不用改。
+    只读一次（exe 有十来 MB，每次都读没必要）；直接跑源码、老 exe 都是空串。
+    """
+    if not _SLOT:
+        got = ""
+        if getattr(sys, "frozen", False):
+            from . import slot
+            got = slot.read_file(sys.executable) or ""
+        _SLOT.append(got)
+    return _SLOT[0]
+
+
 def asset(name: str) -> Path | None:
     """找一个随 exe 一起打包的附带文件（图标之类）。找不到返回 None。
 

@@ -16,8 +16,10 @@ r"""学生端发版：打齐八个 exe，发到 GitHub Releases。
 | 32 位 / 64 位 · 不含运行库 | Win8.1 以上，或装过 KB2999226 的 Win7 |
 
 **文件名换成英文**：GitHub 会把附件名里的中文换成别的字符，「考试客户端-32位@…」
-传上去就面目全非了。页面上显示的中文说明走附件的 label。文件名里也不带 `@地址` ——
-exe 打包时已经把地址烤进去了（`--server`），改名只是换地址的另一条路，见 client/shell.py。
+传上去就面目全非了。页面上显示的中文说明走附件的 label。
+
+**4.15.0 起不烤地址**：各学校从自己的平台「下载学生客户端」导出，导出时带上本校地址
+（改文件名，或写进 exe 的地址槽，见 client/slot.py、backend/app/services/client_exe.py）。
 
 ## 机房版也发在这儿
 
@@ -72,7 +74,10 @@ def _find_py38(folder: str) -> str:
 
 PY32 = _find_py38("Python38-32")
 PY64 = _find_py38("Python38")
-SERVER = "203.0.113.10:8080"
+# 发到 GitHub 的 exe **不烤地址**（4.15.0 起）：原来烤的是开发者自己服务器的地址，别的学校部署了
+# 也连到那儿去，还把地址公开了。现在各学校在「系统管理员 → 下载学生客户端」从自己网站导出，
+# 导出时带上本网站地址（改文件名或写进 exe 的地址槽）。要烤就 --server 给一个
+SERVER = ""
 
 # (build.py 产物的文件名前缀, 附件名后缀, 页面上的说明)
 VARIANTS = [
@@ -125,9 +130,10 @@ def notes(version: str, peers: list, repo_url: str, tag: str, commit: str,
     for suffix, label in lan:
         lines.append(f"| `{LAN_PREFIX}{version}-{suffix}.exe` | 机房版 · {label} |")
     lines += ["",
-              f"exe 里内置的教师端地址是 `{SERVER}`。要连别的地址：把 exe 改名成 "
-              "`考试客户端@IP_端口.exe`（端口前用下划线，如 `考试客户端@192.168.1.8_8080.exe`），"
-              "或者学生在登录页填。", "",
+              "这里的 exe **不带教师端地址**。请在自己学校的平台上「系统管理员 → 下载学生客户端」导出，"
+              "导出的 exe 自动连本校平台（改文件名或写进 exe 两种方式任选）。直接用这里的也行："
+              "把 exe 改名成 `原名@IP_端口.exe`（端口前用下划线，如 `exam-client-x-win32@192.168.1.8_8080.exe`），"
+              "或者学生在登录页填一次。", "",
               "**姓名登录版**（文件名带 name-login）：先选班级，账号填中文姓名，"
               "初始密码统一 `123456`；同一个班里重名的改填学号。"
               "和普通版连同一个教师端、同一批学生账号，改过的密码两版通用。", ""]
@@ -208,14 +214,14 @@ def main() -> int:
     stage = Path(tempfile.mkdtemp(prefix="release-"))
     assets = []
     for prefix, suffix, label in VARIANTS:
-        found = sorted(out.glob(f"{prefix}*.exe"))
-        if len(found) != 1:
-            raise SystemExit(f"「{out}」里「{prefix}*.exe」应该正好一个，找到 {len(found)} 个")
-        _same_version(gen, found[0], args.version, args.no_check)
+        found = gen.find_exe(out, prefix)          # 带不带 @地址 都认，同一变体有两个会直接报错
+        if found is None:
+            raise SystemExit(f"「{out}」里没有「{prefix.rstrip('@')}」这个 exe")
+        _same_version(gen, found, args.version, args.no_check)
         target = stage / f"exam-client-{args.version}-{suffix}.exe"
-        shutil.copy2(found[0], target)
+        shutil.copy2(found, target)
         assets.append(f"{target}#{label}")
-        print(f"   {found[0].name}  →  {target.name}")
+        print(f"   {found.name}  →  {target.name}")
 
     # 机房版：附件名带 exam-client-lan- 前缀，机房版学生端只认这一组（client/update.py）。
     # 机房版只打「内置运行库」那几个，没有的变体跳过

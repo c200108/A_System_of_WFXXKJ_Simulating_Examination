@@ -480,6 +480,17 @@ def target_name(exe: Path, baked_server: str = "") -> Path:
     return exe.with_name(f"{exe.stem}@{host.replace(':', '_')}{exe.suffix}")
 
 
+def carry_slot(new: Path, addr: str) -> bool:
+    """把地址写进刚下载的新版 exe 的地址槽（学生端 4.15.0）。新版没有槽、写不进去返回 False。"""
+    from . import slot
+    try:
+        data = new.read_bytes()
+        new.write_bytes(slot.write(data, addr))
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def swap_in(new: Path, exe: Path, final: Path, launch=True) -> Path:
     """把正在跑的 exe 改名成 .old，新版放到 final，启动它。返回 .old 的路径。"""
     old = exe.with_name(exe.name + ".old")

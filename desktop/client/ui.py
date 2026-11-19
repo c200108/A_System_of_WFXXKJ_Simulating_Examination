@@ -40,7 +40,7 @@ from .exam_ui import DoneFrame, ExamFrame
 from .shell import (AMBER, APP_NAME, BG, BLUE, CARD, CLIENT_VER, FONT, GRAY,
                     GREEN, LINE, NAME_LOGIN_PASSWORD, RED, baked_name_login,
                     baked_server, build_stamp, in_thread, option_text,
-                    server_from_name, set_window_icon)
+                    server_from_name, set_window_icon, slot_server)
 
 
 def default_server() -> str:
@@ -55,7 +55,8 @@ def default_server() -> str:
     文件名排在保存值前面是故意的：教师端换了 IP，网管把 exe 改个名 ghost 出去，
     不该被各机器上那个过期的保存值顶掉。
     """
-    return server_from_name() or store.remembered_server() or baked_server()
+    # 文件名里的 > 网站导出时写进 exe 的 > 本机记住的 > 打包时烤进去的
+    return server_from_name() or slot_server() or store.remembered_server() or baked_server()
 
 SIDE = "#22303f"                 # 侧边栏底色，比正文暗一档
 SIDE_ON = "#2c6fd1"
@@ -258,7 +259,12 @@ class LoginFrame(ttk.Frame):
             if why:
                 messagebox.showwarning("检查更新", why)
                 return
-            final = update.target_name(exe, baked_server())
+            # 新版要接着连原来那台教师端：网站导出时写进 exe 的地址，原样写进新版
+            # （新版有地址槽就写槽、名字不变；没有就退回把地址补进文件名）
+            site = slot_server()
+            final = update.target_name(exe, baked_server() if not site else "")
+            if site and not update.carry_slot(path, site):
+                final = update.target_name(exe, site)
             try:
                 update.swap_in(path, exe, final)
             except OSError as exc:

@@ -225,46 +225,53 @@ async function doUpdateZip() {
 }
 
 // ---------------------------------------------------------------- 学生客户端
+// 2.23.2 起由本网站导出，自动带上本网站地址（原来直接下 GitHub 附件，里面烤的是开发者服务器的地址）。
+// 两种方式：改文件名（…@地址.exe，老版 exe 也认）、写进 exe（文件名不变，4.15.0 起的 exe 才行）
 const RELEASES = 'https://github.com/c200108/A_System_of_WFXXKJ_Simulating_Examination/releases'
 const clientDlg = ref(false)
 const clientLoading = ref(false)
 const clientErr = ref('')
-const clientRel = ref(null)
+const clientCat = ref(null)
+const clientAddr = ref(window.location.origin)
+const clientBusy = ref('')
+const isLocalhost = computed(() => /\/\/(localhost|127\.|\[::1\])/i.test(clientAddr.value))
 
-/** 学生端附件按渠道分组：联网版 / 机房版（文件名带 lan），组里按 Release 上的顺序 */
-const clientGroups = computed(() => {
-  const assets = (clientRel.value?.assets || []).filter(a => /\.exe$/i.test(a.name))
-  const sizeMB = a => (a.size / 1024 / 1024).toFixed(1) + ' MB'
-  const pick = lan =>
-    assets
-      .filter(a => /^exam-client-lan-/i.test(a.name) === lan)
-      .map(a => ({ ...a, mb: sizeMB(a), win7: /win32-runtime/i.test(a.name) }))
-  return [
-    { key: 'online', title: '联网版（内置在线服务器地址，学生打开就能登录）', items: pick(false) },
-    { key: 'lan', title: '机房版（学生在登录页填教师机地址）', items: pick(true) }
-  ].filter(g => g.items.length)
-})
+const clientItems = computed(() =>
+  (clientCat.value?.items || []).map(a => ({
+    ...a,
+    mb: (a.size / 1024 / 1024).toFixed(1) + ' MB',
+    win7: /win32-runtime|32位-内置运行库/i.test(a.name)
+  }))
+)
 
 async function openClients() {
   clientDlg.value = true
-  if (clientRel.value) return
+  if (clientCat.value) return
   clientLoading.value = true
   clientErr.value = ''
   try {
-    // 学生端只发在 GitHub Releases（公开仓库），浏览器直接问，不占学校服务器
-    const ctl = new AbortController()
-    const t = setTimeout(() => ctl.abort(), 10000)
-    const res = await fetch('https://api.github.com/repos/c200108/A_System_of_WFXXKJ_Simulating_Examination/releases/latest', {
-      signal: ctl.signal,
-      headers: { Accept: 'application/vnd.github+json' }
-    })
-    clearTimeout(t)
-    if (!res.ok) throw new Error(`GitHub 返回 ${res.status}`)
-    clientRel.value = await res.json()
-  } catch (e) {
-    clientErr.value = e?.name === 'AbortError' ? '连 GitHub 超时' : e?.message || String(e)
+    clientCat.value = await api.systemClients()
+    clientErr.value = clientCat.value.error || ''
+  } catch {
+    clientErr.value = '服务器没答上来'
   } finally {
     clientLoading.value = false
+  }
+}
+
+function hostPart(addr) {
+  return addr.replace(/^https?:\/\//i, '').replace(/\/+$/, '').replace(':', '_')
+}
+
+async function exportClient(a, how) {
+  const addr = clientAddr.value.trim().replace(/\/+$/, '')
+  if (!addr) return ElMessage.warning('先填学生要连的地址')
+  clientBusy.value = a.name + how
+  try {
+    const name = how === 'name' ? `${a.name.replace(/(@[^@]*)?\.exe$/i, '')}@${hostPart(addr)}.exe` : a.name
+    await download(api.systemClientExport(a.name, how, addr), name)
+  } finally {
+    clientBusy.value = ''
   }
 }
 
@@ -347,8 +354,8 @@ onUnmounted(stopPolling)
         </div>
         <div class="row">
           <div class="what">
-            <b>下载学生最新客户端</b>
-            <span>从 GitHub 拿学生端最新正式版的 exe（联网版、机房版、姓名登录版都在），发到学生机上。</span>
+            <b>下载学生客户端</b>
+            <span>从本网站导出学生端 exe，自动带上本网站地址（改文件名或写进 exe），发到学生机上双击就能连。</span>
           </div>
           <el-button @click="openClients">下载学生客户端</el-button>
         </div>
@@ -404,28 +411,48 @@ onUnmounted(stopPolling)
       <pre v-if="job.log" ref="logBox" class="log">{{ job.log }}</pre>
     </div>
 
-    <el-dialog v-model="clientDlg" title="下载学生最新客户端" width="640px" append-to-body>
+    <el-dialog v-model="clientDlg" title="下载学生客户端" width="680px" append-to-body>
       <div v-loading="clientLoading" class="clients">
+        <p class="muted tip">
+          exe 由本网站导出，学生打开就连下面这个地址（就是你现在打开网站用的地址）。
+          学生机要是用别的地址访问本网站（比如内网 IP），在这里改成那个地址再导出。
+        </p>
+        <el-input v-model="clientAddr" class="caddr">
+          <template #prepend>学生连的地址</template>
+        </el-input>
+        <el-alert
+          v-if="isLocalhost"
+          type="warning"
+          :closable="false"
+          show-icon
+          title="你是在服务器本机用 localhost 打开的，学生机连不上这个地址，请改成服务器的 IP 或域名"
+        />
         <el-alert v-if="clientErr" type="warning" :closable="false" show-icon>
-          <template #title>读不到 GitHub 上的版本（{{ clientErr }}）</template>
-          这台电脑可能连不上 GitHub，可以直接打开
-          <a :href="RELEASES + '/latest'" target="_blank" rel="noopener">GitHub 发布页</a> 下载。
+          <template #title>{{ clientErr }}</template>
+          也可以打开 <a :href="RELEASES + '/latest'" target="_blank" rel="noopener">GitHub 发布页</a> 下载原版 exe，
+          再自己把文件名改成「原名@地址.exe」（端口前的冒号换成下划线）。
         </el-alert>
-        <template v-else-if="clientRel">
+        <template v-else-if="clientCat">
           <p class="rel">
-            最新正式版 <b>{{ clientRel.tag_name }}</b>
-            <span class="muted">· {{ (clientRel.published_at || '').slice(0, 10) }} 发布 ·</span>
-            <a :href="clientRel.html_url" target="_blank" rel="noopener">看发布说明</a>
+            {{ clientCat.source === 'local' ? '本机「发布」文件夹里的 exe' : '最新正式版' }}
+            <b v-if="clientCat.version">{{ clientCat.version }}</b>
           </p>
-          <p class="muted tip">Win7 学生机发标着「Win7 选这个」的 32 位内置运行库版；姓名登录版先选班级、账号填中文姓名。</p>
-          <div v-for="g in clientGroups" :key="g.key" class="cgroup">
-            <h5>{{ g.title }}</h5>
-            <a v-for="a in g.items" :key="a.id" class="casset" :href="a.browser_download_url" rel="noopener">
-              <span class="cname">{{ a.label || a.name }}<el-tag v-if="a.win7" size="small" type="success" effect="plain">Win7 选这个</el-tag></span>
+          <p class="muted tip">
+            两种导出：<b>改文件名</b>（文件名后面带上地址，哪个版本的 exe 都认，但别人改了名就没了）；
+            <b>写进 exe</b>（文件名不变，地址写在 exe 里，4.15.0 起的 exe 才支持）。
+            Win7 学生机发标着「Win7 选这个」的 32 位内置运行库版。
+          </p>
+          <div v-for="a in clientItems" :key="a.name" class="casset">
+            <span class="cname">
+              {{ a.label || a.name }}<el-tag v-if="a.win7" size="small" type="success" effect="plain">Win7 选这个</el-tag>
               <span class="muted">{{ a.name }} · {{ a.mb }}</span>
-            </a>
+            </span>
+            <span class="cbtns">
+              <el-button size="small" :loading="clientBusy === a.name + 'name'" @click="exportClient(a, 'name')">改文件名</el-button>
+              <el-button size="small" type="primary" :loading="clientBusy === a.name + 'slot'" @click="exportClient(a, 'slot')">写进 exe</el-button>
+            </span>
           </div>
-          <p v-if="!clientGroups.length" class="muted">这一版没有附带学生端 exe，去 <a :href="RELEASES" target="_blank" rel="noopener">发布页</a> 找上一版。</p>
+          <p v-if="!clientItems.length" class="muted">没有找到学生端 exe。</p>
         </template>
       </div>
     </el-dialog>
@@ -435,6 +462,14 @@ onUnmounted(stopPolling)
 <style scoped>
 .clients {
   min-height: 120px;
+}
+.caddr {
+  margin: 4px 0 10px;
+}
+.cbtns {
+  flex: none;
+  display: flex;
+  gap: 6px;
 }
 .rel {
   margin: 0 0 4px;
@@ -449,8 +484,9 @@ onUnmounted(stopPolling)
 }
 .casset {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   padding: 8px 12px;
   margin-bottom: 6px;
   border: 1px solid var(--el-border-color-lighter);
@@ -464,9 +500,14 @@ onUnmounted(stopPolling)
 }
 .cname {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 2px 6px;
+  min-width: 0;
   font-size: 13.5px;
+}
+.cname .muted {
+  flex-basis: 100%;
 }
 .casset .muted {
   font-size: 12px;
