@@ -9,7 +9,7 @@
  * 速度/正确率/星级/用时都由后端算（2.23.1 起连原始量也不报了）：开练向服务端领会话，
  * 练习中隔一两秒同步输入内容，交成绩只交会话 id 和最终内容。见 typingSession.js。
  */
-import { computed, onMounted, onUnmounted, reactive, ref, nextTick } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
 import { createTypingGuard, devtoolsOpen } from '../typingGuard'
@@ -362,6 +362,18 @@ async function send(answer, extra) {
   }
 }
 
+// 选了难度就带出这个难度的默认限时（2.23.2：简单 5、中等 10、困难 20 分钟），学生还能再改
+function limitFor(d) {
+  const c = conf.value || {}
+  return c.default_limits?.[d] || c.default_limit || me.limit
+}
+watch(
+  () => me.difficulty,
+  d => {
+    if (conf.value && !running.value) me.limit = limitFor(d)
+  }
+)
+
 function switchMode(m) {
   if (running.value) return ElMessage.warning('练习进行中，先完成或等计时结束')
   mode.value = m
@@ -375,7 +387,7 @@ onMounted(async () => {
   try {
     conf.value = await api.typingConfig()
     me.difficulty = conf.value.default_difficulty
-    me.limit = conf.value.default_limit
+    me.limit = limitFor(me.difficulty)
   } catch {
     return
   }

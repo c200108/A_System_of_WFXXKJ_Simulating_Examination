@@ -242,3 +242,17 @@ def test_账号上的班级姓名说了算(client, auth):
     assert rows and rows[0]["student_class"] == "八年级2班"
     assert not client.get("/api/typing/records", headers=auth,
                           params={"keyword": "冒名顶替"}).json()
+
+
+# ---------- 限时档位和各难度默认限时（2.23.2） ----------
+def test_限时多了20和30分钟_各难度带出默认限时(client):
+    body = client.get("/api/typing/config").json()
+    assert 20 in body["time_limits"] and 30 in body["time_limits"]
+    assert body["default_limits"] == {"简单": 5, "中等": 10, "困难": 20}
+
+
+def test_老配置没有20分钟档_默认限时去掉那一项_照样能起():
+    from app.siteconfig import TypingConf
+
+    conf = TypingConf(time_limits=[1, 2, 3, 5, 10], default_limit=3)
+    assert conf.default_limits == {"简单": 5, "中等": 10}, "困难的 20 分钟不在档位里，退回 default_limit"

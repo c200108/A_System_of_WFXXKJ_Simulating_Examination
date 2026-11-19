@@ -94,6 +94,7 @@ def get_config():
         time_limits=c.time_limits,
         default_difficulty=c.default_difficulty,
         default_limit=c.default_limit,
+        default_limits=c.default_limits,
         min_done_ratio=c.min_done_ratio,
         submit_interval_sec=c.submit_interval_sec,
         passage_per_minute=c.passage_per_minute,

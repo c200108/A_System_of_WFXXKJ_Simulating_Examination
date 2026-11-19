@@ -194,9 +194,13 @@ typing:
   # 打字训练（学生页 /dazi，免登录；教师端在「打字」菜单看成绩）
   enabled: true
   difficulties: ["简单", "中等", "困难"]
-  time_limits: [1, 2, 3, 5, 10] # 单位分钟，必须都大于 0（自由打字模块不限时，不走这里）
+  time_limits: [1, 2, 3, 5, 10, 20, 30] # 单位分钟，必须都大于 0（自由打字模块不限时，不走这里）
   default_difficulty: "简单"
   default_limit: 3
+  default_limits: # 网页上选了难度就自动带出这个限时（学生还能自己改），要在 time_limits 里
+    简单: 5
+    中等: 10
+    困难: 20
   passages_per_round: [7, 9] # 每次从文本库随机抽这么多段拼成长文
   three_star_min_speed: 18 # 简单难度之外，三星还要求速度达到这个值
   # 防刷：「同一台电脑」认浏览器里存的设备号 / exe 按本机网卡算的号，都没有就认 IP。填 0 = 不限

@@ -53,8 +53,20 @@ def legacy_submit(client, body: dict, headers: dict | None = None):
         answer = "a" * correct + "\x01" * (typed - correct)
     else:
         answer = "a" * correct + "b" * (typed - correct)
-    rig(sid, target="a" * length, seconds=float(body.get("duration", 60)))
+    seconds = float(body.get("duration", 60))
+    rig(sid, target="a" * length, seconds=seconds)
     payload = {"session_id": sid, "answer": answer}
     if body.get("keystrokes") is not None:
         payload["keystrokes"] = body["keystrokes"]
-    return client.post("/api/typing/records", headers=headers or {}, json=payload)
+    # 交成绩这一刻的钟定死在「开始 + duration」：请求本身花的那点时间不算进去，
+    # 慢一点的机器（3.8 的机房版环境）也不会多算 1 秒
+    from app import clock
+
+    with SessionLocal() as db:
+        at = db.get(TypingSession, sid).started_at + timedelta(seconds=seconds)
+    real = clock.now
+    clock.now = lambda: at
+    try:
+        return client.post("/api/typing/records", headers=headers or {}, json=payload)
+    finally:
+        clock.now = real

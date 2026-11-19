@@ -236,9 +236,11 @@ class TypingConf(_Base):
     difficulties: list[str] = Field(default_factory=lambda: ["简单", "中等", "困难"])
     # 限时档位，单位分钟。都必须大于 0 —— "不限时"的需求由自由打字模块承担，
     # 那个模块本来就不计时不评分，不用在这里配一个 0 出来。
-    time_limits: list[int] = Field(default_factory=lambda: [1, 2, 3, 5, 10])
+    time_limits: list[int] = Field(default_factory=lambda: [1, 2, 3, 5, 10, 20, 30])
     default_difficulty: str = "简单"
     default_limit: int = 3
+    # 网页打字页选了难度就自动带出这个限时（2.23.2），学生还能自己改。不在 time_limits 里的不算
+    default_limits: dict[str, int] = Field(default_factory=lambda: {"简单": 5, "中等": 10, "困难": 20})
     # 每次练习从文本库里随机洗牌拼几段，保证限时练习有足够内容
     passages_per_round: list[int] = Field(default_factory=lambda: [7, 9])
     star_thresholds: TypingStarConf = Field(default_factory=TypingStarConf)
@@ -280,6 +282,9 @@ class TypingConf(_Base):
             raise ValueError(
                 f"typing.default_limit={self.default_limit} 不在 time_limits {self.time_limits} 里"
             )
+        # 难度默认限时配了档位里没有的（比如老配置的 time_limits 没加 20）：去掉那一项，
+        # 退回 default_limit，不为这个起不来
+        self.default_limits = {k: v for k, v in self.default_limits.items() if v in self.time_limits}
         if self.default_difficulty not in self.difficulties:
             raise ValueError(
                 f"typing.default_difficulty={self.default_difficulty!r} 不在 difficulties {self.difficulties} 里"
