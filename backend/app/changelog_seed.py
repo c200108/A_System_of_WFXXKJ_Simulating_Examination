@@ -1000,11 +1000,40 @@ VERSIONS: list[tuple[str, date, list[tuple[str, str]]]] = [
 ]
 
 
+# 改写过措辞的旧条目（2.24.0：把里面的服务器地址、学校名换成示例值）。
+# 已经灌进库里的那条按内容的 sha256 认出来，就地改成新写法，不然会多出一条（去重按内容比对）。
+# 只存哈希，不存旧内容 —— 旧内容里正是要去掉的那些信息。{旧内容哈希: 新内容哈希}
+REWRITTEN = {
+    "16c038dd41217b1abec42ad659cbaf4d1c6181e11c14eec462a1139ddb317715":
+        "64c738d2972efc5e2bd728925ebf2a253eca78b2789b32fceaee1fff97a9b413",
+    "c3e0f06c1c832598c1efd0ce90705e1df64689cfbad8dc3b35064cfde8b51488":
+        "f58d63a668c259045a18849ec1c8e6868cff3d562d971bad83be1ab65f3ec245",
+}
+
+
+def _rewrite_old(db) -> None:
+    import hashlib
+
+    from sqlalchemy import select
+
+    from .models import ChangelogEntry
+
+    sha = lambda t: hashlib.sha256((t or "").encode("utf-8")).hexdigest()  # noqa: E731
+    new_text = {sha(c): c for _v, _d, items in VERSIONS for _t, c in items}
+    for row in db.scalars(select(ChangelogEntry)):
+        target = REWRITTEN.get(sha(row.content))
+        if target and target in new_text:
+            row.content = new_text[target]
+    db.flush()
+
+
 def seed_changelog(db) -> int:
     """把上面的内容灌进数据库。已存在的条目不会重复插入，可反复执行。"""
     from sqlalchemy import select
 
     from .models import ChangelogEntry
+
+    _rewrite_old(db)
 
     existing = {
         (v, t, c)

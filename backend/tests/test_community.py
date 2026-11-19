@@ -465,3 +465,27 @@ def test_置顶到期自动不显示(client, auth, teacher_auth, monkeypatch):
     monkeypatch.setattr(clock, "now", lambda: real() + timedelta(days=2, minutes=1))
     assert _news(client, teacher_auth) == []
     assert client.get("/api/feedback").json()[0].get("pinned") is not True or         client.get("/api/feedback").json()[0]["id"] != fid
+
+
+def test_改写过措辞的旧日志就地更新_不多出一条(monkeypatch):
+    """2.24.0 把旧日志里的服务器地址、学校名换成示例值：库里已有的旧那条要改成新写法。"""
+    import hashlib
+    from datetime import date
+
+    from app import changelog_seed
+    from app.database import SessionLocal
+    from app.models import ChangelogEntry
+
+    sha = lambda t: hashlib.sha256(t.encode("utf-8")).hexdigest()  # noqa: E731
+    old, new = "旧写法：内置地址 10.9.8.7", "新写法：内置地址 203.0.113.10"
+    monkeypatch.setattr(changelog_seed, "VERSIONS", [("0.0.9", date(2026, 1, 1), [("Added", new)])])
+    monkeypatch.setattr(changelog_seed, "REWRITTEN", {sha(old): sha(new)})
+    with SessionLocal() as db:
+        db.add(ChangelogEntry(version="0.0.9", released_on=date(2026, 1, 1), change_type="Added",
+                              content=old, sort_order=0))
+        db.commit()
+        changelog_seed.seed_changelog(db)
+        rows = [r.content for r in db.query(ChangelogEntry).filter(ChangelogEntry.version == "0.0.9")]
+        assert rows == [new]
+        db.query(ChangelogEntry).filter(ChangelogEntry.version == "0.0.9").delete()
+        db.commit()

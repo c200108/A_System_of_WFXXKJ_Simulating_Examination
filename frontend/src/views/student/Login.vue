@@ -109,7 +109,7 @@ async function submit() {
       </p>
 
       <p class="copy">
-        © {{ year }} 示例中学
+        © {{ year }} {{ siteConfig.school }}
         <router-link to="/js/login" class="teacher">教师入口</router-link>
       </p>
     </div>
