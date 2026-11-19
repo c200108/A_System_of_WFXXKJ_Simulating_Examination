@@ -49,6 +49,14 @@ from datetime import date
 # 结构：(版本号, 发布日期, [(变动类型, 内容), ...])
 VERSIONS: list[tuple[str, date, list[tuple[str, str]]]] = [
     (
+        "2.24.1",
+        date(2026, 11, 19),
+        [
+            ("Fixed", "「一键更新」每次都查不到 GitHub 上的版本、只好直接下载：主机助手是 systemd 拉起的，没有 HOME 环境变量，git 读不到 setup-github-cn.sh 配在 /root/.gitconfig 里的加速，问提交号只能直连 GitHub，国内服务器连不上。现在主机助手自己补上 HOME，先比版本、已是最新就不下载的功能才真正生效。这次修复要等这一版装上之后的下一次更新才起作用。"),
+            ("Fixed", "主机助手退回比更新日志版本号时，下载失败会被当成「问到了一个空版本」，现在下载失败就换下一个地址。"),
+        ],
+    ),
+    (
         "4.15.0",
         date(2026, 11, 19),
         [

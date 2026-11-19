@@ -25,6 +25,15 @@
 
 set -uo pipefail
 
+# systemd 拉起的服务没有 HOME 这个环境变量：git 于是读不到 /root/.gitconfig 里 setup-github-cn.sh
+# 配的加速（url.<加速地址>.insteadOf），问 GitHub 提交号的 git ls-remote 只好直连 github.com，
+# 国内服务器连不上 → 每次都「查不到 GitHub 上的版本，照常下载更新」（下载那步自己读配置文件，所以照样下得下来）。
+# 命令行里手动跑 git 有 HOME，所以 clone 一直是好的。（2.24.0）
+if [ -z "${HOME:-}" ]; then
+    HOME="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)"
+    export HOME="${HOME:-/root}"
+fi
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JOBS="$ROOT/data/host-jobs"
 QUEUE="$JOBS/queue"
@@ -103,7 +112,11 @@ remote_commit() {   # GitHub 上 main 的提交号；git 会顺着 setup-github-
 remote_versions() {
     local url
     for url in "$REPO_SEED_URL" $(REPO_ZIP_URL="$REPO_SEED_URL" mirror_seed_urls | sort -u); do
-        curl -fsS --connect-timeout 15 --max-time 40 "$url" 2>/dev/null | seed_versions && return 0
+        # 先存下来再判：写成 curl | seed_versions 的话，curl 失败了管道照样「成功」，返回一个空串
+        local body got
+        body="$(curl -fsS --connect-timeout 15 --max-time 40 "$url" 2>/dev/null)" || continue
+        got="$(echo "$body" | seed_versions)"
+        [ -n "$got" ] && { echo "$got"; return 0; }
     done
     return 1
 }
