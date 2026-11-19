@@ -10,6 +10,7 @@ from .routers import (
     app_mobile,
     auth,
     classes,
+    client_export,
     client_update,
     community,
     config,
@@ -110,6 +111,7 @@ app.include_router(community.router)  # 反馈与更新日志
 app.include_router(app_mobile.router)  # 教师端安卓 APP：认服务器、心跳保持登录
 app.include_router(recycle.router)  # 数据回收站
 app.include_router(client_update.router)  # 学生端 exe 检查更新：清单 + 下载，公开只读
+app.include_router(client_export.router)  # 系统管理员从本网站导出带本网站地址的学生端 exe（2.23.2）
 app.include_router(data_apis.router)  # 教师端「API」板块：老师建接口、看数据表单和大图
 app.include_router(hook.router)  # 第三方教学网页往 API 里送数据，认每个 API 自己的密钥
 app.include_router(insight.router)
