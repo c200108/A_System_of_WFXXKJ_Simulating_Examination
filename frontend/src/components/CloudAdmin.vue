@@ -7,6 +7,7 @@ import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { fmtBytes, usedPct } from '../cloud'
+import CloudUrl from './CloudUrl.vue'
 
 const props = defineProps({ data: { type: Object, default: null } })
 const emit = defineEmits(['changed'])
@@ -87,9 +88,10 @@ async function saveTotal() {
       </div>
     </div>
 
+    <CloudUrl class="url" />
     <p class="note">
       在下面表格的「个人云盘」一列给老师分配空间（填 0 是收回，文件留在服务器上不删）。
-      分到空间的老师点顶栏「☁ 个人云盘」直接进，不用再登录；也可以直接打开 <code>/cloud/</code>，
+      分到空间的老师点顶栏「☁ 个人云盘」直接进，不用再登录；也可以打开上面的云盘网址，
       用教学平台的用户名和密码登录。上传时超出分配的空间会被拒绝，用量每 5 分钟统计一次。
       <template v-if="data.openlist_admin">
         <el-button link size="small" type="primary" @click="showCred = !showCred">
@@ -148,6 +150,9 @@ async function saveTotal() {
 }
 .unit {
   font-size: 13px;
+}
+.url {
+  margin-top: 16px;
 }
 .note {
   margin: 16px 0 0;

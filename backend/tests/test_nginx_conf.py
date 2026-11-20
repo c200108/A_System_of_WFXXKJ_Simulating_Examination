@@ -136,3 +136,11 @@ def test_花括号配对():
     # 去掉引号里的内容再数（JSON 里有花括号）
     bare = re.sub(r"'[^']*'", "''", text)
     assert bare.count("{") == bare.count("}")
+
+
+def test_问额度的子请求不受全站30m上限():
+    """子请求和上传共用请求头（Content-Length 是整个文件），不放开的话 >30MB 的上传被判 413 → 500（2.25.1）。"""
+    text = _cloud()
+    for loc in ("location = /_cloud_gate {", "location = /_cloud_gate_other {"):
+        block = text.split(loc, 1)[1].split("}", 1)[0]
+        assert "client_max_body_size 0;" in block, loc

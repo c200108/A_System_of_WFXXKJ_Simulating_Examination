@@ -82,7 +82,7 @@ THEME_COLORS = {
 TOKEN_KEY_PREFIX = "wfxxcloud:"
 
 # 塞进 OpenList 每个页面 <head> 最前面（customize_head 设置项），比它自己的脚本先跑
-HEAD_SCRIPT = """<script>
+HEAD_SCRIPT = r"""<script>
 /* 教学平台：OpenList 和教学平台同一个域名、共用 localStorage，它的 token 会把教师端的登录挤掉。
    这里把它存取的键都加上 wfxxcloud: 前缀，两边互不干扰；没选过语言时默认中文。 */
 (function () {
@@ -95,6 +95,37 @@ HEAD_SCRIPT = """<script>
   };
   S.setItem = function (k, v) { return mine(this) ? s.call(this, P + k, v) : s.call(this, k, v) };
   S.removeItem = function (k) { return mine(this) ? r.call(this, P + k) : r.call(this, k) };
+  /* 登录页：把 /auth/login/hash 改送到教学平台后端，带上登录框里的明文。
+     这样刚分配空间、还没同步过密码的老师，用教学平台的密码也能直接登上（见 services/cloud.py 的 login_page）。 */
+  var X = XMLHttpRequest.prototype, xo = X.open, xs = X.send;
+  X.open = function (m, u) {
+    this.__wfxxLogin = /\/api\/auth\/login\/hash$/.test(String(u || ''));
+    if (this.__wfxxLogin) arguments[1] = '/api/cloud/ol-login';
+    return xo.apply(this, arguments);
+  };
+  X.send = function (b) {
+    if (this.__wfxxLogin) {
+      try {
+        var d = JSON.parse(b), el = document.querySelector('input[type=password]');
+        d.plain = !!(el && el.value);
+        if (d.plain) d.password = el.value;
+        b = JSON.stringify(d);
+      } catch (e) {}
+    }
+    return xs.call(this, b);
+  };
+  /* 面包屑兜底（2.25.1）：有老师在预览课件（PPT 预览器）时点上级目录没反应。点了 0.8 秒地址还没变，
+     就整页跳过去，不管是哪个预览器卡住了路由。 */
+  document.addEventListener('click', function (e) {
+    var a = e.target && e.target.closest && e.target.closest('a.hope-breadcrumb__link');
+    if (!a || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    var want = a.getAttribute('href') || '', before = location.pathname;
+    if (!want || want.charAt(0) !== '/') return;
+    setTimeout(function () {
+      var dec = function (x) { try { return decodeURI(x) } catch (_) { return x } };
+      if (location.pathname === before && dec(before) !== dec(want)) location.href = want;
+    }, 800);
+  }, true);
   S.clear = function () {
     if (!mine(this)) return c.call(this);
     for (var i = this.length - 1; i >= 0; i--) { var k = this.key(i); if (k && k.indexOf(P) === 0) r.call(this, k) }
@@ -166,7 +197,8 @@ class OpenList:
         # 连不上之后 30 秒内不再去连，直接报错：OpenList 挂了的时候，老师登录、改密码不能每次都卡 8 秒
         self._down_until = 0.0
 
-    def _req(self, method: str, path: str, body=None, token: str = "", timeout: float = 8):
+    def _req(self, method: str, path: str, body=None, token: str = "", timeout: float = 8,
+             headers: dict | None = None):
         if time.time() < self._down_until:
             raise CloudError("连不上云盘服务（OpenList 没启动或还在启动），过一会儿再试")
         data = json.dumps(body).encode() if body is not None else None
@@ -174,6 +206,8 @@ class OpenList:
         req.add_header("Content-Type", "application/json")
         if token:
             req.add_header("Authorization", token)
+        for k, v in (headers or {}).items():
+            req.add_header(k, v)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 out = json.loads(r.read() or b"{}")
@@ -195,6 +229,14 @@ class OpenList:
         if out.get("code") == 200:
             return (out.get("data") or {}).get("token")
         return None
+
+    def login_raw(self, path: str, body: dict, client_ip: str = "") -> dict:
+        """原样转发 OpenList 登录页的登录请求，返回它的 JSON（成功、密码错、要两步验证都原样给前端）。
+
+        带上 X-Forwarded-For：OpenList 按 IP 记输错次数，不带的话所有人都算成后端这一个 IP，
+        一个人连输错几次就把全校的云盘登录锁住 5 分钟。
+        """
+        return self._req("POST", path, body, headers={"X-Forwarded-For": client_ip} if client_ip else None)
 
     def admin_token(self, refresh: bool = False) -> str:
         with self._lock:
@@ -512,6 +554,47 @@ def set_quota(db: Session, user: User, quota_mb: int) -> CloudAccount:
 
 def fmt_mb(mb: int) -> str:
     return f"{mb / GB_MB:.1f} GB".replace(".0 GB", " GB") if mb >= GB_MB else f"{mb} MB"
+
+
+# ---------------------------------------------------------------- OpenList 登录页
+def login_page(db: Session, body: dict, plain: bool, client_ip: str = "") -> dict:
+    """直接打开 /cloud/ 在 OpenList 登录页登录时走这里（页面头上的脚本把登录请求改送到 /api/cloud/ol-login）。
+
+    为什么要绕一道：分配空间时平台只有教师端密码的哈希，不知道明文，云盘账号的密码先是随机的，
+    要等老师下次登录教学平台才同步过去 —— 分完空间马上用教学平台的密码登云盘就会「用户名或密码错误」。
+    这里拿到的是登录框里的明文：和教学平台密码对得上（且云盘密码没单独设）就先同步过去，再交给 OpenList 登录。
+    plain=False（没找到密码框、拿不到明文）就原样走 OpenList 的哈希登录。
+    """
+    from ..security import verify_password
+
+    ol = client()
+    username = str(body.get("username") or "")
+    password = str(body.get("password") or "")
+    fwd = {"username": username, "password": password, "otp_code": str(body.get("otp_code") or "")}
+    if not plain:
+        return ol.login_raw("/api/auth/login/hash", fwd, client_ip)
+    acc = db.scalar(select(CloudAccount).where(CloudAccount.login == username)) if username else None
+    user = db.get(User, acc.user_id) if acc is not None else None
+    # 和教学平台的登录密码对得上、云盘密码又没单独设：这就是这位老师的云盘密码
+    eligible = (acc is not None and user is not None and acc.quota_mb > 0 and user.is_active
+                and not acc.password_custom and bool(password) and verify_password(password, user.password_hash))
+
+    def push() -> None:
+        try:
+            sync(db, user, acc, password=password)
+            db.commit()
+        except CloudError as e:
+            db.rollback()
+            log.warning("登录页同步云盘密码 %s 没成功：%s", username, e)
+
+    if eligible and decrypt(acc.password_enc) != password:
+        push()
+    out = ol.login_raw("/api/auth/login", fwd, client_ip)
+    if eligible and out.get("code") in (400, 401) and "password" in str(out.get("message") or "").lower():
+        # 平台记着的和 OpenList 里的对不上（有人在云盘后台改过）：以平台为准再设一次
+        push()
+        out = ol.login_raw("/api/auth/login", fwd, client_ip)
+    return out
 
 
 # ---------------------------------------------------------------- 免登录跳转

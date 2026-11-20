@@ -44,6 +44,15 @@ class FakeOpenList:
             return _jwt(username)
         return None
 
+    def login_raw(self, path, body, client_ip=""):
+        self.last_ip = client_ip
+        if path.endswith("/hash"):
+            return {"code": 401, "message": "Invalid username or password", "data": None}
+        tok = self.login(body["username"], body["password"])
+        if tok:
+            return {"code": 200, "message": "success", "data": {"token": tok}}
+        return {"code": 401, "message": "Invalid username or password", "data": None}
+
     def admin_token(self, refresh=False):
         self._check()
         return "admintoken"
@@ -272,3 +281,31 @@ def test_密码加密能解开_换了密钥解不开():
     assert cloud.decrypt(enc) == "abc123x"
     assert cloud.decrypt("not-a-token") is None
     assert cloud.decrypt("") is None
+
+
+def test_OpenList登录页_刚分配空间就能用教学平台密码登录(client, auth, fake):
+    """分配空间时平台不知道明文，云盘密码先是随机的；登录页把明文送到平台，对上了就同步过去再登。"""
+    uid, _ = _teacher(client, auth, "cloud_t4")
+    client.put("/api/cloud/admin/total", json={"total_gb": 10}, headers=auth)
+    client.put(f"/api/cloud/admin/users/{uid}", json={"quota_gb": 1}, headers=auth)
+    fake.pwds["cloud_t4"] = "random-unknown"
+    r = client.post("/api/cloud/ol-login", json={"username": "cloud_t4", "password": "teacher123", "plain": True},
+                    headers={"X-Real-IP": "198.51.100.7"})
+    assert r.json()["code"] == 200 and fake.last_ip == "198.51.100.7"
+    # 有人在云盘后台改了密码：平台记着的没变，也照样以平台为准修回来
+    fake.pwds["cloud_t4"] = "tampered"
+    assert client.post("/api/cloud/ol-login", json={"username": "cloud_t4", "password": "teacher123",
+                                                    "plain": True}).json()["code"] == 200
+    # 密码不对不同步，原样回 OpenList 的错误
+    assert client.post("/api/cloud/ol-login", json={"username": "cloud_t4", "password": "wrong999",
+                                                    "plain": True}).json()["code"] == 401
+    assert fake.pwds["cloud_t4"] == "teacher123"
+    # 拿不到明文就走 OpenList 的哈希登录
+    assert client.post("/api/cloud/ol-login", json={"username": "cloud_t4", "password": "ab" * 32}).json()["code"] == 401
+    client.put(f"/api/cloud/admin/users/{uid}", json={"quota_gb": 0}, headers=auth)
+
+
+def test_OpenList页面头部脚本():
+    head = cloud.HEAD_SCRIPT % {"prefix": cloud.TOKEN_KEY_PREFIX, "color": "#409eff"}
+    assert "'/api/cloud/ol-login'" in head and r"/\/api\/auth\/login\/hash$/" in head
+    assert "hope-breadcrumb__link" in head

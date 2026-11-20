@@ -3,7 +3,7 @@
 怎么搭的、配额怎么管，见 services/cloud.py 开头。
 """
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -102,6 +102,26 @@ def sync_cloud_password(body: CloudSyncIn, user: User = Depends(get_current_user
         db.rollback()
         _fail(e, 503)
     return _acc_out(acc)
+
+
+# ---------------------------------------------------------------- OpenList 登录页
+class OlLoginIn(BaseModel):
+    username: str = Field(default="", max_length=64)
+    password: str = Field(default="", max_length=128)
+    otp_code: str = Field(default="", max_length=16)
+    plain: bool = False
+
+
+@router.post("/ol-login", include_in_schema=False)
+def openlist_login(body: OlLoginIn, request: Request, db: Session = Depends(get_db)):
+    """OpenList 登录页的登录（页面头上的脚本改送过来的），回 OpenList 自己格式的 JSON。"""
+    if not cloud.enabled():
+        return {"code": 500, "message": "这台服务器没有启用个人云盘", "data": None}
+    ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "")
+    try:
+        return cloud.login_page(db, body.model_dump(), body.plain, ip)
+    except cloud.CloudError as e:
+        return {"code": 500, "message": str(e), "data": None}
 
 
 # ---------------------------------------------------------------- 管理员

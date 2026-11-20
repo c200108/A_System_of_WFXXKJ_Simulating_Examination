@@ -7,6 +7,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { fmtBytes, openCloud, usedPct } from '../cloud'
+import CloudUrl from './CloudUrl.vue'
 
 const info = ref(null)
 const pwd = reactive({ password: '', confirm: '', current: '', saving: false })
@@ -21,7 +22,6 @@ async function load() {
 onMounted(load)
 
 const pct = computed(() => usedPct(info.value?.used_bytes, info.value?.quota_bytes))
-const origin = window.location.origin
 
 async function setCustom() {
   if (!pwd.password) return ElMessage.warning('先填新的云盘密码')
@@ -74,9 +74,10 @@ async function syncBack() {
         空间超出了分配的额度，暂时不能上传、复制、解压，删掉一些文件后几分钟内自动恢复。
       </el-alert>
 
+      <CloudUrl class="url" />
       <p class="note">
-        点顶栏的「☁ 个人云盘」就能直接进去，不用再登录。在别的电脑上也可以直接打开
-        <code>{{ origin }}/cloud/</code>，用户名 <code>{{ info.login }}</code>，密码
+        点顶栏的「☁ 个人云盘」就能直接进去，不用再登录。在别的电脑、手机上打开上面的网址也行：
+        用户名 <code>{{ info.login }}</code>，密码
         <b>{{ info.password_custom ? '是下面单独设置的云盘密码' : '和教学平台的登录密码一样' }}</b>。
       </p>
 
@@ -126,6 +127,9 @@ async function syncBack() {
 .muted {
   color: var(--el-text-color-secondary);
   font-size: 12px;
+}
+.url {
+  margin-top: 14px;
 }
 .over {
   margin-top: 12px;
