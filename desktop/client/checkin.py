@@ -93,10 +93,7 @@ class CheckinDialog:
 
         box = tk.Frame(self.win, bg=CARD, padx=26, pady=20)
         box.pack(fill="both", expand=True)
-        tk.Label(box, text="老师发起了课堂签到", bg=CARD, font=(FONT, 14, "bold")).pack(anchor="w")
-        who = got.get("started_by") or "老师"
-        tk.Label(box, text=f"{got.get('class', '')}　发起人：{who}", bg=CARD, fg=GRAY,
-                 font=(FONT, 10)).pack(anchor="w", pady=(4, 12))
+        tk.Label(box, text="老师发起了课堂签到", bg=CARD, font=(FONT, 14, "bold")).pack(anchor="w", pady=(0, 12))
         s = watcher.app.student or {}
         tk.Label(box, text=f"我是：{s.get('name', '')}", bg=CARD, font=(FONT, 11)).pack(anchor="w")
 
