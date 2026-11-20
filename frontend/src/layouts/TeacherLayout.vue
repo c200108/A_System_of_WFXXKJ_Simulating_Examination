@@ -7,6 +7,7 @@ import { clearAuth, currentUser, setUser } from '../auth'
 import { siteConfig, year } from '../siteConfig'
 import BrandLogo from '../components/BrandLogo.vue'
 import FeedbackNews from '../components/FeedbackNews.vue'
+import { openCloud } from '../cloud'
 
 const route = useRoute()
 const router = useRouter()
@@ -69,6 +70,7 @@ async function logout() {
 
 function onUserCommand(cmd) {
   if (cmd === 'profile') router.push('/js/profile')
+  if (cmd === 'cloud') openCloud()
   if (cmd === 'recycle') router.push({ path: '/js/profile', query: { panel: 'recycle' } })
   if (cmd === 'logout') logout()
 }
@@ -96,6 +98,10 @@ function onUserCommand(cmd) {
         </template>
       </el-menu>
       <div class="right">
+        <!-- 个人云盘（2.25.0）：免登录打开 /cloud/，没分配空间的会提示联系系统管理员 -->
+        <el-button v-if="user" class="cloud-btn" size="small" round @click="openCloud" title="打开我的个人云盘（新标签页）">
+          ☁ 个人云盘
+        </el-button>
         <el-button link :title="dark ? '切换到浅色' : '切换到深色'" @click="toggleTheme">
           {{ dark ? '☀' : '◐' }}
         </el-button>
@@ -108,6 +114,7 @@ function onUserCommand(cmd) {
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item command="profile">我的账号</el-dropdown-item>
+              <el-dropdown-item command="cloud">个人云盘</el-dropdown-item>
               <el-dropdown-item command="recycle">数据回收站</el-dropdown-item>
               <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
             </el-dropdown-menu>
@@ -164,6 +171,14 @@ function onUserCommand(cmd) {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+.cloud-btn {
+  font-size: 13px;
+}
+@media (max-width: 900px) {
+  .cloud-btn {
+    display: none;
+  }
 }
 .who {
   display: flex;

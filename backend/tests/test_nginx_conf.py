@@ -52,7 +52,7 @@ def test_默认配置只开80_规则全都引进来():
     text = (FRONT / "nginx.conf").read_text(encoding="utf-8")
     assert re.search(r"^\s*listen 80;", text, re.M)
     assert "443" not in re.sub(r"#.*", "", text), "没配证书的学校不该碰 443"
-    assert _includes(FRONT / "nginx.conf") == ["base.conf", "static.conf", "backend.conf"]
+    assert _includes(FRONT / "nginx.conf") == ["base.conf", "static.conf", "backend.conf", "cloud.conf"]
 
 
 def test_https配置_80上只跳网页_接口和配图照旧服务():
@@ -63,14 +63,16 @@ def test_https配置_80上只跳网页_接口和配图照旧服务():
     assert "include /etc/nginx/exam/backend.conf;" in plain
     assert "include /etc/nginx/exam/static.conf;" not in plain
     assert re.search(r"location / \{\s*return 301 __HTTPS_ORIGIN__\$request_uri;", plain)
-    for inc in ("base.conf", "static.conf", "backend.conf"):
+    for inc in ("base.conf", "static.conf", "backend.conf", "cloud.conf"):
         assert f"include /etc/nginx/exam/{inc};" in tls
+    # 云盘是网页，80 上跟着跳 https，不单独服务
+    assert "cloud.conf" not in plain
     assert "/etc/nginx/ssl/fullchain.pem" in tls and "/etc/nginx/ssl/key.pem" in tls
 
 
 def test_dockerfile把规则和切换脚本都拷进镜像():
     text = (FRONT / "Dockerfile").read_text(encoding="utf-8")
-    for name in ("base.conf", "static.conf", "backend.conf", "https.conf"):
+    for name in ("base.conf", "static.conf", "backend.conf", "cloud.conf", "https.conf"):
         assert f"nginx/{name}" in text
     assert "/etc/nginx/exam/http.conf" in text
     assert "/docker-entrypoint.d/40-exam-https.sh" in text
@@ -84,3 +86,53 @@ def test_切换脚本语法():
 def test_切换脚本是LF换行():
     """CRLF 的话容器里报 bad interpreter，前端整个起不来。"""
     assert b"\r\n" not in (NGINX / "40-exam-https.sh").read_bytes()
+
+
+# ---------------------------------------------------------------- 个人云盘（2.25.0）
+CLOUD = NGINX / "cloud.conf"
+
+
+def _cloud():
+    return re.sub(r"#.*", "", CLOUD.read_text(encoding="utf-8"))
+
+
+def test_云盘前缀带脱字符_openlist的静态文件不被按扩展名的正则截走():
+    assert re.search(r"location \^~ /cloud/ \{", _cloud())
+
+
+def test_openlist不写死在proxy_pass里_它没起来前端照样能启动():
+    """写死 http://openlist:5244 的话 nginx 启动时就要解析，openlist 容器不在整个网站都起不来。"""
+    text = _cloud()
+    assert "proxy_pass http://openlist" not in text
+    assert "set $openlist_upstream http://openlist:5244;" in text
+    assert "resolver 127.0.0.11" in text
+    assert text.count("proxy_pass $openlist_upstream;") == 3
+
+
+def test_上传先问后端额度_绕得过额度的接口一律挡掉():
+    text = _cloud()
+    put = text.split("location ~ ^/cloud/api/fs/(put|form)$", 1)[1].split("}", 1)[0]
+    assert "auth_request /_cloud_gate;" in put
+    gate = text.split("location = /_cloud_gate {", 1)[1].split("}", 1)[0]
+    assert "internal;" in gate and "proxy_pass http://backend:8000/api/cloud/gate;" in gate
+    assert "proxy_pass_request_body off;" in gate and "X-Upload-Length $http_content_length" in gate
+    groups = re.findall(r"location ~ \^/cloud/api/fs/\(([^)]*)\)", text)
+    blocked = next(g for g in groups if "multipart/" in g).split("|")
+    for name in ("multipart/", "add_offline_download", "torrent/", "seed/"):
+        assert name in blocked
+    assert "location = /cloud/api/me/update" in text
+
+
+def test_云盘的提示是合法json():
+    import json
+
+    for body in re.findall(r"return 200 '(\{.*?\})';", CLOUD.read_text(encoding="utf-8")):
+        data = json.loads(body)
+        assert data["code"] in (401, 403) and data["message"]
+
+
+def test_花括号配对():
+    text = _cloud()
+    # 去掉引号里的内容再数（JSON 里有花括号）
+    bare = re.sub(r"'[^']*'", "''", text)
+    assert bare.count("{") == bare.count("}")

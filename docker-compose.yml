@@ -74,8 +74,15 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请先在 .env 里设置 ADMIN_PASSWORD}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      # 个人云盘（2.25.0）：后端用 OpenList 的管理接口给老师建账号、分空间，见 backend/app/services/cloud.py。
+      # OpenList 管理员密码不填就由 JWT_SECRET 推出来（和下面 openlist 服务里的算法一样）
+      OPENLIST_URL: http://openlist:5244/cloud
+      OPENLIST_ADMIN_PASSWORD: ${OPENLIST_ADMIN_PASSWORD:-}
+      CLOUD_STORAGE_DIR: /cloud-storage
       TZ: Asia/Shanghai
     volumes:
+      # 个人云盘根目录：后端在这里给老师建文件夹、量用量、看磁盘还剩多少
+      - ${CLOUD_STORAGE_DIR:-/home/WFXXKJ_ExamSystem_CloudStorage}:/cloud-storage
       # 上传的图片和 Excel 原件挂到宿主机，容器重建数据不丢
       - ./data/uploads:/app/data/uploads
       # 网页派给宿主机的活（导入备份、一键更新）和执行日志，见 scripts/host-agent-install.sh
@@ -124,6 +131,41 @@ services:
       # 挂的是目录不是文件：续期时 acme.sh 换掉文件，容器里立刻看得到。
       # 没填 SSL_CERT_DIR 时挂 ./data/ssl（空目录，docker 会自己建），不起作用。
       - ${SSL_CERT_DIR:-./data/ssl}:/etc/nginx/ssl:ro
+
+  # 个人云盘（2.25.0）：开源网盘 OpenList，网页上是 /cloud/（前端 nginx 转过来，见 frontend/nginx/cloud.conf）。
+  # 每位老师一个账号、根目录锁在自己的文件夹里；账号、空间都由教学平台管（账号页分配空间），
+  # 不用进 OpenList 后台。文件在宿主机 /home/WFXXKJ_ExamSystem_CloudStorage/<用户名>/ 下。
+  #
+  # 它挂了不影响考试：后端不依赖它启动，nginx 也是访问 /cloud 时才去找它。
+  openlist:
+    image: ${REGISTRY:-docker.io}/openlistteam/openlist:v4.2.10
+    restart: always
+    logging: *default-logging
+    # 用 root 跑：云盘目录是 docker 替我们在宿主机上建的（属主 root），镜像默认的 1001 用户写不进去
+    user: "0:0"
+    environment:
+      # 网页挂在 /cloud 下（只写路径：域名、http/https 由浏览器当前地址决定，换域名不用改）
+      SITE_URL: /cloud
+      OPENLIST_ADMIN_PASSWORD: ${OPENLIST_ADMIN_PASSWORD:-}
+      # 只用来推出管理员密码。**不能叫 JWT_SECRET**：openlist 以 --no-prefix 启动，同名变量会被它拿去当自己的密钥
+      EXAM_SECRET: ${JWT_SECRET:?请先在 .env 里设置 JWT_SECRET}
+      TZ: Asia/Shanghai
+    # 每次启动先把管理员密码设成算好的那个（第一次启动时还没有管理员，靠 OPENLIST_ADMIN_PASSWORD 建出来；
+    # 两样都不做的话 OpenList 会等人去网页上走安装向导，谁先打开 /cloud 谁就成了管理员）
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        PW="$${OPENLIST_ADMIN_PASSWORD:-}"
+        [ -n "$$PW" ] || PW="$$(printf 'wfxx-openlist-admin:%s' "$$EXAM_SECRET" | sha256sum | cut -c1-32)"
+        export OPENLIST_ADMIN_PASSWORD="$$PW"
+        unset EXAM_SECRET
+        ./openlist admin set "$$PW" --no-prefix >/dev/null 2>&1 || true
+        exec ./openlist server --no-prefix
+    volumes:
+      # OpenList 自己的数据库（账号、设置），跟着项目的 data/ 走
+      - ./data/openlist:/opt/openlist/data
+      # 云盘根目录。想放别的盘就在 .env 里写 CLOUD_STORAGE_DIR=/data/cloud（后端那条挂载会跟着变）
+      - ${CLOUD_STORAGE_DIR:-/home/WFXXKJ_ExamSystem_CloudStorage}:/cloud-storage
 
 volumes:
   db_data:

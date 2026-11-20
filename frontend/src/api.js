@@ -206,6 +206,15 @@ export const api = {
   bulkUsers: (ids, action) => http.post('/auth/users/bulk', { ids, action }),
   updateUser: (id, data) => http.patch(`/auth/users/${id}`, data),
 
+  // 个人云盘（2.25.0，routers/cloud.py）
+  cloudMe: () => http.get('/cloud/me'),
+  cloudOpen: () => http.post('/cloud/open', null, { silent: true }),
+  cloudSetPassword: password => http.post('/cloud/password', { password }),
+  cloudSyncPassword: current_password => http.post('/cloud/password/sync', { current_password }),
+  cloudAdmin: () => http.get('/cloud/admin'),
+  cloudSetTotal: total_gb => http.put('/cloud/admin/total', { total_gb }),
+  cloudSetQuota: (id, quota_gb) => http.put(`/cloud/admin/users/${id}`, { quota_gb }),
+
   // 班级：老师能看列表（发考试要选班），增删改要管理员
   classes: params => http.get('/classes', { params }),
   classGrades: () => http.get('/classes/grades'),

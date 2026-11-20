@@ -1,6 +1,7 @@
 from datetime import date, datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Date,
     DateTime,
@@ -79,6 +80,35 @@ class User(Base):
     classes: Mapped[list["SchoolClass"]] = relationship(
         back_populates="owner", lazy="selectin"
     )
+
+
+class CloudAccount(Base):
+    """个人云盘（2.25.0）：一位老师在 OpenList 里的那个账号和分到的空间。
+
+    文件放在宿主机 /home/WFXXKJ_ExamSystem_CloudStorage/<folder>/ 下，OpenList 里这位老师的
+    根目录就锁在这个文件夹，互相看不到。配额 OpenList 自己不管，由本系统管：
+    上传前 nginx 先问后端（/api/cloud/gate），后台每隔几分钟量一次实际用量，超了就收回写权限。
+    见 services/cloud.py。
+
+    quota_mb = 0 表示收回了空间（OpenList 里的账号停用，文件留着不删）。
+    """
+
+    __tablename__ = "cloud_accounts"
+
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    quota_mb: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # 宿主机上的文件夹名、OpenList 里的登录名。建的时候按用户名定下来，之后不再变
+    folder: Mapped[str] = mapped_column(String(64), default="")
+    login: Mapped[str] = mapped_column(String(64), default="")
+    # 云盘密码（加密存，免登录跳转要用它换 OpenList 的令牌）。custom=False 表示跟教师端密码一致
+    password_enc: Mapped[str] = mapped_column(Text, default="")
+    password_custom: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    used_bytes: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    over_quota: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
 
 
 class SchoolClass(Base):

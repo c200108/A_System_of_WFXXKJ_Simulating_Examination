@@ -34,7 +34,9 @@ export default defineConfig({
     proxy: {
       // 开发时前后端分两个端口，靠代理避免跨域
       '/api': { target, changeOrigin: true },
-      '/uploads': { target, changeOrigin: true }
+      '/uploads': { target, changeOrigin: true },
+      // 个人云盘（2.25.0）：本机开发时在 5244 跑一个 OpenList（SITE_URL=/cloud）才用得上，见 services/cloud.py
+      '/cloud': { target: process.env.VITE_CLOUD_TARGET || 'http://127.0.0.1:5244', changeOrigin: true }
     }
   }
 })

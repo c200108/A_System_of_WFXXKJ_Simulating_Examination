@@ -35,6 +35,8 @@ export function setUser(user) {
 
 export function clearAuth() {
   localStorage.removeItem('token')
+  // 个人云盘的登录令牌一起清掉，换个老师登录这台电脑就打不开上一位的云盘（键名见 services/cloud.py）
+  localStorage.removeItem('wfxxcloud:token')
   setUser(null)
 }
 

@@ -51,6 +51,14 @@ def set_ui(body: UiIn, _: User = Depends(require_root), db: Session = Depends(ge
         else:
             db.add(AppMeta(key=f"ui_{key}", value=value))
     db.commit()
+    # 个人云盘（OpenList）的主色跟着换；云盘服务不在就算了，下次后台扫描时会补上
+    from ..services import cloud
+
+    if cloud.enabled():
+        try:
+            cloud.apply_branding(db)
+        except cloud.CloudError:
+            pass
     return ui_settings(db)
 
 

@@ -11,6 +11,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { currentUser, setUser } from '../auth'
+import CloudCard from '../components/CloudCard.vue'
 import RecycleBin from '../components/RecycleBin.vue'
 import SystemMaintenance from '../components/SystemMaintenance.vue'
 import ThemePicker from '../components/ThemePicker.vue'
@@ -171,6 +172,9 @@ async function savePassword() {
         <p class="note">改完当前登录不会掉线，但下次登录要用新密码。</p>
       </el-card>
     </div>
+
+    <!-- 个人云盘（2.25.0）：服务器没启用云盘时整块不显示 -->
+    <CloudCard />
 
     <!-- 只有部署时建的系统管理员看得到：动整台服务器的事 -->
     <el-card v-if="user?.is_root" shadow="never" class="bincard">

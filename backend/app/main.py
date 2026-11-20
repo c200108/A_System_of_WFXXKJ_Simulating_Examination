@@ -13,6 +13,7 @@ from .routers import (
     classes,
     client_export,
     client_update,
+    cloud,
     community,
     config,
     data_apis,
@@ -118,6 +119,7 @@ app.include_router(client_export.router)  # 系统管理员从本网站导出带
 app.include_router(data_apis.router)  # 教师端「API」板块：老师建接口、看数据表单和大图
 app.include_router(hook.router)  # 第三方教学网页往 API 里送数据，认每个 API 自己的密钥
 app.include_router(insight.router)
+app.include_router(cloud.router)  # 个人云盘（2.25.0）：OpenList，每位老师一块空间
 app.include_router(system.router)  # 系统管理员：备份导出导入、一键更新（交给宿主机的主机助手）  # 学生学情：考试、排名、打字、第三方网页数据
 
 
@@ -144,6 +146,14 @@ def _purge_recycle_hourly():
             _time.sleep(3600)
 
     threading.Thread(target=loop, name="recycle-purge", daemon=True).start()
+
+
+@app.on_event("startup")
+def _cloud_background():
+    """个人云盘：每 5 分钟量一次各位老师的用量、超额收回上传权限（没启用云盘就什么都不做）。"""
+    from .services import cloud as cloud_
+
+    cloud_.start_background()
 
 
 @app.get("/api/health", tags=["运维"], summary="健康检查")

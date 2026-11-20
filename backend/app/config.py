@@ -36,6 +36,16 @@ class Settings(BaseSettings):
     # 接单执行 —— 重建容器、跑升级脚本这些事，容器里的后端自己做不了。见 routers/system.py
     host_jobs_dir: str = "./data/host-jobs"
 
+    # 个人云盘（2.25.0，见 services/cloud.py）。docker-compose.yml 里 openlist 服务的内网地址，
+    # 留空 = 不启用（本机开发、跑测试时就是空的）。路径要带 /cloud：OpenList 的 SITE_URL 设的就是它
+    openlist_url: str = ""
+    # OpenList 的管理员密码。不填就由 JWT_SECRET 推出来（compose 里 openlist 容器用同一个算法），
+    # 老服务器升级不用往 .env 里加东西
+    openlist_admin_password: str = ""
+    # 云盘根目录在**后端容器里**的路径（宿主机的 /home/WFXXKJ_ExamSystem_CloudStorage 挂进来）。
+    # openlist 容器里也挂在同一个路径，两边说的文件夹才是同一个
+    cloud_storage_dir: str = "/cloud-storage"
+
     admin_username: str = "admin"
     admin_password: str = "admin123"
     admin_name: str = "系统管理员"

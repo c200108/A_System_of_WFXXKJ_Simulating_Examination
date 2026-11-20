@@ -27,6 +27,7 @@ from ..schemas import (
     UserUpdate,
 )
 from ..security import create_access_token, hash_password, verify_password
+from ..services import cloud
 
 router = APIRouter(prefix="/api/auth", tags=["认证"])
 
@@ -110,6 +111,8 @@ def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get
         raise HTTPException(status_code=400, detail="用户名或密码不正确")
     if not user.is_active:
         raise HTTPException(status_code=403, detail="账号已停用，请联系管理员")
+    # 个人云盘的密码跟教师端一致的，用这次登录的明文同步过去（和存着的一样就什么都不做）
+    cloud.on_password_known(db, user, form.password)
     return TokenOut(
         access_token=create_access_token(user.id, user.role),
         user=_user_out(user),
@@ -149,6 +152,7 @@ def change_password(
         raise HTTPException(status_code=400, detail="新密码和原密码一样，换一个吧")
     user.password_hash = hash_password(pwd)
     db.commit()
+    cloud.on_password_known(db, user, pwd)
     return {"ok": True}
 
 
@@ -208,8 +212,10 @@ def update_user(
     if "is_active" in data and user_id == admin.id and not data["is_active"]:
         raise HTTPException(status_code=400, detail="不能停用自己")
 
+    new_password = None
     if data.pop("password", None):
-        user.password_hash = hash_password(check_password(body.password))
+        new_password = check_password(body.password)
+        user.password_hash = hash_password(new_password)
 
     # 班级分配是「整体替换」：传来的这批归他，原来有、这批没有的解绑。
     # 一位老师带哪几个班是个集合，增量改法在界面上很难表达清楚。
@@ -231,6 +237,11 @@ def update_user(
 
     db.commit()
     db.refresh(user)
+    # 个人云盘：重置的密码同步过去；停用 / 启用跟着停用 / 启用云盘账号
+    if new_password:
+        cloud.on_password_known(db, user, new_password)
+    if "is_active" in data:
+        cloud.sync_quietly(db, user)
     return _user_out(user)
 
 
@@ -245,6 +256,7 @@ def deactivate_user(
         raise HTTPException(status_code=404, detail="用户不存在")
     user.is_active = False
     db.commit()
+    cloud.sync_quietly(db, user)
     return {"ok": True}
 
 
@@ -291,6 +303,8 @@ def bulk_users(
         for u in users:
             u.is_active = True
         db.commit()
+        for u in users:
+            cloud.sync_quietly(db, u)
         return {"action": "enable", "affected": len(users)}
 
     _guard(users, admin, db, "停用" if body.action == "disable" else "删除")
@@ -299,10 +313,13 @@ def bulk_users(
         for u in users:
             u.is_active = False
         db.commit()
+        for u in users:
+            cloud.sync_quietly(db, u)
         return {"action": "disable", "affected": len(users)}
 
     names = [u.name or u.username for u in users]
     for u in users:
+        cloud.remove(db, u)  # 云盘账号删掉，文件夹留在服务器上
         _detach_user(db, u.id)
         db.delete(u)
     db.commit()

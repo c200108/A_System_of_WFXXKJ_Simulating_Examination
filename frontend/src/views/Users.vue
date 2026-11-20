@@ -3,6 +3,8 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
 import { currentUser, setUser } from '../auth'
+import CloudAdmin from '../components/CloudAdmin.vue'
+import { fmtBytes, usedPct } from '../cloud'
 
 const users = ref([])
 const classes = ref([])
@@ -26,6 +28,46 @@ async function load() {
   }
 }
 onMounted(load)
+
+// ---------- 个人云盘（2.25.0） ----------
+const cloud = ref(null)
+async function loadCloud() {
+  try {
+    cloud.value = await api.cloudAdmin()
+  } catch {
+    cloud.value = null
+  }
+}
+onMounted(loadCloud)
+
+const cloudAcc = row => cloud.value?.accounts?.[row.id] || null
+const quotaDlg = ref(false)
+const quota = reactive({ row: null, gb: 0, saving: false })
+const quotaLeftGb = computed(() => {
+  const c = cloud.value
+  if (!c) return 0
+  const mine = cloudAcc(quota.row || {})?.quota_bytes || 0
+  return Math.max(0, Math.floor(((c.total_bytes - c.allocated_bytes + mine) / 1024 ** 3) * 10) / 10)
+})
+
+function openQuota(row) {
+  const acc = cloudAcc(row)
+  quota.row = row
+  quota.gb = acc?.allocated ? Math.round((acc.quota_bytes / 1024 ** 3) * 10) / 10 : 5
+  quotaDlg.value = true
+}
+
+async function saveQuota() {
+  quota.saving = true
+  try {
+    await api.cloudSetQuota(quota.row.id, quota.gb || 0)
+    quotaDlg.value = false
+    await loadCloud()
+    ElMessage.success(quota.gb > 0 ? '空间已分配' : '已收回空间（文件还在服务器上）')
+  } finally {
+    quota.saving = false
+  }
+}
 
 /** 随机口令：去掉了 0/O/1/l/I 这些容易看错的字符，念给老师抄不会错 */
 function randomPassword(n = 12) {
@@ -215,6 +257,8 @@ async function bulk(action) {
 </script>
 
 <template>
+  <CloudAdmin :data="cloud" @changed="loadCloud" />
+
   <el-card shadow="never">
     <template #header>
       <div class="head">
@@ -280,6 +324,26 @@ async function bulk(action) {
           <span v-else class="blank">未填</span>
         </template>
       </el-table-column>
+      <el-table-column v-if="cloud?.enabled" label="个人云盘" width="150">
+        <template #default="{ row }">
+          <template v-if="cloudAcc(row)?.allocated">
+            <el-progress
+              :percentage="usedPct(cloudAcc(row).used_bytes, cloudAcc(row).quota_bytes)"
+              :stroke-width="6"
+              :show-text="false"
+              :status="cloudAcc(row).over_quota ? 'exception' : ''"
+            />
+            <div class="cloudnum">
+              {{ fmtBytes(cloudAcc(row).used_bytes) }} / {{ fmtBytes(cloudAcc(row).quota_bytes) }}
+              <el-button link size="small" type="primary" @click="openQuota(row)">调整</el-button>
+            </div>
+          </template>
+          <template v-else>
+            <span class="blank">未分配</span>
+            <el-button link size="small" type="primary" class="editcls" @click="openQuota(row)">分配</el-button>
+          </template>
+        </template>
+      </el-table-column>
       <el-table-column label="角色" width="96">
         <template #default="{ row }">
           <el-tag :type="row.role === 'admin' ? 'danger' : 'info'" size="small">
@@ -321,6 +385,27 @@ async function bulk(action) {
       </el-table-column>
     </el-table>
   </el-card>
+
+  <!-- 个人云盘：分配空间 -->
+  <el-dialog v-model="quotaDlg" title="分配个人云盘空间" width="440px">
+    <el-form label-width="90px">
+      <el-form-item label="老师">{{ quota.row?.name || quota.row?.username }}（{{ quota.row?.username }}）</el-form-item>
+      <el-form-item label="空间">
+        <el-input-number v-model="quota.gb" :min="0" :max="quotaLeftGb" :step="1" :precision="1" controls-position="right" />
+        <span class="gbunit">GB</span>
+      </el-form-item>
+    </el-form>
+    <p class="cloudtip">
+      最多还能给 <b>{{ quotaLeftGb }} GB</b>（云盘总容量 {{ fmtBytes(cloud?.total_bytes || 0) }}，
+      已分出 {{ fmtBytes(cloud?.allocated_bytes || 0) }}）。<br />
+      填 0 是收回空间：这位老师就打不开云盘了，但文件留在服务器上，以后再分配还在。<br />
+      云盘登录名和教学平台一样，密码默认也一样（老师可以在「我的账号」里单独设一个）。
+    </p>
+    <template #footer>
+      <el-button @click="quotaDlg = false">取消</el-button>
+      <el-button type="primary" :loading="quota.saving" @click="saveQuota">保存</el-button>
+    </template>
+  </el-dialog>
 
   <!-- 新增 -->
   <el-dialog v-model="dialog" title="新增账号" width="460px">
@@ -407,6 +492,20 @@ async function bulk(action) {
 </template>
 
 <style scoped>
+.cloudnum {
+  font-size: 12px;
+  margin-top: 2px;
+  white-space: nowrap;
+}
+.gbunit {
+  margin-left: 8px;
+}
+.cloudtip {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: var(--el-text-color-secondary);
+}
 .head {
   display: flex;
   justify-content: space-between;
