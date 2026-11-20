@@ -231,12 +231,15 @@ class TypingStarConf(_Base):
     困难: int = 88
 
 
+LONG_LIMITS = (15, 20, 30)   # 打字练习一定有的长限时档位（分钟），见 TypingConf._check_limits
+
+
 class TypingConf(_Base):
     enabled: bool = True
     difficulties: list[str] = Field(default_factory=lambda: ["简单", "中等", "困难"])
     # 限时档位，单位分钟。都必须大于 0 —— "不限时"的需求由自由打字模块承担，
     # 那个模块本来就不计时不评分，不用在这里配一个 0 出来。
-    time_limits: list[int] = Field(default_factory=lambda: [1, 2, 3, 5, 10, 20, 30])
+    time_limits: list[int] = Field(default_factory=lambda: [1, 2, 3, 5, 10, 15, 20, 30])
     default_difficulty: str = "简单"
     default_limit: int = 3
     # 网页打字页选了难度就自动带出这个限时（2.24.0），学生还能自己改。不在 time_limits 里的不算
@@ -282,8 +285,11 @@ class TypingConf(_Base):
             raise ValueError(
                 f"typing.default_limit={self.default_limit} 不在 time_limits {self.time_limits} 里"
             )
-        # 难度默认限时配了档位里没有的（比如老配置的 time_limits 没加 20）：去掉那一项，
-        # 退回 default_limit，不为这个起不来
+        # 15、20、30 分钟三档和各难度的默认限时**一定有**（2.24.2）：一键更新时学校服务器上的
+        # config.yaml 原地不动，老配置里的 time_limits 还是 [1, 2, 3, 5, 10]，只靠改默认值的话
+        # 新档位永远出不来、困难也带不出 20 分钟。这里并进去，老配置不用手改
+        self.time_limits = sorted(set(self.time_limits) | set(LONG_LIMITS)
+                                  | {v for v in self.default_limits.values() if v > 0})
         self.default_limits = {k: v for k, v in self.default_limits.items() if v in self.time_limits}
         if self.default_difficulty not in self.difficulties:
             raise ValueError(

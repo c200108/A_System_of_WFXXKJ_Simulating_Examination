@@ -194,7 +194,7 @@ typing:
   # 打字训练（学生页 /dazi，免登录；教师端在「打字」菜单看成绩）
   enabled: true
   difficulties: ["简单", "中等", "困难"]
-  time_limits: [1, 2, 3, 5, 10, 20, 30] # 单位分钟，必须都大于 0（自由打字模块不限时，不走这里）
+  time_limits: [1, 2, 3, 5, 10, 15, 20, 30] # 单位分钟，必须都大于 0（自由打字模块不限时，不走这里）
   default_difficulty: "简单"
   default_limit: 3
   default_limits: # 网页上选了难度就自动带出这个限时（学生还能自己改），要在 time_limits 里

@@ -247,12 +247,17 @@ def test_账号上的班级姓名说了算(client, auth):
 # ---------- 限时档位和各难度默认限时（2.24.0） ----------
 def test_限时多了20和30分钟_各难度带出默认限时(client):
     body = client.get("/api/typing/config").json()
-    assert 20 in body["time_limits"] and 30 in body["time_limits"]
+    assert {15, 20, 30} <= set(body["time_limits"])
     assert body["default_limits"] == {"简单": 5, "中等": 10, "困难": 20}
 
 
-def test_老配置没有20分钟档_默认限时去掉那一项_照样能起():
+def test_老配置没有长档位_自动补上_困难照样带出20分钟():
+    """学校服务器上的 config.yaml 升级时不动：老的 time_limits 只有 [1, 2, 3, 5, 10]。
+    2.24.0 只改了默认值，结果服务器上没有 20、30 分钟，困难也退回 3 分钟（2.24.2 修）。"""
     from app.siteconfig import TypingConf
 
     conf = TypingConf(time_limits=[1, 2, 3, 5, 10], default_limit=3)
-    assert conf.default_limits == {"简单": 5, "中等": 10}, "困难的 20 分钟不在档位里，退回 default_limit"
+    assert conf.time_limits == [1, 2, 3, 5, 10, 15, 20, 30]
+    assert conf.default_limits == {"简单": 5, "中等": 10, "困难": 20}
+    conf = TypingConf(time_limits=[1, 3], default_limit=3, default_limits={"困难": 25})
+    assert 25 in conf.time_limits and conf.default_limits == {"困难": 25}, "配了别的默认限时也并进档位"
