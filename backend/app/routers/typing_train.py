@@ -507,6 +507,8 @@ def submit_record(
     # 键盘模块统计的是按键次数，算"字/分"没有意义，统一记 0
     speed = 0 if s.module == "键盘" else round(correct / (secs / 60))
     stars = _stars(accuracy, speed, s.difficulty)
+    floor = site.typing.min_accuracy
+    counted = not (floor and accuracy < floor)
 
     # 一个会话只能交一次：两个请求同时到，只有一个能把 used 从 0 改成 1
     took = db.execute(update(TypingSession)
@@ -515,6 +517,16 @@ def submit_record(
     if took.rowcount != 1:
         db.rollback()
         raise HTTPException(status_code=409, detail="这次练习的成绩已经交过了，请重新开始")
+    if not counted:
+        # 正确率太低（2.25.2）：这次练习作数（会话用掉了），但成绩不入库 —— 老师的成绩页、打字学情、
+        # 全校排名、学生首页都看不到它；速度乱敲出来的不算数，记作无效
+        throttle.hit(db, "submit", who)
+        db.commit()
+        return TypingResultOut(
+            module=s.module, speed=0, accuracy=accuracy, duration=secs, stars=0,
+            difficulty=s.difficulty, counted=False,
+            note=f"正确率 {accuracy}% 低于 {floor}%，这次不计成绩，速度无效。看准了再打，正确率比速度要紧",
+        )
     rec = TypingRecord(
         student_id=s.student_id,
         student_name=s.student_name.strip()[:64],

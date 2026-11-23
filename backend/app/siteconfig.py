@@ -259,6 +259,8 @@ class TypingConf(_Base):
     max_speed_chinese: int = Field(default=200, ge=0)   # 中文每分钟最多多少字（正确字数）
     max_speed_english: int = Field(default=500, ge=0)   # 英文每分钟最多多少个字母（约 100 词/分）
     max_keys_per_min: int = Field(default=400, ge=0)    # 「认识键盘」每分钟最多按多少键
+    # 正确率低于这个百分比的练习交上来不计成绩（2.25.2）：不入库、不进打字学情和排名，速度记作无效。0 = 不限
+    min_accuracy: int = Field(default=50, ge=0, le=100)
     # 网页端会报这次在输入框里按了多少次键（含输入法拼音、五笔编码的键）。
     # 字数 > 按键数 ÷ 这个比例，说明有大段文字不是敲进来的。exe 和旧网页不报，就不查这一条
     min_keys_per_char_chinese: float = Field(default=0.6, ge=0)

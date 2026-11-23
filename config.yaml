@@ -212,6 +212,7 @@ typing:
   max_speed_chinese: 200 # 中文每分钟最多多少字
   max_speed_english: 500 # 英文每分钟最多多少个字母（约 100 词/分）
   max_keys_per_min: 400 # 「认识键盘」每分钟最多按多少键
+  min_accuracy: 50 # 正确率低于这个百分比的不计成绩（不入库、不进学情和排名，速度无效），0 = 不限
   # 网页端会报按键次数：字数比「按键数 × 这个数」还多出一截，就是粘贴进来的，不收
   min_keys_per_char_chinese: 0.6
   min_keys_per_char_english: 0.9

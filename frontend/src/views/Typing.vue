@@ -594,7 +594,8 @@ onUnmounted(() => {
       <div v-if="result" class="result">
         <h3>本次成绩 · {{ result.module }}</h3>
         <div class="grid">
-          <div v-if="result.speed"><span>打字速度</span><b>{{ result.speed }} 字/分</b></div>
+          <div v-if="result.counted === false && result.module !== '键盘'"><span>打字速度</span><b class="void">无效</b></div>
+          <div v-else-if="result.speed"><span>打字速度</span><b>{{ result.speed }} 字/分</b></div>
           <div v-else><span>敲击键数</span><b>{{ kb.total }} 键</b></div>
           <div><span>正确率</span><b>{{ result.accuracy }}%</b></div>
           <div><span>用时</span><b>{{ fmt(result.duration) }}</b></div>
@@ -616,7 +617,8 @@ onUnmounted(() => {
           </template>
           <span class="muted">（每人只按自己最好的一次排名）</span>
         </p>
-        <p class="ok-note">✓ 成绩已提交给老师</p>
+        <p v-if="result.counted === false" class="void-note">✗ {{ result.note || '正确率太低，这次不计成绩' }}</p>
+        <p v-else class="ok-note">✓ 成绩已提交给老师</p>
       </div>
     </div>
   </div>
@@ -945,6 +947,14 @@ h1 small {
 }
 .rank-note .muted {
   color: var(--el-text-color-secondary);
+}
+.void-note {
+  margin: 10px 0 0;
+  color: var(--el-color-danger);
+  font-weight: 600;
+}
+.void {
+  color: var(--el-color-danger);
 }
 .ok-note {
   margin: 14px 0 0;

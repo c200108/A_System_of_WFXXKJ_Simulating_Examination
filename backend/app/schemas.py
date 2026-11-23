@@ -737,6 +737,9 @@ class TypingResultOut(BaseModel):
     rank_total: int | None = None
     best_speed: int | None = None
     best_rank: int | None = None
+    # 2.25.2：正确率太低（typing.min_accuracy）的不计成绩 —— counted=False，速度记 0，note 说原因
+    counted: bool = True
+    note: str = ""
 
 
 class TypingRecordOut(ORMModel):

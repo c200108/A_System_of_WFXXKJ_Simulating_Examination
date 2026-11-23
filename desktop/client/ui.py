@@ -1126,6 +1126,14 @@ class TypingPage(Page):
             if err:
                 return self.live.config(text=err, fg=RED)
             got = got or {}
+            if got.get("counted") is False:
+                # 正确率太低（服务端 2.25.2）：不计成绩、速度无效，换一段重新练
+                self.live.config(text=got.get("note") or "正确率太低，这次不计成绩", fg=RED)
+                self.started = None
+                if sid == self.session:
+                    self.drop_session()
+                    self.fetch(fresh=True, keep_live=True)
+                return
             self.live.config(
                 text=f"已记录：{got.get('speed', 0)} 字/分　正确率 "
                      f"{got.get('accuracy', 0)}%　用时 {got.get('duration', 0)} 秒　"

@@ -1239,3 +1239,19 @@ def test_课堂签到_弹框锁住_选座号签到_同一台电脑不能再给�
     shell.checkin.tick()
     assert settle(app, until=lambda: shell.checkin.dialog is None), "签到结束了框还在"
     assert checkin.IDLE > 0
+
+
+def test_打字正确率太低不计成绩(app, server, exam, monkeypatch):
+    from app.siteconfig import site
+    from conftest import age_typing_session
+
+    monkeypatch.setattr(site.typing, "min_accuracy", 50)
+    shell = signed_in(app, server)
+    shell.go("typing")
+    page = shell.body
+    assert settle(app, until=lambda: page.passage), page.msg.cget("text")
+    page.entry.insert("end", "乱" * 30)
+    page.started = time.time() - 30
+    age_typing_session(page.session, 30)
+    page.submit()
+    assert settle(app, until=lambda: "不计成绩" in page.live.cget("text")), page.live.cget("text")

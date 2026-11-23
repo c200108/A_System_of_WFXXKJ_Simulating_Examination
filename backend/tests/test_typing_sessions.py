@@ -277,3 +277,31 @@ def test_同步打点有上限(client):
 
 def test_配置接口带出同步间隔(client):
     assert client.get("/api/typing/config").json()["sync_interval_sec"] == 1.5
+
+
+def test_正确率低于一半不计成绩_不进学情和排名(client, auth, monkeypatch):
+    monkeypatch.setattr(site.typing, "min_accuracy", 50)
+    with SessionLocal() as db:
+        before = db.query(TypingRecord).count()
+    sid = _open(client)
+    _shift(sid, 60)
+    res = client.post("/api/typing/records", headers={"X-Device-Id": uuid.uuid4().hex},
+                      json={"session_id": sid, "answer": "a" * 49 + "b" * 101})
+    assert res.status_code == 200, res.text
+    got = res.json()
+    assert got["counted"] is False and got["speed"] == 0 and got["accuracy"] == 33
+    assert "不计成绩" in got["note"] and got["rank"] is None
+    with SessionLocal() as db:
+        assert db.query(TypingRecord).count() == before, "不入库"
+    assert _submit(client, sid, 150).status_code == 409, "会话用掉了，不能改一下再交"
+    # 刚好一半照常计
+    sid = _open(client)
+    _shift(sid, 60)
+    got = client.post("/api/typing/records", headers={"X-Device-Id": uuid.uuid4().hex},
+                      json={"session_id": sid, "answer": "a" * 75 + "b" * 75}).json()
+    assert got["counted"] is True and got["accuracy"] == 50 and got["speed"] == 75
+    monkeypatch.setattr(site.typing, "min_accuracy", 0)
+    sid = _open(client)
+    _shift(sid, 60)
+    assert client.post("/api/typing/records", headers={"X-Device-Id": uuid.uuid4().hex},
+                       json={"session_id": sid, "answer": "b" * 150}).json()["counted"] is True, "填 0 不限"
