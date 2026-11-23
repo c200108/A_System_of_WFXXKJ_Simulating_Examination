@@ -335,3 +335,19 @@ def test_打字入门的键都在键盘图上_不用按Shift():
             assert set(text) <= ok and text.strip() and len(title) <= 16
     for hanzi, py in kl.SENTENCES:
         assert len(hanzi) == len(py.split()) and "v" not in py, hanzi
+
+
+def test_打字入门不交给老师_不限次数_不用填名字(client, monkeypatch):
+    monkeypatch.setattr(site.typing, "submit_interval_sec", 60)
+    with SessionLocal() as db:
+        before = db.query(TypingRecord).count()
+    dev = {"X-Device-Id": uuid.uuid4().hex}
+    for _ in range(3):      # 同一台电脑连着练三遍，不被「每分钟一次」挡
+        res = start(client, {"module": "键盘", "lesson": "home"}).json()
+        _shift(res["session_id"], 20)
+        got = client.post("/api/typing/records", headers=dev,
+                          json={"session_id": res["session_id"], "answer": res["text"]})
+        assert got.status_code == 200, got.text
+        assert got.json()["practice"] is True and got.json()["accuracy"] == 100
+    with SessionLocal() as db:
+        assert db.query(TypingRecord).count() == before, "不入库"

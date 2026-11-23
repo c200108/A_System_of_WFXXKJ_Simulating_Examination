@@ -744,6 +744,7 @@ class TypingResultOut(BaseModel):
     # 2.25.2：正确率太低（typing.min_accuracy）的不计成绩 —— counted=False，速度记 0，note 说原因
     counted: bool = True
     note: str = ""
+    practice: bool = False   # 2.25.4：打字入门的练习结果，不交给老师
 
 
 class TypingRecordOut(ORMModel):

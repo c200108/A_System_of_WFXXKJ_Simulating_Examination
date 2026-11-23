@@ -528,7 +528,8 @@ onUnmounted(() => {
           </template>
           <span class="muted">（每人只按自己最好的一次排名）</span>
         </p>
-        <p v-if="result.counted === false" class="void-note">✗ {{ result.note || '正确率太低，这次不计成绩' }}</p>
+        <p v-if="result.practice" class="ok-note">练习结果只给你自己看，不交给老师，可以马上点「再练一次」</p>
+        <p v-else-if="result.counted === false" class="void-note">✗ {{ result.note || '正确率太低，这次不计成绩' }}</p>
         <p v-else class="ok-note">✓ 成绩已提交给老师</p>
       </div>
     </div>

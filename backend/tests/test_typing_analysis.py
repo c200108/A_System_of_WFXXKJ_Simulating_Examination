@@ -110,7 +110,7 @@ def _seed(client):
     for cls, name, typed, correct in (("析一班", "赵", 40, 38), ("析一班", "赵", 50, 49),
                                       ("析一班", "钱", 30, 20), ("析二班", "孙", 60, 57)):
         _submit(client, cls, name, typed, correct)
-    _submit(client, "析二班", "孙", 80, 80, module="键盘")
+    _submit(client, "析二班", "孙", 80, 80, module="英文")   # 打字入门（键盘）2.25.4 起不入库，换英文
 
 
 def _search(client, auth, **params):
@@ -124,7 +124,7 @@ def test_筛选_排序_分页(client, auth, seeded):
     assert got["total"] == 3 and [x["speed"] for x in got["items"]] == [49, 38, 20]
     got = _search(client, auth, student_class="析一班", sort="speed", order="asc", page=2, page_size=2)
     assert got["total"] == 3 and [x["speed"] for x in got["items"]] == [49]
-    assert _search(client, auth, keyword="孙", module="键盘")["total"] == 1
+    assert _search(client, auth, keyword="孙", module="英文")["total"] == 1
     today = datetime.now().date().isoformat()
     assert _search(client, auth, student_class="析二班", date_from=today, date_to=today)["total"] == 2
     assert _search(client, auth, student_class="析二班", date_to="2000-01-01")["total"] == 0
@@ -157,6 +157,6 @@ def test_批量删除要删除权(client, auth, teacher_auth, seeded):
 
 
 def test_按筛选删除_只删看到的(client, auth, seeded):
-    res = client.delete("/api/typing/records", params={"student_class": "析二班", "module": "键盘"}, headers=auth)
+    res = client.delete("/api/typing/records", params={"student_class": "析二班", "module": "英文"}, headers=auth)
     assert res.json()["deleted"] == 1
     assert _search(client, auth, student_class="析二班")["total"] == 1, "中文那条还在"

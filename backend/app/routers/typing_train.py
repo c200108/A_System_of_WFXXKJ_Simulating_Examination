@@ -367,7 +367,10 @@ def start_session(
         raise HTTPException(status_code=400, detail="没有这个限时档位，刷新一下页面再选")
 
     name, cls = body.student_name.strip(), body.student_class.strip()
-    if not me and name and cls:
+    practice = body.module == "键盘"
+    if practice and not me and not (name and cls):
+        name, cls = "入门练习", "-"      # 打字入门不交给老师（2.25.4），不填班级姓名也能练
+    if not me and name and cls and not practice:
         # 对得上名单就挂到那个账号上（令牌过期的 exe 也靠这个认领；2.23.1 起不再认学号，
         # 只报个学号就能把成绩挂到别人名下）。开了名单校验的，对不上就不让练
         me = _on_roster(db, cls, name)
@@ -451,7 +454,7 @@ def session_progress(
         t = _elapsed(s, now)
     typed, correct = _score(s.module, s.target, answer)
     m = _measure(s.module, typed, correct)
-    why = _too_fast(s, checks, t, m)
+    why = "" if s.module == "键盘" else _too_fast(s, checks, t, m)   # 打字入门只是练习，不查
     if why:
         _void(db, s, why)
     s.progress = answer
@@ -473,6 +476,8 @@ def submit_record(
     if not body.session_id.strip():
         raise HTTPException(status_code=400, detail=OLD_CLIENT)
     s = _live_session(db, body.session_id.strip(), me)
+    # 打字入门（2.25.4）：只给学生自己看结果，不交给老师 —— 不入库、不限交的次数、不查快慢，随时再练
+    practice = s.module == "键盘"
 
     if not s.finished_at:
         # 第一次交：核对、算好用时，把「交的是什么、到第几秒」定下来存住。
@@ -486,7 +491,7 @@ def submit_record(
         if s.module != "键盘":
             answer = answer[:len(s.target)]
         typed, correct = _score(s.module, s.target, answer)
-        why = _too_fast(s, _checks(s), t, _measure(s.module, typed, correct))
+        why = "" if practice else _too_fast(s, _checks(s), t, _measure(s.module, typed, correct))
         if why:
             _void(db, s, why)
         attempt = SimpleNamespace(
@@ -495,7 +500,7 @@ def submit_record(
         why = _not_done(attempt)
         if why:
             raise HTTPException(status_code=400, detail=why)   # 没打完：会话留着，可以接着练
-        why = _cheated(attempt)
+        why = "" if practice else _cheated(attempt)
         if why:
             _void(db, s, why)
         s.progress = answer
@@ -504,7 +509,7 @@ def submit_record(
 
     # 放在最后判：前面几条不过的根本没交上，不该占这一分钟的名额
     who = throttle.device_of(request)
-    gap = site.typing.submit_interval_sec
+    gap = 0 if practice else site.typing.submit_interval_sec
     throttle.check(db, "submit", who, 1, gap,
                    f"交得太快了，同一台电脑每 {gap} 秒只能交一次成绩" if gap != 60
                    else "交得太快了，同一台电脑每分钟只能交一次成绩")
@@ -525,6 +530,11 @@ def submit_record(
     if took.rowcount != 1:
         db.rollback()
         raise HTTPException(status_code=409, detail="这次练习的成绩已经交过了，请重新开始")
+    if practice:
+        db.commit()
+        return TypingResultOut(module=s.module, speed=0, accuracy=accuracy, duration=secs, stars=stars,
+                               difficulty=s.difficulty, counted=False, practice=True,
+                               note="打字入门是自己练习，结果只给你自己看，不交给老师，可以马上再练一遍")
     if not counted:
         # 正确率太低（2.25.2）：这次练习作数（会话用掉了），但成绩不入库 —— 老师的成绩页、打字学情、
         # 全校排名、学生首页都看不到它；速度乱敲出来的不算数，记作无效

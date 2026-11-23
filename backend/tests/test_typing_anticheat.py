@@ -40,8 +40,8 @@ def test_速度上限按模块(client):
     assert _post(client, typed_chars=200, correct_chars=200, target_chars=300).status_code == 200
     # 英文 500 字母/分
     assert _post(client, module="英文", typed_chars=520, correct_chars=510, target_chars=600).status_code == 400
-    # 认识键盘 400 键/分
-    assert _post(client, module="键盘", typed_chars=250, correct_chars=250, duration=30).status_code == 400
+    # 打字入门（键盘）是自己练习、不交给老师（2.25.4），不查快慢
+    assert _post(client, module="键盘", typed_chars=250, correct_chars=250, duration=30).status_code == 200
 
 
 def test_上限填0不限(client, monkeypatch):

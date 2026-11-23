@@ -196,17 +196,20 @@ async function start() {
   if (devtoolsOpen()) {
     return ElMessageBox.alert('请先关掉开发者工具（F12）再开始练习。', '不能开始', { type: 'warning' })
   }
-  if (!me.student_class.trim() || !me.student_name.trim()) {
-    return ElMessage.warning('请先填写班级和姓名')
+  // 打字入门只是自己练（2.25.4），不交给老师：不用填班级姓名、不对名单
+  if (mode.value !== 'keyboard') {
+    if (!me.student_class.trim() || !me.student_name.trim()) {
+      return ElMessage.warning('请先填写班级和姓名')
+    }
+    // 开练之前先对名单：班级姓名对不上的，练完也交不上，别让学生白练
+    try {
+      const chk = await api.typingCheckStudent(me.student_class.trim(), me.student_name.trim())
+      if (!chk.ok) return ElMessageBox.alert(chk.tip, '名单里没有你', { type: 'warning' })
+    } catch {
+      return
+    }
+    localStorage.setItem(LS_KEY, JSON.stringify({ n: me.student_name, c: me.student_class }))
   }
-  // 开练之前先对名单：班级姓名对不上的，练完也交不上，别让学生白练
-  try {
-    const chk = await api.typingCheckStudent(me.student_class.trim(), me.student_name.trim())
-    if (!chk.ok) return ElMessageBox.alert(chk.tip, '名单里没有你', { type: 'warning' })
-  } catch {
-    return
-  }
-  localStorage.setItem(LS_KEY, JSON.stringify({ n: me.student_name, c: me.student_class }))
 
   // 开练向服务端领会话：文本是服务端出的，开始时间也记在服务端
   const module = mode.value === 'keyboard' ? '键盘' : mode.value === 'english' ? '英文' : '中文'
@@ -434,6 +437,9 @@ onUnmounted(() => {
       <p v-if="isFree" class="note">
         自由打字<b>不限时、不计分、也不会提交成绩</b>，随便敲，敲到的键会在下面的键盘上亮起来。
       </p>
+      <p v-else-if="mode === 'keyboard'" class="note">
+        打字入门是自己练指法：<b>不用填班级姓名、不交给老师</b>，练完马上能再练。
+      </p>
       <p v-else class="note">班级、姓名必填，要和老师的学生名单一致（名单里没有的交不了成绩）。完成后成绩<b>自动提交给老师</b>，不用另外交。</p>
     </div>
 
@@ -561,7 +567,8 @@ onUnmounted(() => {
           </template>
           <span class="muted">（每人只按自己最好的一次排名）</span>
         </p>
-        <p v-if="result.counted === false" class="void-note">✗ {{ result.note || '正确率太低，这次不计成绩' }}</p>
+        <p v-if="result.practice" class="ok-note">练习结果只给你自己看，不交给老师，可以马上点「再练一次」</p>
+        <p v-else-if="result.counted === false" class="void-note">✗ {{ result.note || '正确率太低，这次不计成绩' }}</p>
         <p v-else class="ok-note">✓ 成绩已提交给老师</p>
       </div>
     </div>
