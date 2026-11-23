@@ -5,6 +5,7 @@ import android.text.Html;
 import android.text.TextUtils;
 import android.view.View;
 import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import org.json.JSONObject;
 
@@ -18,6 +19,7 @@ import cn.wfxxkj.teacher.core.nav.Screen;
 import cn.wfxxkj.teacher.core.net.Json;
 import cn.wfxxkj.teacher.core.ui.Dialogs;
 import cn.wfxxkj.teacher.core.ui.ItemList;
+import cn.wfxxkj.teacher.core.ui.Palette;
 import cn.wfxxkj.teacher.core.ui.SearchBox;
 import cn.wfxxkj.teacher.core.ui.Tone;
 import cn.wfxxkj.teacher.core.ui.V;
@@ -34,6 +36,8 @@ public class UsersScreen extends Screen {
     private List<JSONObject> all = new ArrayList<>();
     private int selCount = -1;
     private boolean loadedOnce;
+    private LinearLayout cloudEntry;
+    private TextView cloudText;
 
     @Override
     public String title() {
@@ -66,6 +70,14 @@ public class UsersScreen extends Screen {
                 + "重置后新密码只显示一次，请当场发给本人。<br/><b>带的班</b>决定这位老师能给谁发考试；"
                 + "<b>删除权</b>控制他能不能删题库、练习文本、更新日志这些全校共用的内容，默认关着。"
                 + "<br/>长按卡片可多选，批量启用、停用或删除。", Html.FROM_HTML_MODE_LEGACY), Tone.INFO));
+        // 个人云盘（服务端 2.25.0）：网页上在账号页顶上，APP 里点这一行进去管
+        cloudEntry = V.row(c, R.drawable.ic_cloud, Tone.INFO, "个人云盘", "给老师分配空间、设总容量", null,
+                v -> push(new CloudAdminScreen()));
+        cloudEntry.setBackground(V.ripple(c, V.stroke(c, Palette.of(c).surface, Palette.of(c).border, 16), 16));
+        cloudText = V.oneLine(V.text(c, "", V.BODY2));
+        MeUi.putTrailing(cloudEntry, cloudText);
+        cloudEntry.setVisibility(View.GONE);
+        V.addTop(head, cloudEntry, 10);
         search = new SearchBox(c, "按姓名、用户名、联系方式查找");
         search.setOnSearch(k -> applyFilter());
         head.addView(search.padded());
@@ -94,6 +106,12 @@ public class UsersScreen extends Screen {
     }
 
     void load() {
+        run(MeApi::cloudAdmin, d -> {
+            boolean on = Json.bool(d, "enabled");
+            cloudEntry.setVisibility(View.VISIBLE);
+            cloudText.setText(on ? CloudUi.bytes(Json.dbl(d, "allocated_bytes")) + " / " + CloudUi.bytes(Json.dbl(d, "total_bytes"))
+                    : "未启用");
+        }, e -> true);
         run(MeApi::users, users -> {
             loadedOnce = true;
             all = users;
@@ -143,6 +161,7 @@ public class UsersScreen extends Screen {
                     list.loading();
                     load();
                 }),
+                Action.menu(R.drawable.ic_cloud, "个人云盘（分配空间、总容量）", () -> push(new CloudAdminScreen())),
                 Action.menu(R.drawable.ic_key, "修改我的密码", () -> UserSheets.changeMyPassword(this)),
                 Action.menu(R.drawable.ic_select_all, "多选", () -> list.startSelection()));
     }

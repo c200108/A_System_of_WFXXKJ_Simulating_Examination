@@ -150,6 +150,43 @@ final class StudentApi {
         return Http.asObj(Http.delete("/classes/" + cid + "/points/" + pid, null));
     }
 
+    // ---------- 在线座次附加工作表 + 课堂签到（服务端 2.24.0，routers/checkins.py） ----------
+
+    /** sheet1 之外的工作表 [{id, name, created_at}]，每次签到建一张 */
+    static List<JSONObject> seatTabs(int cid) throws ApiException {
+        return Json.list(Http.getArr("/classes/" + cid + "/seat-tabs", null));
+    }
+
+    /** {id, name, sheet, can_edit} */
+    static JSONObject seatTab(int cid, int tid) throws ApiException {
+        return Http.getObj("/classes/" + cid + "/seat-tabs/" + tid, null);
+    }
+
+    static void saveSeatTab(int cid, int tid, JSONObject sheet) throws ApiException {
+        Http.put("/classes/" + cid + "/seat-tabs/" + tid, Json.of("sheet", sheet));
+    }
+
+    static void deleteSeatTab(int cid, int tid) throws ApiException {
+        Http.delete("/classes/" + cid + "/seat-tabs/" + tid, null);
+    }
+
+    /** 发起签到（1～10 分钟），返回签到进度（见 {@link #checkinCurrent}） */
+    static JSONObject checkinStart(int cid, int minutes) throws ApiException {
+        return Http.postObj("/classes/" + cid + "/checkins", Json.of("minutes", minutes));
+    }
+
+    /**
+     * 最近一次签到的进度，没签过返回 null：{id, tab_id, tab_name, started_by, started_at, active, remaining,
+     * version, total, signed_count, absent, signed[{name, seat, at}], unsigned[{name, online}], online[{name, seat}]}
+     */
+    static JSONObject checkinCurrent(int cid) throws ApiException {
+        return Http.getObj("/classes/" + cid + "/checkins/current", null).optJSONObject("checkin");
+    }
+
+    static JSONObject checkinStop(int cid, int kid) throws ApiException {
+        return Http.postObj("/classes/" + cid + "/checkins/" + kid + "/stop", null);
+    }
+
     // ---------- 课堂情况日志 ----------
 
     static List<JSONObject> logs(int cid) throws ApiException {

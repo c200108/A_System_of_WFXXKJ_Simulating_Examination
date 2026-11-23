@@ -317,9 +317,39 @@ public class FeedbackScreen extends Screen implements FeedbackCard.Handler {
     @Override
     public void more(JSONObject f) {
         Dialogs.actions(ctx(), Json.str(f, "author") + " 的反馈", Arrays.asList(
+                Json.bool(f, "pinned")
+                        ? Action.menu(R.drawable.ic_close, "取消置顶", () -> unpin(f))
+                        : Action.menu(R.drawable.ic_push_pin, "置顶（每个页面顶上提醒）", () -> pin(f)),
                 Action.menu(R.drawable.ic_visibility_off, "撤下（改为已拒绝）", () -> review(f, "rejected")),
                 Action.menu(R.drawable.ic_restart_alt, "退回待审核", () -> review(f, "pending")),
                 Action.menu(R.drawable.ic_delete, "删除", () -> delete(f)).danger()));
+    }
+
+    // ---------- 置顶（管理员，服务端 2.24.0） ----------
+
+    /** 置顶多久：不限期或 1～30 天。最多同时置顶 5 条（服务端判） */
+    private void pin(JSONObject f) {
+        final long id = f.optLong("id");
+        List<Option> opts = new ArrayList<>();
+        opts.add(new Option(0, "不限期", "一直显示，直到取消置顶"));
+        for (int d : new int[]{1, 2, 3, 5, 7, 10, 14, 21, 30}) opts.add(new Option(d, d + " 天", null));
+        Dialogs.choose(ctx(), "置顶多久", opts, 0, o -> {
+            final int days = (Integer) o.value;
+            runBusy("正在置顶…", () -> MeApi.feedbackPin(id, days), r -> {
+                toast(days > 0 ? "已置顶 " + days + " 天，教师端每个页面顶上都会提醒" : "已置顶（不限期），教师端每个页面顶上都会提醒");
+                PinnedNews.changed();
+                load();
+            });
+        });
+    }
+
+    private void unpin(JSONObject f) {
+        final long id = f.optLong("id");
+        runBusy("正在取消…", () -> MeApi.feedbackUnpin(id), r -> {
+            toast("已取消置顶");
+            PinnedNews.changed();
+            load();
+        });
     }
 
     @Override

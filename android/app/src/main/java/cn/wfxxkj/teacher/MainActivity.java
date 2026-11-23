@@ -60,6 +60,8 @@ public class MainActivity extends Activity implements Host, Session.Listener {
     private AppBar appBar;
     private NavBar navBar;
     private TextView offline;
+    /** 顶栏下面的置顶提醒（管理员置顶的需求反馈），每个页面都显示 */
+    private cn.wfxxkj.teacher.me.PinnedNews pinned;
     private ImageView fab;
     private TextView snackBar;
     private FrameLayout busy;
@@ -149,6 +151,8 @@ public class MainActivity extends Activity implements Host, Session.Listener {
         offline.setVisibility(Session.get().isOnline() ? View.GONE : View.VISIBLE);
         offline.setOnClickListener(v -> keeper.kick());
         col.addView(offline, V.matchWrap());
+        pinned = cn.wfxxkj.teacher.me.MeFeature.pinnedNews(this, this::openFeedback);
+        col.addView(pinned, V.matchWrap());
         content = new FrameLayout(this);
         col.addView(content, new LinearLayout.LayoutParams(V.MATCH, 0, 1f));
         if (!wide) col.addView(navBar, V.matchWrap());
@@ -294,6 +298,7 @@ public class MainActivity extends Activity implements Host, Session.Listener {
             v.animate().alpha(1f).translationX(0).setDuration(200)
                     .setInterpolator(new DecelerateInterpolator(1.5f)).start();
         }
+        if (pinned != null) pinned.maybeRefresh();
         try {
             renderChrome();
             s.dispatchShow();
@@ -327,6 +332,13 @@ public class MainActivity extends Activity implements Host, Session.Listener {
         } catch (Throwable t) {
             content.removeAllViews();
         }
+    }
+
+    /** 点置顶提醒：到「我的」打开需求反馈（已经开着就不再叠一层） */
+    private void openFeedback() {
+        switchTab("me");
+        if (top() instanceof cn.wfxxkj.teacher.me.FeedbackScreen) return;
+        push(cn.wfxxkj.teacher.me.MeFeature.feedback());
     }
 
     @Override
@@ -434,15 +446,20 @@ public class MainActivity extends Activity implements Host, Session.Listener {
         if (requestCode != REQ_PICK) return;
         FilesPicked cb = pendingPick;
         pendingPick = null;
-        if (cb == null || resultCode != RESULT_OK || data == null) return;
+        if (cb == null) return;
         List<Uri> out = new ArrayList<>();
+        // 没选（按了返回）也答复一次空列表：Screen.pickFiles 会把空的滤掉，个人云盘的网页上传框要靠它收尾
+        if (resultCode != RESULT_OK || data == null) {
+            cb.onPicked(out);
+            return;
+        }
         ClipData clip = data.getClipData();
         if (clip != null) {
             for (int i = 0; i < clip.getItemCount(); i++) out.add(clip.getItemAt(i).getUri());
         } else if (data.getData() != null) {
             out.add(data.getData());
         }
-        if (!out.isEmpty()) cb.onPicked(out);
+        cb.onPicked(out);
     }
 
     @Override

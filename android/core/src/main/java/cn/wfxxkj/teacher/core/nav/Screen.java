@@ -247,8 +247,13 @@ public abstract class Screen {
 
     public final void pickFiles(String[] mimeTypes, boolean multiple, Host.FilesPicked cb) {
         host.pickFiles(mimeTypes, multiple, files -> {
-            if (!destroyed) cb.onPicked(files);
+            if (!destroyed && !files.isEmpty()) cb.onPicked(files);
         });
+    }
+
+    /** 同 pickFiles，但没选（按了返回）也回调一次空列表 —— 网页里的上传框（WebView）必须得到一个答复 */
+    public final void pickFilesOrCancel(String[] mimeTypes, boolean multiple, Host.FilesPicked cb) {
+        host.pickFiles(mimeTypes, multiple, cb);
     }
 
     public final void pickFile(String[] mimeTypes, final FilePicked cb) {

@@ -27,6 +27,13 @@ final class DataApiClient {
         return Http.postObj("/data-apis/" + id + "/transfer", Json.of("owner_id", ownerId));
     }
 
+    /** 批量（服务端 2.23.0）：action = pause / resume / delete / transfer（转给 ownerId，只有管理员）。返回 {done, failed} */
+    static JSONObject bulk(List<Object> ids, String action, Integer ownerId) throws ApiException {
+        JSONObject body = Json.of("ids", ids, "action", action);
+        if (ownerId != null) Json.put(body, "owner_id", ownerId);
+        return Http.postObj("/data-apis/bulk", body);
+    }
+
     static JSONObject get(int id) throws ApiException {
         return Http.getObj("/data-apis/" + id, null);
     }

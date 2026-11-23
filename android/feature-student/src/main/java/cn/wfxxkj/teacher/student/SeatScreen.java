@@ -45,6 +45,8 @@ import cn.wfxxkj.teacher.core.ui.V;
  *   <li>长按学生拖到别的格子：换座位（拖到空座就是挪过去）</li>
  *   <li>「多选」：点格子勾选几位同学，一起加减分、分组，或把选中的座位标成设备故障</li>
  *   <li>一键排座（自动识别座位号、男女交替、学困生固定区域、按学号或随机）、小组管理、课堂得分、课堂日志</li>
+ *   <li>课堂签到（服务端 2.24.0）：发起 1～10 分钟签到，学生端弹框选座号签到，姓名实时填进一张按发起时间命名的
+ *       新工作表；顶上一排工作表标签（sheet1 = 本班座次表，其余是签到建的），见 {@link CheckinBar}</li>
  * </ul>
  * 能编辑的是本班老师和管理员（后端判），别的老师只能看座次表，看不到分数和学困生。
  * 导入 Excel 样式、改格子样式还是在网页端做。
@@ -58,6 +60,11 @@ final class SeatScreen extends Screen {
     private boolean canEdit, dirty, selecting, loaded;
     /** 摆的是默认空表，服务器上还没有这个班的座次 */
     private boolean fresh;
+    /** 附加工作表（签到时建的）[{id, name}]；tab = 正在看的那张，null = sheet1（本班座次表） */
+    private List<JSONObject> tabs = new ArrayList<>();
+    private JSONObject tab;
+    private LinearLayout tabStrip;
+    private CheckinBar checkin;
 
     private SeatBoardView board;
     private StateView state;
@@ -80,6 +87,7 @@ final class SeatScreen extends Screen {
         if (selecting) return "多选：点格子勾选，已选 " + pickedStudents().size() + " 位同学";
         if (dirty) return "有改动还没保存";
         if (!loaded) return null;
+        if (tab != null) return "工作表「" + Json.str(tab, "name") + "」" + (canEdit ? " · 点学生加减分，长按拖动换座" : "");
         if (fresh) return canEdit ? "学校默认空表，还没保存过 · 可以「一键排座」" : "这个班还没有排座次（显示的是默认空表）";
         return canEdit ? "点学生加减分，长按拖动换座" : "只能查看（不是你带的班）";
     }
@@ -106,6 +114,31 @@ final class SeatScreen extends Screen {
         bar.addView(V.spring(ctx));
         bar.addView(V.button(ctx, "课堂日志", V.BTN_TEXT, v -> push(new ClassLogScreen(cls, canEdit))));
         col.addView(bar, V.matchWrap());
+
+        // 工作表标签（sheet1 + 签到建的表）和课堂签到
+        tabStrip = V.hbox(ctx);
+        V.pad(tabStrip, 12, 0, 12, 4);
+        android.widget.HorizontalScrollView tabScroll = new android.widget.HorizontalScrollView(ctx);
+        tabScroll.setHorizontalScrollBarEnabled(false);
+        tabScroll.addView(tabStrip);
+        col.addView(tabScroll, V.matchWrap());
+        checkin = new CheckinBar(this, cls, new CheckinBar.Listener() {
+            @Override
+            public void onStarted(JSONObject v) {
+                // 发起后切到签到建的那张表，姓名一个个冒出来
+                loadTabsThen(() -> {
+                    JSONObject t = findTab(v.optInt("tab_id"));
+                    if (t != null) switchTab(t, false);
+                });
+            }
+
+            @Override
+            public void onProgress(JSONObject v) {
+                // 正看着那张签到表、又没手动改过：重读一下
+                if (tab != null && tab.optInt("id") == v.optInt("tab_id") && !dirty) refreshTab();
+            }
+        });
+        col.addView(checkin.view(), V.matchWrap());
 
         FrameLayout body = new FrameLayout(ctx);
         board = new SeatBoardView(ctx);
@@ -180,6 +213,17 @@ final class SeatScreen extends Screen {
         state.loading();
         run(() -> {
             JSONObject got = StudentApi.seatSheet(cid);
+            List<JSONObject> tl;
+            try {
+                tl = StudentApi.seatTabs(cid);
+            } catch (Exception ignored) {
+                tl = new ArrayList<>();   // 老服务器没有附加工作表
+            }
+            JSONObject tabSheet = null;
+            JSONObject want = tab;
+            if (want != null && findIn(tl, want.optInt("id")) != null) {
+                tabSheet = StudentApi.seatTab(cid, want.optInt("id")).optJSONObject("sheet");
+            }
             JSONObject pts = null;
             if (Json.bool(got, "can_edit")) {
                 try {
@@ -188,15 +232,21 @@ final class SeatScreen extends Screen {
                     // 没权限看分数就不显示
                 }
             }
-            return new Object[]{got, pts};
+            return new Object[]{got, pts, tl, tabSheet};
         }, r -> {
             JSONObject got = (JSONObject) r[0];
+            //noinspection unchecked
+            tabs = (List<JSONObject>) r[2];
+            JSONObject tabSheet = (JSONObject) r[3];
+            if (tab != null && tabSheet == null) tab = null;   // 那张表被删了，回 sheet1
             canEdit = Json.bool(got, "can_edit");
+            checkin.setCanEdit(canEdit);
+            renderTabs();
             roster = new SeatSheet.Roster(Json.list(Json.arr(got, "students")));
             points.clear();
             if (r[1] != null) readTotals(Json.obj((JSONObject) r[1], "totals"));
             loaded = true;
-            JSONObject s = got.optJSONObject("sheet");
+            JSONObject s = tab != null ? tabSheet : got.optJSONObject("sheet");
             JSONObject tpl = s == null ? defaultTemplate() : null;
             fresh = s == null && tpl != null;
             if (fresh) {
@@ -277,7 +327,9 @@ final class SeatScreen extends Screen {
         }
         a.add(Action.menu(R.drawable.ic_edit_note, "课堂日志", () -> push(new ClassLogScreen(cls, canEdit))));
         a.add(Action.menu(R.drawable.ic_refresh, "重新载入", () -> confirmDiscard(this::load)));
-        if (canEdit && sheet != null && !fresh) {
+        if (canEdit && tab != null) {
+            a.add(Action.menu(R.drawable.ic_delete, "删除这张工作表", () -> deleteTab(tab)).danger());
+        } else if (canEdit && sheet != null && !fresh) {
             a.add(Action.menu(R.drawable.ic_delete, "清空座次表", this::clearSheet).danger());
         }
         return a;
@@ -311,6 +363,19 @@ final class SeatScreen extends Screen {
     private void save() {
         if (sheet == null) return;
         final JSONObject body = sheet.toJson();
+        if (tab != null) {
+            final int tid = tab.optInt("id");
+            final String tn = Json.str(tab, "name");
+            runBusy("正在保存…", () -> {
+                StudentApi.saveSeatTab(cid, tid, body);
+                return true;
+            }, ok -> {
+                dirty = false;
+                invalidateChrome();
+                toast("「" + tn + "」已保存");
+            });
+            return;
+        }
         runBusy("正在保存…", () -> StudentApi.saveSeatSheet(cid, body), row -> {
             dirty = false;
             fresh = false;
@@ -330,6 +395,95 @@ final class SeatScreen extends Screen {
                     toast("已清空");
                     load();
                 }));
+    }
+
+    // ---------------------------------------------------------------- 工作表标签（2.24.0）
+
+    private static JSONObject findIn(List<JSONObject> list, int id) {
+        for (JSONObject t : list) if (t.optInt("id") == id) return t;
+        return null;
+    }
+
+    private JSONObject findTab(int id) {
+        return findIn(tabs, id);
+    }
+
+    private void renderTabs() {
+        Context c = ctx();
+        tabStrip.removeAllViews();
+        // 只有 sheet1 时不占地方
+        ((View) tabStrip.getParent()).setVisibility(tabs.isEmpty() && tab == null ? View.GONE : View.VISIBLE);
+        tabStrip.addView(V.chip(c, "sheet1", tab == null, v -> switchTab(null, true)));
+        for (final JSONObject t : tabs) {
+            TextView chip = V.chip(c, Json.str(t, "name"), tab != null && tab.optInt("id") == t.optInt("id"),
+                    v -> switchTab(t, true));
+            if (canEdit) chip.setOnLongClickListener(v -> {
+                deleteTab(t);
+                return true;
+            });
+            V.addStart(tabStrip, chip, 6);
+        }
+    }
+
+    private void switchTab(JSONObject t, boolean ask) {
+        if (t == tab || (t != null && tab != null && t.optInt("id") == tab.optInt("id"))) return;
+        Runnable go = () -> {
+            tab = t;
+            dirty = false;
+            renderTabs();
+            load();
+        };
+        if (ask) confirmDiscard(go);
+        else go.run();
+    }
+
+    private void loadTabsThen(Runnable then) {
+        run(() -> StudentApi.seatTabs(cid), list -> {
+            tabs = list;
+            renderTabs();
+            then.run();
+        }, e -> true);
+    }
+
+    /** 签到中有人签上来了：只换表格内容，不动缩放、分数 */
+    private void refreshTab() {
+        final int tid = tab.optInt("id");
+        run(() -> StudentApi.seatTab(cid, tid).optJSONObject("sheet"), s -> {
+            if (s == null || dirty || tab == null || tab.optInt("id") != tid) return;
+            setSheet(new SeatSheet(s));
+        }, e -> true);
+    }
+
+    private void deleteTab(final JSONObject t) {
+        if (!canEdit) return;
+        final int tid = t.optInt("id");
+        Dialogs.confirm(ctx(), "删除工作表", "删掉工作表「" + Json.str(t, "name") + "」？签到记录还在，只是这张表没了。",
+                "删除", true, () -> runBusy("正在删除…", () -> {
+                    StudentApi.deleteSeatTab(cid, tid);
+                    return true;
+                }, ok -> {
+                    toast("已删除");
+                    if (tab != null && tab.optInt("id") == tid) {
+                        tab = null;
+                        dirty = false;
+                    }
+                    load();
+                }));
+    }
+
+    @Override
+    protected void onShow() {
+        checkin.resume();
+    }
+
+    @Override
+    protected void onHide() {
+        checkin.pause();
+    }
+
+    @Override
+    protected void onDestroy() {
+        checkin.pause();
     }
 
     /** APP 里带的学校默认空表；读不出来返回 null（退回「新建座次表」） */

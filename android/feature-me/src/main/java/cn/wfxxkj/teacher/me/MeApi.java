@@ -92,6 +92,15 @@ final class MeApi {
         return Json.str(Http.asObj(r), "image_url");
     }
 
+    /** 置顶（管理员，2.24.0）：days = 0 不限期，1～30 天 */
+    static JSONObject feedbackPin(long id, int days) throws ApiException {
+        return Http.asObj(Http.put("/feedback/" + id + "/pin", Json.of("days", days)));
+    }
+
+    static JSONObject feedbackUnpin(long id) throws ApiException {
+        return Http.asObj(Http.delete("/feedback/" + id + "/pin", null));
+    }
+
     static JSONObject feedbackReply(long id, String text) throws ApiException {
         return Http.postObj("/feedback/" + id + "/reply", Json.of("reply", text));
     }
@@ -166,6 +175,52 @@ final class MeApi {
     /** 清空（管理员） */
     static void recycleClear() throws ApiException {
         Http.delete("/recycle", null);
+    }
+
+    // ---------- 个人云盘（服务端 2.25.0，routers/cloud.py） ----------
+
+    /** {enabled, allocated, quota_bytes, used_bytes, over_quota, login, password_custom}；老服务器 404 */
+    static JSONObject cloudMe() throws ApiException {
+        return Http.getObj("/cloud/me", null);
+    }
+
+    /** 免登录打开：{token, storage_key, url} */
+    static JSONObject cloudOpen() throws ApiException {
+        return Http.postObj("/cloud/open", null);
+    }
+
+    static JSONObject cloudSetPassword(String password) throws ApiException {
+        return Http.postObj("/cloud/password", Json.of("password", password));
+    }
+
+    static JSONObject cloudSyncPassword(String current) throws ApiException {
+        return Http.postObj("/cloud/password/sync", Json.of("current_password", current));
+    }
+
+    /** 管理员总览：{enabled, service_ok, service_error, root_dir_host, disk{total,used,free}, total_bytes,
+     *  allocated_bytes, used_bytes, accounts{用户id: {...}}, openlist_admin?} */
+    static JSONObject cloudAdmin() throws ApiException {
+        return Http.getObj("/cloud/admin", null);
+    }
+
+    static void cloudSetTotal(double gb) throws ApiException {
+        Http.put("/cloud/admin/total", Json.of("total_gb", gb));
+    }
+
+    static JSONObject cloudSetQuota(long userId, double gb) throws ApiException {
+        return Http.asObj(Http.put("/cloud/admin/users/" + userId, Json.of("quota_gb", gb)));
+    }
+
+    // ---------- 学生客户端 exe（服务端 2.24.0，routers/client_export.py，系统管理员） ----------
+
+    /** {source: local/github, version, items: [{name, size, label}], error} */
+    static JSONObject clients() throws ApiException {
+        return Http.getObj("/system/clients", null);
+    }
+
+    /** how = slot（地址写进 exe，文件名不变）/ name（改文件名「原名@地址.exe」） */
+    static Http.Download clientExport(String name, String how, String addr) throws ApiException {
+        return Http.download("GET", "/system/clients/" + Uri.encode(name), Params.of("how", how).add("addr", addr), null);
     }
 
     // ---------- 数据备份与系统更新（只有部署时建的系统管理员） ----------

@@ -13,4 +13,14 @@ public final class MeFeature {
     public static Screen home() {
         return new MeHomeScreen();
     }
+
+    /** 需求反馈（点顶上的置顶提醒进来） */
+    public static Screen feedback() {
+        return new FeedbackScreen();
+    }
+
+    /** 每个页面顶上的置顶提醒（服务端 2.24.0），主界面放在顶栏下面 */
+    public static PinnedNews pinnedNews(android.content.Context c, Runnable openFeedback) {
+        return new PinnedNews(c, openFeedback);
+    }
 }

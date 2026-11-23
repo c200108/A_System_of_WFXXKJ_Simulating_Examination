@@ -93,6 +93,13 @@ final class FeedbackCard extends LinearLayout {
         V.addStart(line1, V.tag(c, cat, mode == REJECTED ? Tone.NEUTRAL : toneOf(cat)), 8);
         if (mode == PENDING) V.addStart(line1, V.tag(c, "待审核", Tone.WARNING), 6);
         who.addView(line1);
+        // 置顶（服务端 2.24.0）：显示在教师端每个页面顶上的黄条里
+        if (Json.bool(f, "pinned")) {
+            String until = MeUi.time(Json.str(f, "pinned_until"));
+            TextView pin = V.tag(c, until.isEmpty() ? "置顶 · 不限期" : "置顶到 " + until.substring(5), Tone.WARNING);
+            V.addTop(who, pin, 4);
+            ((LinearLayout.LayoutParams) pin.getLayoutParams()).width = V.WRAP;
+        }
         String sub = MeUi.time(Json.str(f, "created_at"));
         if (mode != PUBLIC && !Json.str(f, "contact").isEmpty()) sub += "  ·  联系方式 " + Json.str(f, "contact");
         TextView subT = V.text(c, sub, V.CAPTION);

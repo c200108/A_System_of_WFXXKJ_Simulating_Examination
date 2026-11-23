@@ -34,13 +34,15 @@ import cn.wfxxkj.teacher.core.ui.V;
  * <ul>
  *   <li>导出数据：服务器打一个 exam-data 压缩包，存到手机「下载/教学平台」</li>
  *   <li>导入数据：选 exam-data 压缩包上传，体检通过后服务器上的主机助手覆盖数据并重建容器</li>
- *   <li>一键更新：服务器从 GitHub 下载 main 压缩包升级，或者上传一个 main 压缩包</li>
+ *   <li>一键更新：服务器从 GitHub 下载 main 压缩包升级，或者上传一个 main 压缩包；
+ *       从 GitHub 更新时先比版本，已经是最新就不下载（服务端 2.23.0）</li>
+ *   <li>下载学生客户端：从本网站导出学生端 exe，自动带上本网站地址（服务端 2.24.0），存到手机再发到学生机</li>
  * </ul>
  * 导入、更新都要再输一次登录密码；执行过程和日志在下面实时显示（升级时后端重启，问不通是正常的，接着问）。
  */
 final class SystemScreen extends Screen {
     private LinearLayout content;
-    private TextView agentText, jobTitle, jobLog;
+    private TextView agentText, jobTitle, jobLog, versionText;
     private JSONObject status;
     private JSONObject job;
     private int offline;
@@ -68,12 +70,23 @@ final class SystemScreen extends Screen {
 
         LinearLayout update = V.card(c);
         update.addView(V.text(c, "教师端一键更新", V.H3));
-        V.addTop(update, V.text(c, "服务器从 GitHub 下载项目最新的 main 压缩包，运行里面的升级脚本：先备份、再构建（期间网站照常能用）、"
-                + "最后切换，切换时网页会有十几秒打不开。题库、成绩、账号、上传文件、.env、config.yaml 都原样保留。", V.BODY2), 6);
+        V.addTop(update, V.text(c, "先和 GitHub 上的比版本，已经是最新就不下载；不是最新才下载项目的 main 压缩包，运行里面的升级脚本："
+                + "先备份、再构建（期间网站照常能用）、最后切换，切换时网页会有十几秒打不开。"
+                + "题库、成绩、账号、上传文件、.env、config.yaml 都原样保留。", V.BODY2), 6);
+        versionText = V.text(c, "", V.CAPTION);
+        versionText.setVisibility(View.GONE);
+        V.addTop(update, versionText, 6);
         V.addTop(update, V.button(c, R.drawable.ic_refresh, "从 GitHub 更新", V.BTN_PRIMARY, v -> doGithub()), 10);
         V.addTop(update, V.text(c, "服务器连不上 GitHub 时：在 GitHub 仓库页 Code → Download ZIP 下载 main 压缩包（不用解压），在这里上传。", V.BODY2), 14);
         V.addTop(update, V.button(c, R.drawable.ic_upload_file, "上传 main 压缩包更新…", V.BTN_TONAL, v -> doZip()), 10);
         V.addTop(content, update, 12);
+
+        LinearLayout client = V.card(c);
+        client.addView(V.text(c, "下载学生客户端", V.H3));
+        V.addTop(client, V.text(c, "从本网站导出学生端 exe，自动带上本网站地址（写进 exe 或改文件名），存到手机「下载/教学平台」，"
+                + "再用微信、QQ 发到学生机上，双击就能连。", V.BODY2), 6);
+        V.addTop(client, V.button(c, R.drawable.ic_computer, "下载学生客户端…", V.BTN_TONAL, v -> openClients()), 10);
+        V.addTop(content, client, 12);
 
         LinearLayout jobCard = V.card(c);
         jobTitle = V.text(c, "还没有执行记录", V.H3);
@@ -105,6 +118,12 @@ final class SystemScreen extends Screen {
         run(MeApi::systemStatus, s -> {
             status = s;
             boolean ok = Json.bool(Json.obj(s, "agent"), "installed");
+            String ver = Json.str(s, "version"), commit = Json.str(s, "commit");
+            if (!ver.isEmpty()) {
+                versionText.setText("本机现在是服务端 " + ver + (commit.isEmpty() ? "" : "（提交 "
+                        + commit.substring(0, Math.min(7, commit.length())) + "）"));
+                versionText.setVisibility(View.VISIBLE);
+            }
             agentText.setText(ok ? "✓ 服务器主机助手已就绪，导入数据、一键更新都能用"
                     : "服务器上还没装「主机助手」，导入数据和一键更新暂时用不了（导出数据不受影响）。"
                     + "在服务器项目目录里运行一次：sudo bash scripts/host-agent-install.sh");
@@ -209,6 +228,80 @@ final class SystemScreen extends Screen {
         });
     }
 
+    // ---------- 学生客户端（服务端 2.24.0） ----------
+
+    private JSONObject clientCat;
+
+    private void openClients() {
+        if (clientCat != null) {
+            showClients();
+            return;
+        }
+        runBusy("正在查学生端清单…", MeApi::clients, cat -> {
+            clientCat = cat;
+            showClients();
+        }, e -> {
+            if (e instanceof ApiException && ((ApiException) e).code == 404) {
+                Dialogs.alert(ctx(), "下载学生客户端", "这台服务器还不能导出学生端（服务端 2.24.0 起才有），请升级服务器，"
+                        + "或者到 GitHub 发布页下载 exe 后自己改名成「原名@地址.exe」。");
+                return true;
+            }
+            return false;
+        });
+    }
+
+    private void showClients() {
+        Context c = ctx();
+        Sheet s = new Sheet(c, "下载学生客户端");
+        Form f = new Form(c);
+        f.note("exe 由本网站导出，学生打开就连下面这个地址（默认是 APP 登录用的服务器地址）。"
+                + "学生机要是用别的地址访问本网站（比如内网 IP），在这里改成那个地址再导出。");
+        final Form.Text addr = f.text("学生连的地址", cn.wfxxkj.teacher.core.session.Session.get().server()).required();
+        final Form.Toggle byName = f.toggle("导出改好名的", "文件名改成「原名@地址.exe」：4.15.0 以前的老 exe 只能这样；"
+                + "默认把地址写进 exe，文件名不变", false);
+        s.content(f.view());
+        String err = Json.str(clientCat, "error");
+        if (!err.isEmpty()) {
+            s.content(V.notice(c, err + "\n也可以在电脑上打开 GitHub 发布页下载原版 exe，再自己把文件名改成「原名@地址.exe」"
+                    + "（端口前的冒号换成下划线）。", Tone.WARNING));
+        } else {
+            String src = "local".equals(Json.str(clientCat, "source")) ? "本机「发布」文件夹里的 exe" : "最新正式版";
+            String ver = Json.str(clientCat, "version");
+            s.content(V.text(c, src + (ver.isEmpty() ? "" : " " + ver) + "，Win7 学生机选标着「Win7 选这个」的 32 位内置运行库版：",
+                    V.BODY2));
+            List<JSONObject> items = Json.list(Json.arr(clientCat, "items"));
+            if (items.isEmpty()) s.content(V.text(c, "没有找到学生端 exe。", V.BODY2));
+            for (final JSONObject a : items) {
+                final String name = Json.str(a, "name");
+                boolean win7 = name.toLowerCase(Locale.ROOT).contains("win32-runtime") || name.contains("32位-内置运行库");
+                String label = Json.str(a, "label");
+                String sub = name + " · " + String.format(Locale.ROOT, "%.1f MB", Json.dbl(a, "size") / 1048576.0)
+                        + (win7 ? " · Win7 选这个" : "");
+                LinearLayout row = V.row(c, R.drawable.ic_download, win7 ? Tone.SUCCESS : Tone.PRIMARY,
+                        label.isEmpty() ? name : label, sub, null, v -> {
+                            if (!f.validate()) return;
+                            s.dismiss();
+                            exportClient(name, byName.value() ? "name" : "slot", addr.value());
+                        });
+                s.content(row);
+            }
+        }
+        s.buttons(null, null, "关闭", s::dismiss);
+        s.show();
+    }
+
+    private void exportClient(String name, String how, String rawAddr) {
+        final String addr = rawAddr.trim().replaceAll("/+$", "");
+        if (addr.matches("(?i)^(https?://)?(localhost|127\\.|\\[::1\\]).*")) {
+            toast("localhost 学生机连不上，请改成服务器的 IP 或域名");
+            return;
+        }
+        String host = addr.replaceFirst("(?i)^https?://", "").replace(':', '_');
+        String file = "name".equals(how) ? name.replaceFirst("(?i)(@[^@]*)?\\.exe$", "") + "@" + host + ".exe" : name;
+        Files.export(this, "服务器正在导出 " + name + "…（第一次要从 GitHub 下载，稍等）",
+                () -> MeApi.clientExport(name, how, addr), file);
+    }
+
     // ---------- 进度 ----------
 
     private void watch(JSONObject j) {
@@ -258,7 +351,9 @@ final class SystemScreen extends Screen {
     }
 
     private void finished(JSONObject j) {
-        if ("ok".equals(Json.str(j, "status"))) {
+        if ("ok".equals(Json.str(j, "status")) && Json.str(j, "message").startsWith("已经是最新版本")) {
+            Dialogs.alert(ctx(), "已经是最新版本", Json.str(j, "message") + "。服务器上的代码和 GitHub 上的一致，没有下载任何东西。");
+        } else if ("ok".equals(Json.str(j, "status"))) {
             Dialogs.alert(ctx(), "import".equals(Json.str(j, "action")) ? "导入完成" : "更新完成",
                     "import".equals(Json.str(j, "action")) ? "数据已导入，容器已重建。核对一下题目数、学生数。"
                             : "已经升级到最新版本，数据库和上传文件原样保留。");

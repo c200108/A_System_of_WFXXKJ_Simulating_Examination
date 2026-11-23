@@ -35,6 +35,9 @@ public class MeHomeScreen extends Screen implements Session.Listener {
     private LinearLayout content;
     private LinearLayout userCard;
     private View adminRows;
+    /** 个人云盘（服务端 2.25.0）：服务器启用了才显示 */
+    private View cloudRow;
+    private TextView cloudText;
     private View systemRow;
     private View changelogRow;
     private LinearLayout feedbackRow;
@@ -81,7 +84,13 @@ public class MeHomeScreen extends Screen implements Session.Listener {
         adminRows = V.row(c, R.drawable.ic_manage_accounts, Tone.VIOLET, "账号管理",
                 "新增教师、重置密码、分配班级、权限", null, v -> push(new UsersScreen()));
         MeUi.addRow(account, adminRows);
+        cloudRow = V.row(c, R.drawable.ic_cloud, Tone.INFO, "个人云盘", "存课件、素材，手机电脑都能打开", null,
+                v -> push(new CloudScreen()));
+        cloudText = V.oneLine(V.text(c, "", V.BODY2));
+        MeUi.putTrailing((LinearLayout) cloudRow, cloudText);
+        MeUi.addRow(account, cloudRow);
         content.addView(account, V.matchWrap());
+        setRowVisible(cloudRow, false);
 
         // 数据
         content.addView(MeUi.groupTitle(c, "数据"));
@@ -212,6 +221,14 @@ public class MeHomeScreen extends Screen implements Session.Listener {
             pendingApk = null;
             install(f);
         }
+        // 个人云盘：服务器启用了才显示这一行（老服务器没有这个接口，不显示）
+        run(MeApi::cloudMe, cm -> {
+            boolean on = Json.bool(cm, "enabled");
+            setRowVisible(cloudRow, on);
+            cloudText.setText(!on ? "" : Json.bool(cm, "allocated")
+                    ? CloudUi.bytes(Json.dbl(cm, "used_bytes")) + " / " + CloudUi.bytes(Json.dbl(cm, "quota_bytes"))
+                    : "未分配");
+        }, e -> true);
         // 有待审核的反馈时提醒一下（老师都能看到条数，管理员据此去审）
         run(MeApi::feedbackPending, n -> {
             pendingTag.setText(n + " 条待审核");
