@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -40,7 +41,6 @@ import urllib.error
 import urllib.request
 from datetime import datetime
 
-from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -158,22 +158,66 @@ def admin_password() -> str:
     return hashlib.sha256(f"wfxx-openlist-admin:{settings.jwt_secret}".encode()).hexdigest()[:32]
 
 
-def _fernet() -> Fernet:
-    key = hashlib.sha256(f"wfxx-cloud-password:{settings.jwt_secret}".encode()).digest()
-    return Fernet(base64.urlsafe_b64encode(key))
+# 云盘密码要能还原（免登录时拿它去 OpenList 换令牌），所以是加密存、不是哈希存。
+# **只用标准库**（2.25.5）：原来用 cryptography 的 Fernet，可机房版 Win7 装不了 cryptography
+# （Rust 编的，Win7 上 import 就崩），机房版一导入这个模块整个后端都起不来。
+# 做法：HMAC-SHA256 当计数器模式的密钥流做异或加密，再用另一把钥匙 HMAC 整段（先加密后认证），
+# 两把钥匙都由 JWT_SECRET 推出来。格式 "w1:" + base64url(16 字节随机数 + 密文 + 32 字节校验)。
+def _keys() -> tuple:
+    base = hashlib.sha256(f"wfxx-cloud-password:{settings.jwt_secret}".encode()).digest()
+    return hashlib.sha256(base + b"enc").digest(), hashlib.sha256(base + b"mac").digest()
+
+
+def _stream(key: bytes, nonce: bytes, n: int) -> bytes:
+    out = b""
+    i = 0
+    while len(out) < n:
+        out += hmac.new(key, nonce + i.to_bytes(4, "big"), hashlib.sha256).digest()
+        i += 1
+    return out[:n]
 
 
 def encrypt(plain: str) -> str:
-    return _fernet().encrypt(plain.encode()).decode()
+    k_enc, k_mac = _keys()
+    nonce = secrets.token_bytes(16)
+    data = plain.encode()
+    ct = bytes(a ^ b for a, b in zip(data, _stream(k_enc, nonce, len(data))))
+    tag = hmac.new(k_mac, nonce + ct, hashlib.sha256).digest()
+    return "w1:" + base64.urlsafe_b64encode(nonce + ct + tag).decode()
 
 
-def decrypt(token: str) -> str | None:
+def _decrypt_fernet(token: str):
+    """2.25.0～2.25.3 存的是 Fernet 格式。装着 cryptography（在线版）就照样解开，下次写入换成新格式。"""
+    try:
+        from cryptography.fernet import Fernet, InvalidToken
+    except Exception:                         # noqa: BLE001  机房版没装
+        return None
+    key = hashlib.sha256(f"wfxx-cloud-password:{settings.jwt_secret}".encode()).digest()
+    try:
+        return Fernet(base64.urlsafe_b64encode(key)).decrypt(token.encode()).decode()
+    except (InvalidToken, ValueError):
+        return None
+
+
+def decrypt(token: str):
     """解不开（换过 JWT_SECRET、从别的服务器导过来的数据）返回 None，调用方会重新设一个。"""
     if not token:
         return None
+    if not token.startswith("w1:"):
+        return _decrypt_fernet(token)
     try:
-        return _fernet().decrypt(token.encode()).decode()
-    except (InvalidToken, ValueError):
+        raw = base64.urlsafe_b64decode(token[3:].encode())
+    except (ValueError, TypeError):
+        return None
+    if len(raw) < 48:
+        return None
+    nonce, ct, tag = raw[:16], raw[16:-32], raw[-32:]
+    k_enc, k_mac = _keys()
+    if not hmac.compare_digest(tag, hmac.new(k_mac, nonce + ct, hashlib.sha256).digest()):
+        return None
+    try:
+        return bytes(a ^ b for a, b in zip(ct, _stream(k_enc, nonce, len(ct)))).decode()
+    except UnicodeDecodeError:
         return None
 
 

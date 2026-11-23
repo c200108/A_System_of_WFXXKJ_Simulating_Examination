@@ -281,6 +281,31 @@ def test_密码加密能解开_换了密钥解不开():
     assert cloud.decrypt(enc) == "abc123x"
     assert cloud.decrypt("not-a-token") is None
     assert cloud.decrypt("") is None
+    assert cloud.decrypt("中文密码9") is None and cloud.decrypt(cloud.encrypt("中文密码9")) == "中文密码9"
+    # 改一个字节就解不开（有校验）
+    bad = enc[:-3] + ("A" if enc[-3] != "A" else "B") + enc[-2:]
+    assert cloud.decrypt(bad) is None
+
+
+def test_老的Fernet格式还能解开():
+    """2.25.0～2.25.3 存的是 Fernet；在线版装着 cryptography，升级后照样解得开。"""
+    import base64
+    import hashlib
+
+    from cryptography.fernet import Fernet
+
+    key = hashlib.sha256(f"wfxx-cloud-password:{settings.jwt_secret}".encode()).digest()
+    old = Fernet(base64.urlsafe_b64encode(key)).encrypt(b"oldpass1").decode()
+    assert cloud.decrypt(old) == "oldpass1"
+
+
+def test_云盘模块不依赖cryptography():
+    """机房版 Win7 装不了 cryptography，云盘模块一 import 它整个后端就起不来（2.25.5）。"""
+    import pathlib
+
+    src = pathlib.Path(cloud.__file__).read_text(encoding="utf-8")
+    top = src.split("def ", 1)[0]
+    assert "cryptography" not in top
 
 
 def test_OpenList登录页_刚分配空间就能用教学平台密码登录(client, auth, fake):
