@@ -25,6 +25,7 @@ def start(client, body: dict, headers: dict | None = None):
         "time_limit": body.get("time_limit", 0),
         "student_name": body.get("student_name", ""),
         "student_class": body.get("student_class", ""),
+        "lesson": body.get("lesson", ""),
     })
 
 

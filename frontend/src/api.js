@@ -336,6 +336,8 @@ export const api = {
 
   // 打字训练
   typingConfig: () => http.get('/typing/config'),
+  // 打字入门的课程表（2.25.3）
+  typingKeyboardLessons: () => http.get('/typing/keyboard-lessons', { silent: true }),
   typingPassage: (mode, difficulty) =>
     http.get('/typing/passage', { params: { mode, difficulty } }),
   // 计分练习（2.23.1）：开练领会话 → 练习中同步内容 → 交成绩只交会话 id 和最终内容

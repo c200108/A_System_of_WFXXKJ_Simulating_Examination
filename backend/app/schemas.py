@@ -693,6 +693,7 @@ class TypingSessionIn(BaseModel):
     time_limit: int = Field(default=0, ge=0)    # 分钟；0 = 不限时（exe）
     student_name: str = Field(default="", max_length=64)
     student_class: str = Field(default="", max_length=64)
+    lesson: str = Field(default="", max_length=16)  # 打字入门（键盘模块）练哪一课，见 services/keyboard_lessons.py
 
 
 class TypingSessionOut(BaseModel):
@@ -700,6 +701,9 @@ class TypingSessionOut(BaseModel):
     text: str
     time_limit: int = 0
     sync_interval_sec: float = 1.5
+    # 打字入门（2.25.3）：[{text: 显示的字, keys: 要按的键}]，拼音短句那课 text 是汉字、keys 是拼音
+    units: list[dict] = []
+    lesson: str = ""
 
 
 class TypingProgressIn(BaseModel):

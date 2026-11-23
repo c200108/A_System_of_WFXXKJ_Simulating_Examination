@@ -2,7 +2,7 @@
 /**
  * 学生打字训练页（/dazi，免登录）。
  *
- * 四个模块：认识键盘、英文打字、中文打字、自由打字。
+ * 四个模块：打字入门（指法教程，2.25.3）、英文打字、中文打字、自由打字。
  * 前三个计时评分；自由打字是个练手的空板子 —— 不限时、不计分、不上报，
  * 敲什么键就在键盘图上亮什么键，用来熟悉键位和输入法。
  *
@@ -14,6 +14,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
 import { createTypingGuard, devtoolsOpen } from '../typingGuard'
 import { createTypingSession } from '../typingSession'
+import KeyboardTutor from '../components/KeyboardTutor.vue'
 
 // 键盘五排，和原页面一致
 const KB_ROWS = [
@@ -30,7 +31,6 @@ const KB_LABEL = [
   ['Z', 'X', 'C', 'V', 'B', 'N', 'M', ',', '.', '/'],
   ['空格']
 ]
-const KB_NAMES = ['数字符号排', '字母 QWERTY 排', '字母 ASDF 排', '字母 ZXCV 排', '空格排']
 
 const LS_KEY = 'typingStudent'
 
@@ -41,7 +41,7 @@ const me = reactive({ student_name: '', student_class: '', difficulty: '简单',
 const rosterClasses = ref([])
 
 const MODE_TABS = [
-  { k: 'keyboard', t: '认识键盘' },
+  { k: 'keyboard', t: '打字入门' },
   { k: 'english', t: '英文打字' },
   { k: 'chinese', t: '中文打字' },
   { k: 'free', t: '自由打字' }
@@ -60,60 +60,13 @@ let startedAt = 0
 const waitLeft = ref(0)
 let waitTimer = null
 
-// ---------- 认识键盘 ----------
-const kb = reactive({ row: 0, ci: 0, total: 0, correct: 0, status: [] })
-// 按过的键依次排成的串，交给服务端自己数对了几个（按错的、功能键记成 ）
-let kbKeys = ''
-const kbTip = ref('点击「开始」后，按提示从第一排第一个键依次敲击。')
-
-function resetKb() {
-  kbKeys = ''
-  kb.row = 0
-  kb.ci = 0
-  kb.total = 0
-  kb.correct = 0
-  kb.status = KB_ROWS.map(r => r.map(() => 'pending'))
-}
-resetKb()
-
-const kbDoneCount = computed(() =>
-  kb.status.reduce((s, row) => s + row.filter(x => x === 'ok').length, 0)
-)
-const kbTotalKeys = KB_ROWS.reduce((s, r) => s + r.length, 0)
-
-function keyClass(i, j) {
-  if (i !== kb.row) return 'dim'
-  const st = kb.status[i][j]
-  if (st === 'ok') return 'ok'
-  if (st === 'wrong') return 'wrong'
-  return j === kb.ci ? 'cur' : 'dim'
-}
-
-function onKeydown(e) {
-  if (mode.value !== 'keyboard' || !running.value) return
-  if (e.ctrlKey || e.metaKey || e.altKey || e.key === 'Shift' || e.key === 'Tab') return
-  e.preventDefault()
-
-  const target = KB_ROWS[kb.row][kb.ci]
-  const pressed = e.key.length === 1 ? e.key.toLowerCase() : e.key
-  kb.total++
-  kbKeys += pressed.length === 1 ? pressed : ''
-
-  if (pressed === target) {
-    kb.status[kb.row][kb.ci] = 'ok'
-    kb.correct++
-    kb.ci++
-    if (kb.ci >= KB_ROWS[kb.row].length) {
-      kb.row++
-      kb.ci = 0
-      if (kb.row >= KB_ROWS.length) return finish()
-    }
-    kbTip.value = `请按下 ${KB_LABEL[kb.row][kb.ci]} 键`
-  } else {
-    kb.status[kb.row][kb.ci] = 'wrong'
-    kbTip.value = `按错了，本应输入 ${KB_LABEL[kb.row][kb.ci]} 键，请重试。`
-  }
-}
+// ---------- 打字入门（2.25.3，components/KeyboardTutor.vue）----------
+// 一课一课练指法：课程和原文由服务端出，组件负责提示和按键，按过的键依次排成的串交给服务端算正确率
+const tutor = ref(null)
+const lessons = ref([])
+const lesson = ref('home')
+const tutorKeys = () => tutor.value?.st.keys || ''
+const tutorStat = computed(() => tutor.value?.st || { total: 0, correct: 0, pos: 0 })
 
 // ---------- 自由打字 ----------
 // 空板子：敲什么键就在键盘图上亮什么键，敲的内容原样显示出来。
@@ -196,7 +149,7 @@ const guard = createTypingGuard({
 })
 // ---------- 计分会话（2.23.1）：服务端出文本、记时间，练习中同步输入内容 ----------
 const session = createTypingSession({
-  getAnswer: () => (mode.value === 'keyboard' ? kbKeys : typed.value),
+  getAnswer: () => (mode.value === 'keyboard' ? tutorKeys() : typed.value),
   onFatal: msg => abortRun(msg)
 })
 
@@ -262,18 +215,17 @@ async function start() {
       module,
       difficulty: me.difficulty,
       time_limit: me.limit,
+      lesson: lesson.value,
       student_name: me.student_name.trim(),
       student_class: me.student_class.trim()
     })
     if (mode.value !== 'keyboard') target.value = res.text
+    else tutor.value?.load(res.units, res.text)
   } catch {
     // 换文本太勤被挡（每分钟最多三次）、名单对不上之类：拦截器已经弹了原因，上一次的成绩卡片留着
     return
   }
-  if (mode.value === 'keyboard') {
-    resetKb()
-    kbTip.value = `请按下 ${KB_LABEL[0][0]} 键`
-  } else {
+  if (mode.value !== 'keyboard') {
     typed.value = ''
     lastTyped = ''
     await nextTick()
@@ -333,7 +285,7 @@ async function finish(manual = false) {
   clearInterval(timer)
   guard.stopProbe()
   // 只交会话 id 和最终内容；速度、正确率、用时都由服务端按它自己存的原文和钟算
-  const answer = mode.value === 'keyboard' ? kbKeys : typed.value
+  const answer = mode.value === 'keyboard' ? tutorKeys() : typed.value
   // 这次在输入框里按了多少次键（含输入法打拼音的键）：服务端拿它和字数比，字比键多出一大截的是粘贴的
   const extra = mode.value === 'keyboard' ? {} : { keystrokes: guard.state.keys }
   await send(answer, extra)
@@ -378,7 +330,6 @@ function switchMode(m) {
   if (running.value) return ElMessage.warning('练习进行中，先完成或等计时结束')
   mode.value = m
   result.value = null
-  if (m === 'keyboard') resetKb()
   if (m === 'free') nextTick(() => freeRef.value?.focus())
 }
 
@@ -405,7 +356,11 @@ onMounted(async () => {
   } catch {
     /* 存过脏值就当没有 */
   }
-  window.addEventListener('keydown', onKeydown)
+  try {
+    lessons.value = await api.typingKeyboardLessons()
+  } catch {
+    /* 老服务端没有这个接口：就只有默认那一课 */
+  }
 })
 
 onUnmounted(() => {
@@ -413,7 +368,6 @@ onUnmounted(() => {
   session.stop()
   clearInterval(timer)
   clearTimeout(freeLitTimer)
-  window.removeEventListener('keydown', onKeydown)
 })
 </script>
 
@@ -423,7 +377,7 @@ onUnmounted(() => {
     <div class="panel top">
       <h1>
         <span class="logo">⌨</span>
-        学生打字训练<small>认识键盘 · 英文 · 中文 · 自由打字</small>
+        学生打字训练<small>打字入门 · 英文 · 中文 · 自由打字</small>
       </h1>
       <div class="setrow">
         <div class="field">
@@ -443,10 +397,18 @@ onUnmounted(() => {
           <el-input v-model="me.student_name" placeholder="学生姓名" style="width: 140px" />
         </div>
         <div class="field">
-          <label>难度</label>
-          <el-select v-model="me.difficulty" :disabled="isFree" style="width: 110px">
-            <el-option v-for="d in conf?.difficulties || []" :key="d" :label="d" :value="d" />
-          </el-select>
+          <template v-if="mode === 'keyboard'">
+            <label>课程</label>
+            <el-select v-model="lesson" :disabled="running" style="width: 150px">
+              <el-option v-for="(l, i) in lessons" :key="l.id" :label="`第${i + 1}课 ${l.title}`" :value="l.id" />
+            </el-select>
+          </template>
+          <template v-else>
+            <label>难度</label>
+            <el-select v-model="me.difficulty" :disabled="isFree" style="width: 110px">
+              <el-option v-for="d in conf?.difficulties || []" :key="d" :label="d" :value="d" />
+            </el-select>
+          </template>
         </div>
         <div class="field">
           <label>限时</label>
@@ -491,8 +453,8 @@ onUnmounted(() => {
         <template v-else>
           <template v-if="mode === 'keyboard'">
             <div class="seg"><span>状态</span><b>{{ running ? '进行中' : result ? '已完成' : '未开始' }}</b></div>
-            <div class="seg"><span>进度</span><b>{{ kb.row }} / 5 排（{{ kbDoneCount }}/{{ kbTotalKeys }} 键）</b></div>
-            <div class="seg"><span>正确率</span><b>{{ kb.total ? Math.round((kb.correct / kb.total) * 100) + '%' : '—' }}</b></div>
+            <div class="seg"><span>已按对</span><b>{{ tutorStat.correct }}</b> 键</div>
+            <div class="seg"><span>正确率</span><b>{{ tutorStat.total ? Math.round((tutorStat.correct / tutorStat.total) * 100) + '%' : '—' }}</b></div>
           </template>
           <template v-else>
             <div class="seg"><span>速度</span><b>{{ liveSpeed }}</b> 字/分</div>
@@ -538,27 +500,9 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- 认识键盘 -->
+      <!-- 打字入门 -->
       <div v-else-if="mode === 'keyboard'" class="body">
-        <div class="rowtabs">
-          <span
-            v-for="(n, i) in KB_NAMES"
-            :key="i"
-            class="rowtab"
-            :class="{ on: i === kb.row, done: kb.status[i]?.every(s => s === 'ok') }"
-          >{{ i + 1 }}. {{ n }}</span>
-        </div>
-        <div class="kb">
-          <div v-for="(row, i) in KB_ROWS" :key="i" class="krow">
-            <div
-              v-for="(ch, j) in row"
-              :key="j"
-              class="key"
-              :class="[keyClass(i, j), { space: ch === ' ' }]"
-            >{{ KB_LABEL[i][j] }}</div>
-          </div>
-        </div>
-        <div class="tip">{{ kbTip }}</div>
+        <KeyboardTutor ref="tutor" :running="running" :lessons="lessons" :lesson="lesson" @done="finish()" />
       </div>
 
       <!-- 文本打字 -->
@@ -592,11 +536,11 @@ onUnmounted(() => {
         同一台电脑每分钟只能交一次成绩。这次的成绩已经留好，<b>{{ waitLeft }}</b> 秒后自动交，不用重练，也别关这个页面。
       </div>
       <div v-if="result" class="result">
-        <h3>本次成绩 · {{ result.module }}</h3>
+        <h3>本次成绩 · {{ result.module === '键盘' ? '打字入门' : result.module }}</h3>
         <div class="grid">
           <div v-if="result.counted === false && result.module !== '键盘'"><span>打字速度</span><b class="void">无效</b></div>
           <div v-else-if="result.speed"><span>打字速度</span><b>{{ result.speed }} 字/分</b></div>
-          <div v-else><span>敲击键数</span><b>{{ kb.total }} 键</b></div>
+          <div v-else><span>敲击键数</span><b>{{ tutorStat.total }} 键</b></div>
           <div><span>正确率</span><b>{{ result.accuracy }}%</b></div>
           <div><span>用时</span><b>{{ fmt(result.duration) }}</b></div>
           <div><span>难度</span><b>{{ result.difficulty }}</b></div>

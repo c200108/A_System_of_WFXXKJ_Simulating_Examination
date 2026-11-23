@@ -48,7 +48,7 @@ from ..schemas import (
     TypingResultOut,
     TypingStatsOut,
 )
-from ..services import recycle, throttle, typing_analysis
+from ..services import keyboard_lessons, recycle, throttle, typing_analysis
 from ..services.typing_texts import (
     add_texts,
     build_passage,
@@ -251,7 +251,6 @@ def check_student(
 #      用时按服务端的钟算（限时练习按「时限 + 宽限」封顶），一个会话只能交一次。
 # 免登录页的班级姓名仍然只能信学生自己填的；能写程序按节奏模拟敲键的也挡不住 ——
 # 这一层堵的是「改个数字就交上去」和「整段粘贴」。
-KEYBOARD_TARGET = "`1234567890-=qwertyuiop[]\\asdfghjkl;'zxcvbnm,./ "
 SESSION_TTL = timedelta(hours=2)        # 领了会话两小时内要交，过了作废
 SESSION_KEEP = timedelta(hours=3)       # 三小时以前的会话随手清掉（成绩在 typing_records，不受影响）
 SYNC_INTERVAL = 1.5                     # 客户端多久同步一次（秒），配置接口带给客户端
@@ -384,8 +383,10 @@ def start_session(
     throttle.check(db, "typing_session", ip, site.typing.sessions_per_ip_per_minute, 60,
                    "这个网络里开始练习的次数太多了")
     who = throttle.device_of(request)
+    units: list = []
     if body.module == "键盘":
-        text = KEYBOARD_TARGET
+        # 打字入门（2.25.3）：一课一课练指法，原文由服务端按课出；课名记在 difficulty 上
+        text, units, body.difficulty = keyboard_lessons.build(body.lesson)
     else:
         n = site.typing.passage_per_minute
         throttle.check(db, "passage", who, n, 60, f"换文本太频繁了，同一台电脑每分钟最多换 {n} 次")
@@ -412,7 +413,14 @@ def start_session(
         throttle.hit(db, "passage", who)
     db.commit()
     return TypingSessionOut(session_id=s.id, text=text, time_limit=s.time_limit,
-                            sync_interval_sec=SYNC_INTERVAL)
+                            sync_interval_sec=SYNC_INTERVAL, units=units,
+                            lesson=body.difficulty if body.module == "键盘" else "")
+
+
+@router.get("/keyboard-lessons", summary="打字入门有哪几课（公开）")
+def keyboard_lesson_list():
+    _enabled()
+    return keyboard_lessons.listing()
 
 
 @router.post("/sessions/progress", summary="练习中同步输入内容（公开）")

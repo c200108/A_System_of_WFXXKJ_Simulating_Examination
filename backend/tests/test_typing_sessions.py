@@ -256,7 +256,7 @@ def test_键盘模块_交的是按键串(client):
     res = start(client, {"module": "键盘", "student_name": "键盘", "student_class": "七(5)班"})
     sid = res.json()["session_id"]
     text = res.json()["text"]
-    assert text.startswith("`1234567890-=qwerty") and text.endswith(" ")
+    assert set(text) <= set("asdfjkl; ") and res.json()["lesson"] == "基准键", "不指定课就是基准键"
     _shift(sid, 60)
     answer = text[:10] + "\x01" + text[10:].upper()     # 中间按错一下；大写也算对
     r = client.post("/api/typing/records", headers={"X-Device-Id": uuid.uuid4().hex},
@@ -305,3 +305,33 @@ def test_正确率低于一半不计成绩_不进学情和排名(client, auth, m
     _shift(sid, 60)
     assert client.post("/api/typing/records", headers={"X-Device-Id": uuid.uuid4().hex},
                        json={"session_id": sid, "answer": "b" * 150}).json()["counted"] is True, "填 0 不限"
+
+
+def test_打字入门_每课出自己的按键_拼音课带汉字(client):
+    lessons = client.get("/api/typing/keyboard-lessons").json()
+    assert [x["id"] for x in lessons][:2] == ["home", "gh"] and lessons[-1]["id"] == "pinyin"
+    res = start(client, {"module": "键盘", "lesson": "pinyin", "student_name": "入门", "student_class": "七(5)班"}).json()
+    units = res["units"]
+    assert res["lesson"] == "拼音短句" and "".join(u["keys"] for u in units) == res["text"]
+    hanzi = [u for u in units if u["text"]]
+    assert all(len(u["text"]) == 1 and u["keys"].isalpha() for u in hanzi), "一个汉字一组拼音"
+    res = start(client, {"module": "键盘", "lesson": "top", "student_name": "入门", "student_class": "七(5)班"}).json()
+    assert set(res["text"]) <= set("qwertyuiopasdfjkl; ") and res["lesson"] == "上排"
+    sid = res["session_id"]
+    _shift(sid, 60)
+    got = client.post("/api/typing/records", headers={"X-Device-Id": uuid.uuid4().hex},
+                      json={"session_id": sid, "answer": res["text"]}).json()
+    assert got["accuracy"] == 100 and got["difficulty"] == "上排"
+
+
+def test_打字入门的键都在键盘图上_不用按Shift():
+    import random
+
+    from app.services import keyboard_lessons as kl
+    ok = set("abcdefghijklmnopqrstuvwxyz0123456789;,./ ")
+    for x in kl.LESSONS:
+        for seed in range(20):
+            text, units, title = kl.build(x["id"], random.Random(seed))
+            assert set(text) <= ok and text.strip() and len(title) <= 16
+    for hanzi, py in kl.SENTENCES:
+        assert len(hanzi) == len(py.split()) and "v" not in py, hanzi
