@@ -217,11 +217,11 @@ class Checkin(Base):
 
 
 class CheckinEntry(Base):
-    """一位学生签到一次。同一次签到里：一个学生一条、一个座号一人、一台电脑一人。"""
+    """一位学生在一台电脑上签到一次。同一次签到里：一个座号一人、一台电脑一人；
+    一个学生最多两条（2.26.0：电脑坏了换一台再签，见 services/checkin.py 的 PER_STUDENT）。"""
 
     __tablename__ = "checkin_entries"
     __table_args__ = (
-        UniqueConstraint("checkin_id", "student_id", name="uq_checkin_student"),
         UniqueConstraint("checkin_id", "seat", name="uq_checkin_seat"),
         UniqueConstraint("checkin_id", "device", name="uq_checkin_device"),
     )

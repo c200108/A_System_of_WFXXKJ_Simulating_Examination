@@ -84,7 +84,10 @@ class Watcher:
         elif self.dialog:
             self.dialog.close()
         signed = got.get("signed") or {}
-        if signed.get("how") in ("auto", "bind") and got.get("checkin_id") not in self.told:
+        if signed.get("limit") and got.get("checkin_id") not in self.told:
+            self.told.add(got.get("checkin_id"))
+            self.tell("你已经在两台电脑上签过到了，这台电脑不再签到", ms=6000, bg=RED)
+        elif signed.get("how") in ("auto", "bind") and got.get("checkin_id") not in self.told:
             self.told.add(got.get("checkin_id"))
             self.tell(f"已按这台电脑的座号自动签到：{signed.get('seat', '')}")
         bind = got.get("bind")
@@ -97,15 +100,15 @@ class Watcher:
         elif not need and not self.bind_off:
             self.binder = BindDialog(self, bind)
 
-    def tell(self, text: str, ms: int = 4000):
+    def tell(self, text: str, ms: int = 4000, bg: str = GREEN):
         """右下角提示几秒，不抢焦点、不锁窗口。"""
         self._drop_notice()
         root = self.app.root
         win = tk.Toplevel(root)
         win.overrideredirect(True)
         win.attributes("-topmost", True)
-        win.configure(bg=GREEN)
-        tk.Label(win, text=text, bg=GREEN, fg="white", font=(FONT, 11, "bold"), padx=18, pady=10).pack()
+        win.configure(bg=bg)
+        tk.Label(win, text=text, bg=bg, fg="white", font=(FONT, 11, "bold"), padx=18, pady=10).pack()
         win.update_idletasks()
         x = root.winfo_rootx() + root.winfo_width() - win.winfo_width() - 24
         y = root.winfo_rooty() + root.winfo_height() - win.winfo_height() - 24
@@ -137,12 +140,18 @@ class CheckinDialog:
         self.win.protocol("WM_DELETE_WINDOW", self.nag)     # 点 × 不让关
         self.checkin_id = got.get("checkin_id")
         self.left = int(got.get("remaining") or 0)
+        self.remind = int(got.get("remind") or 60)
+        self.red = False
         self.sending = False
         self.tick_job = None
 
-        box = tk.Frame(self.win, bg=CARD, padx=26, pady=20)
+        # 外面一圈边框：快结束了还没签就变红（4.16.0）
+        self.frame = tk.Frame(self.win, bg=CARD, padx=4, pady=4)
+        self.frame.pack(fill="both", expand=True)
+        box = tk.Frame(self.frame, bg=CARD, padx=22, pady=16)
         box.pack(fill="both", expand=True)
-        tk.Label(box, text="老师发起了课堂签到", bg=CARD, font=(FONT, 14, "bold")).pack(anchor="w", pady=(0, 12))
+        self.title = tk.Label(box, text="老师发起了课堂签到", bg=CARD, font=(FONT, 14, "bold"))
+        self.title.pack(anchor="w", pady=(0, 12))
         s = watcher.app.student or {}
         tk.Label(box, text=f"我是：{s.get('name', '')}", bg=CARD, font=(FONT, 11)).pack(anchor="w")
 
@@ -181,6 +190,7 @@ class CheckinDialog:
         """每次问回来刷新：剩余时间、哪些座号还空着（别人刚签走的就从下拉框里拿掉）。"""
         self.checkin_id = got.get("checkin_id", self.checkin_id)
         self.left = int(got.get("remaining") or 0)
+        self.remind = int(got.get("remind") or self.remind)
         auto = got.get("auto") or {}
         if auto.get("seat"):
             # 认出了这台电脑的座号但签不上：只能签这个座号，原因写给学生看
@@ -195,6 +205,9 @@ class CheckinDialog:
             self.msg.config(text="你刚才选的座号被别人签走了，请重新选", fg=RED)
         if not free:
             self.msg.config(text="座次表里的座号都被签完了，请找老师", fg=RED)
+        elif got.get("elsewhere") and not self.msg.cget("text"):
+            self.msg.config(text=f"你在别的电脑上签过（{'、'.join(got['elsewhere'])}），换到这台电脑要在这里再签一次",
+                            fg=GRAY)
 
     def count(self):
         if self.left <= 0:
@@ -202,6 +215,16 @@ class CheckinDialog:
             return
         m, s = divmod(self.left, 60)
         self.clock.config(text=f"剩余时间 {m:02d}:{s:02d}")
+        if self.left <= self.remind and not self.red:
+            self.red = True               # 快结束了：边框变红、标题改成催签
+            self.frame.config(bg=RED)
+            self.title.config(text="签到快结束了，请马上签到！", fg=RED)
+            self.clock.config(font=(FONT, 12, "bold"))
+            try:
+                self.win.deiconify()
+                self.win.lift()
+            except tk.TclError:
+                pass
         self.left -= 1
         self.tick_job = self.win.after(1000, self.count)
 

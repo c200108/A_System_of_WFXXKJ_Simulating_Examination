@@ -56,6 +56,8 @@ from ..models import AppMeta, Checkin, CheckinEntry, ClientOnline, SchoolClass, 
 MINUTES = range(1, 11)
 ONLINE_SECONDS = 20          # 最近这么多秒内有心跳的算「已登录」
 POLL_SECONDS = 5             # 学生端多久问一次
+REMIND_SECONDS = 60          # 最后这么多秒还没签的：学生端签到框变红，老师网页红框列出已登录没签的
+PER_STUDENT = 2              # 一个同学一次签到最多签几台电脑（正常一台；电脑坏了换一台再签，所以给两台）
 SEAT = re.compile(r"^[A-Za-z]{1,3}[0-9]{1,3}$")
 DEFAULT = Path(__file__).resolve().parents[1] / "assets" / "seat-default.json"
 
@@ -389,7 +391,9 @@ def student_view(db: Session, student: Student, device: str = "", ip: str = "",
     labels = [s["seat"] for s in seats(sheet)]
     auto = None
     entries = list(db.scalars(select(CheckinEntry).where(CheckinEntry.checkin_id == row.id)))
-    if not any(e.student_id == student.id for e in entries):
+    key = _devkey(device, ip)
+    mine = [e for e in entries if e.student_id == student.id]
+    if not any(_here(e, key, ip) for e in mine) and len(mine) < PER_STUDENT:
         seat, how = resolve(db, rule(db), device, host, lan_ip, labels)
         if seat:
             try:
@@ -398,14 +402,22 @@ def student_view(db: Session, student: Student, device: str = "", ip: str = "",
                 db.rollback()
                 auto = {"seat": seat, "how": how, "error": e.detail}
             entries = list(db.scalars(select(CheckinEntry).where(CheckinEntry.checkin_id == row.id)))
-    mine = next((e for e in entries if e.student_id == student.id), None)
+    mine = [e for e in entries if e.student_id == student.id]
+    here = next((e for e in mine if _here(e, key, ip)), None)
+    signed = {"seat": here.seat, "how": here.how} if here else None
+    if not here and len(mine) >= PER_STUDENT:
+        # 已经在两台电脑上签过：这台不再签、也不弹框锁住，学生端提示一下
+        signed = {"seat": mine[-1].seat, "how": mine[-1].how, "limit": True}
     taken = {e.seat for e in entries}
     cls = db.get(SchoolClass, row.class_id)
     out.update({
         "active": True, "checkin_id": row.id,
         "class": cls.display if cls else "", "started_by": row.started_by,
         "remaining": max(0, int((row.ends_at - now).total_seconds())),
-        "signed": {"seat": mine.seat, "how": mine.how} if mine else None,
+        "remind": REMIND_SECONDS,
+        "signed": signed,
+        # 在别的电脑上签过一次了（那台坏了换到这台）：这台还要再签，签到框里说一声
+        "elsewhere": [e.seat for e in mine] if not here and mine and len(mine) < PER_STUDENT else [],
         "auto": auto,
         "seats": [{"seat": x, "taken": x in taken} for x in labels],
     })
@@ -421,10 +433,14 @@ def sign(db: Session, student: Student, checkin_id: int, seat: str, device: str,
         raise HTTPException(status_code=404, detail="没有这个签到（可能不是你们班的）")
     if row.ends_at <= now:
         raise HTTPException(status_code=410, detail="签到时间已经过了")
-    mine = db.scalar(select(CheckinEntry).where(CheckinEntry.checkin_id == row.id,
-                                                CheckinEntry.student_id == student.id))
-    if mine:
-        return {"ok": True, "seat": mine.seat, "already": True, "how": mine.how}
+    mine = list(db.scalars(select(CheckinEntry).where(CheckinEntry.checkin_id == row.id,
+                                                      CheckinEntry.student_id == student.id)))
+    here = next((e for e in mine if _here(e, _devkey(device, ip), ip)), None)
+    if here:
+        return {"ok": True, "seat": here.seat, "already": True, "how": here.how}
+    if len(mine) >= PER_STUDENT:
+        raise HTTPException(status_code=409, detail=(
+            f"你已经在两台电脑上签过到了（{'、'.join(e.seat for e in mine)}），一个同学最多签两台。坐错了请找老师"))
     _, sheet = _tab_sheet(db, row)
     labels = [s["seat"] for s in seats(sheet)]
     # 这台电脑认得出座号，就只能签那个座号（不许借自选去占别人的位置）
@@ -436,6 +452,16 @@ def sign(db: Session, student: Student, checkin_id: int, seat: str, device: str,
     return {"ok": True, "seat": fixed or seat, "already": False, "how": how or "pick"}
 
 
+def _devkey(device: str, ip: str) -> str:
+    """签到记录里存的「哪台电脑」：设备号，老学生端没有就用 ip:地址。"""
+    return (device or "").strip()[:80] or f"ip:{ip}"
+
+
+def _here(e: CheckinEntry, key: str, ip: str) -> bool:
+    """这条签到是不是在这台电脑上签的（机房版直连，同一个内网 IP 也算同一台）。"""
+    return e.device == key or (_private(ip) and e.ip == ip)
+
+
 def _place(db: Session, row: Checkin, student: Student, seat: str, device: str, ip: str,
            host: str, how: str) -> None:
     """把学生签到 seat 上（不提交）。how 是 auto / bind 的能挤走在这个座号上自己选的（pick）。"""
@@ -445,11 +471,11 @@ def _place(db: Session, row: Checkin, student: Student, seat: str, device: str, 
     spot = next((s for s in seats(sheet) if s["seat"] == seat), None)
     if not spot:
         raise HTTPException(status_code=400, detail=f"座号「{seat}」不在座次表里，请从下拉框里选")
-    device = (device or "").strip()[:80] or f"ip:{ip}"
+    device = _devkey(device, ip)
     names = {s.id: s.name for s in db.scalars(select(Student).where(
         Student.id.in_([e.student_id for e in entries] or [0])))}
     for e in entries:
-        if e.device == device or (_private(ip) and e.ip == ip):
+        if _here(e, device, ip):
             raise HTTPException(status_code=409, detail=(
                 f"这台电脑已经给「{names.get(e.student_id, '另一位同学')}」签过到了，"
                 "一台电脑只能签一个人。请在自己的电脑上登录签到"))
@@ -493,23 +519,35 @@ def teacher_view(db: Session, cls: SchoolClass, row: Checkin) -> dict:
     entries = list(db.scalars(select(CheckinEntry).where(CheckinEntry.checkin_id == row.id)
                               .order_by(CheckinEntry.id)))
     by_id = {s.id: s for s in roster}
-    signed = {e.student_id: e for e in entries}
-    online = {o.student_id for o in db.scalars(select(ClientOnline).where(
+    seats_of: dict = {}
+    for e in entries:
+        seats_of.setdefault(e.student_id, []).append(e.seat)
+    signed = seats_of
+    online = {o.student_id: o for o in db.scalars(select(ClientOnline).where(
         ClientOnline.student_id.in_(list(by_id) or [0]),
         ClientOnline.last_seen >= now - timedelta(seconds=ONLINE_SECONDS)))}
     tab = db.get(SeatTab, row.tab_id) if row.tab_id else None
+    seen: set = set()
+    rows = []
+    for e in entries:
+        rows.append({"id": e.id, "student_id": e.student_id,
+                     "name": by_id[e.student_id].name if e.student_id in by_id else "?",
+                     "student_no": by_id[e.student_id].student_no if e.student_id in by_id else "",
+                     "seat": e.seat, "at": e.at, "how": e.how, "host": e.host,
+                     "second": e.student_id in seen})        # 同一个同学签的第二台电脑
+        seen.add(e.student_id)
     return {
         "id": row.id, "tab_id": row.tab_id, "tab_name": tab.name if tab else "",
         "started_by": row.started_by, "started_at": row.started_at, "ends_at": row.ends_at,
         "active": row.ends_at > now, "remaining": max(0, int((row.ends_at - now).total_seconds())),
         "version": f"{len(entries)}-{entries[-1].id if entries else 0}-{sum(e.id for e in entries)}",
-        "total": len(roster), "signed_count": len(entries), "absent": len(roster) - len(signed),
-        "signed": [{"id": e.id, "student_id": e.student_id,
-                    "name": by_id[e.student_id].name if e.student_id in by_id else "?",
-                    "student_no": by_id[e.student_id].student_no if e.student_id in by_id else "",
-                    "seat": e.seat, "at": e.at, "how": e.how, "host": e.host} for e in entries],
+        "total": len(roster), "signed_count": len([i for i in signed if i in by_id]),
+        "absent": len([s for s in roster if s.id not in signed]),
+        "remind": REMIND_SECONDS,
+        "signed": rows,
         "unsigned": [{"student_id": s.id, "name": s.name, "student_no": s.student_no,
-                      "online": s.id in online} for s in roster if s.id not in signed],
-        "online": [{"student_id": s.id, "name": s.name, "seat": signed[s.id].seat if s.id in signed else ""}
-                   for s in roster if s.id in online],
+                      "online": s.id in online, "host": online[s.id].host if s.id in online else ""}
+                     for s in roster if s.id not in signed],
+        "online": [{"student_id": s.id, "name": s.name, "host": online[s.id].host,
+                    "seat": "、".join(signed.get(s.id, []))} for s in roster if s.id in online],
     }

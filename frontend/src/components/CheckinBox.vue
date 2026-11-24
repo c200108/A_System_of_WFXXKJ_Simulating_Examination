@@ -31,6 +31,9 @@ let tickTimer = null
 let version = ''
 
 const active = computed(() => !!view.value?.active && left.value > 0)
+// 快结束了（最后 remind 秒，服务端定的 60）还有已登录的电脑没签到：红框列出来（2.26.0）
+const lagging = computed(() => (view.value?.unsigned || []).filter(u => u.online))
+const remind = computed(() => active.value && left.value <= (view.value?.remind || 60) && lagging.value.length > 0)
 const fmt = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 
 function apply(v) {
@@ -107,6 +110,10 @@ onUnmounted(() => {
       </span>
       <el-button size="small" @click="showDetail = true">签到详情</el-button>
       <el-button v-if="canEdit" size="small" type="danger" plain @click="stop">结束签到</el-button>
+      <div v-if="remind" class="remind">
+        签到快结束了，还有 <b>{{ lagging.length }}</b> 台已登录的电脑没签到：
+        <span v-for="u in lagging" :key="u.student_id" class="rw">{{ u.name }}<small v-if="u.host">（{{ u.host }}）</small></span>
+      </div>
     </template>
     <template v-else>
       <template v-if="canEdit">
@@ -136,14 +143,18 @@ onUnmounted(() => {
             <h5>未签到（{{ view.unsigned.length }}）</h5>
             <p v-if="!view.unsigned.length" class="muted">全部签到了</p>
             <span v-for="u in view.unsigned" :key="u.student_id" class="who" :class="{ on: u.online }">
-              {{ u.name }}<small v-if="u.online">（已登录）</small>
+              {{ u.name }}<small v-if="u.online">（已登录{{ u.host ? ` · ${u.host}` : '' }}）</small>
             </span>
           </section>
           <section>
             <h5>已签到（{{ view.signed.length }}）</h5>
             <el-table :data="view.signed" size="small" max-height="320">
               <el-table-column prop="seat" label="座号" width="62" />
-              <el-table-column prop="name" label="姓名" />
+              <el-table-column label="姓名">
+                <template #default="{ row }">
+                  {{ row.name }}<el-tag v-if="row.second" size="small" type="warning" title="同一个同学签的第二台电脑（一般是第一台坏了换的）">第 2 台</el-tag>
+                </template>
+              </el-table-column>
               <el-table-column label="怎么认的" width="84">
                 <template #default="{ row }">
                   <span :class="{ muted: row.how === 'pick' }" :title="row.host ? `电脑名 ${row.host}` : ''">
@@ -178,6 +189,25 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+.remind {
+  flex-basis: 100%;
+  padding: 6px 10px;
+  border: 2px solid var(--el-color-danger);
+  border-radius: 6px;
+  background: var(--el-color-danger-light-9);
+  color: var(--el-color-danger);
+  font-size: 13px;
+  animation: blink 1.2s ease-in-out infinite;
+}
+.remind .rw {
+  margin-left: 8px;
+  font-weight: 600;
+}
+@keyframes blink {
+  50% {
+    border-color: var(--el-color-danger-light-5);
+  }
 }
 .live {
   font-variant-numeric: tabular-nums;

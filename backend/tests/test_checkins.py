@@ -306,3 +306,38 @@ def test_绑座模式_每台电脑选一次_签到时按绑定自动签(client, 
     assert got["signed"] == {"seat": "A2", "how": "bind"}
     assert client.delete("/api/checkin-seat/bindings/pc-bind-0001", headers=auth).status_code == 200
     assert client.get("/api/checkin-seat/bindings", headers=auth).json() == []
+
+
+def test_一个同学最多签两台电脑_电脑坏了换一台再签(client, auth, room, rule):
+    cid = room["cid"]
+    _stop_all(client, auth, cid)
+    k = client.post(f"/api/classes/{cid}/checkins", json={"minutes": 3}, headers=auth).json()
+    tok = room["toks"]["签到甲"]
+    pc1, pc2, pc3 = (_dev(tok, device=f"pc-two-000{i}") for i in (1, 2, 3))
+    assert client.post("/api/student/checkin", json={"checkin_id": k["id"], "seat": "A1"}, headers=pc1).status_code == 200
+    # 换到第二台：这台还没签，签到框照样弹，并说明在别处签过
+    got = client.get("/api/student/checkin", headers=pc2).json()
+    assert got["signed"] is None and got["elsewhere"] == ["A1"]
+    assert client.post("/api/student/checkin", json={"checkin_id": k["id"], "seat": "B1"}, headers=pc2).status_code == 200
+    assert client.get("/api/student/checkin", headers=pc1).json()["signed"]["seat"] == "A1", "回第一台也算签过"
+    # 第三台：签不了，也不锁住
+    got = client.get("/api/student/checkin", headers=pc3).json()
+    assert got["signed"]["limit"] is True
+    res = client.post("/api/student/checkin", json={"checkin_id": k["id"], "seat": "A2"}, headers=pc3)
+    assert res.status_code == 409 and "两台" in res.json()["detail"]
+    view = client.get(f"/api/classes/{cid}/checkins/current", headers=auth).json()["checkin"]
+    assert view["signed_count"] == 1 and view["absent"] == 2, "两台电脑也只算一个人"
+    assert [(s["seat"], s["second"]) for s in view["signed"]] == [("A1", False), ("B1", True)]
+    sheet = client.get(f"/api/classes/{cid}/seat-tabs/{k['tab_id']}", headers=auth).json()["sheet"]
+    assert sheet["data"][1] == ["A1", "签到甲", "B1", "签到甲"]
+
+
+def test_已登录没签的带电脑名_快结束提醒的秒数(client, auth, room, rule):
+    cid = room["cid"]
+    _stop_all(client, auth, cid)
+    client.post(f"/api/classes/{cid}/checkins", json={"minutes": 3}, headers=auth)
+    got = client.get("/api/student/checkin", **_q(room["toks"]["签到乙"], host="LAB-PC-07", device="pc-rmd-0001")).json()
+    assert got["signed"] is None and got["remind"] == 60
+    view = client.get(f"/api/classes/{cid}/checkins/current", headers=auth).json()["checkin"]
+    yi = next(u for u in view["unsigned"] if u["name"] == "签到乙")
+    assert yi["online"] and yi["host"] == "LAB-PC-07" and view["remind"] == 60

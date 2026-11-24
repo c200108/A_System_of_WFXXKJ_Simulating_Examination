@@ -1311,3 +1311,19 @@ def test_绑座模式_弹框选一次_关掉不再弹(app, server, exam):
     finally:
         call(server, "POST", "/api/checkin-seat/bind-mode", {"minutes": 0}, tk_)
         call(server, "DELETE", "/api/checkin-seat/bindings/all", token=tk_)
+
+
+def test_签到框快结束变红_在别的电脑签过要说明(app):
+    from client import checkin
+
+    class W:
+        dialog = None
+    W.app = app
+    got = {"checkin_id": 1, "remaining": 30, "remind": 60, "elsewhere": ["A1"],
+           "seats": [{"seat": "A1", "taken": True}, {"seat": "A2", "taken": False}]}
+    d = checkin.CheckinDialog(W(), got)
+    try:
+        assert d.frame.cget("bg") == checkin.RED and "快结束" in d.title.cget("text")
+        assert "A1" in d.msg.cget("text") and list(d.combo.cget("values")) == ["A2"]
+    finally:
+        d.close()
