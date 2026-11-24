@@ -124,6 +124,32 @@ def openlist_login(body: OlLoginIn, request: Request, db: Session = Depends(get_
         return {"code": 500, "message": str(e), "data": None}
 
 
+# ---------------------------------------------------------------- 全校共享（2.25.6）
+@router.get("/shared", summary="全校老师共享出来的云盘资源（标出共享者）")
+def shared(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not cloud.enabled():
+        return {"enabled": False, "items": []}
+    acc = db.get(CloudAccount, user.id)
+    try:
+        return {"enabled": True, "items": cloud.shared_items(db, acc.login if acc else "")}
+    except cloud.CloudError as e:
+        _fail(e, 503)
+
+
+@router.get("/shared/ol", include_in_schema=False)
+def shared_for_cloud_page(authorization: str = Header(default=""), db: Session = Depends(get_db)):
+    """云盘页面里「全校共享」面板用：带的是 OpenList 的令牌，问 OpenList 确认是谁。"""
+    if not cloud.enabled():
+        raise HTTPException(status_code=503, detail="没有启用个人云盘")
+    try:
+        login = cloud.whoami(authorization)
+        if not login:
+            raise HTTPException(status_code=401, detail="云盘登录已失效，刷新页面重新登录")
+        return {"items": cloud.shared_items(db, login)}
+    except cloud.CloudError as e:
+        _fail(e, 503)
+
+
 # ---------------------------------------------------------------- 管理员
 def _service_state(db: Session) -> tuple[bool, str]:
     if not cloud.enabled():

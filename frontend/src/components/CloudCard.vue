@@ -12,12 +12,26 @@ import CloudUrl from './CloudUrl.vue'
 const info = ref(null)
 const pwd = reactive({ password: '', confirm: '', current: '', saving: false })
 
+const shared = ref([])
+
 async function load() {
   try {
     info.value = await api.cloudMe()
   } catch {
     info.value = null
   }
+  if (info.value?.allocated) {
+    try {
+      shared.value = (await api.cloudShared()).items || []
+    } catch {
+      shared.value = []
+    }
+  }
+}
+
+/** 共享资源要在云盘里打开：先免登录进云盘（新标签页），分享页本身不用登录，直接开也行 */
+function openShared(it) {
+  window.open(it.url, '_blank', 'noopener')
 }
 onMounted(load)
 
@@ -80,6 +94,24 @@ async function syncBack() {
         用户名 <code>{{ info.login }}</code>，密码
         <b>{{ info.password_custom ? '是下面单独设置的云盘密码' : '和教学平台的登录密码一样' }}</b>。
       </p>
+
+      <!-- 全校共享（2.25.6）：别的老师在云盘里「分享」出来的，标出共享者 -->
+      <div class="shared">
+        <div class="sub">
+          全校共享资源 <span class="muted">（在云盘里选中文件点「分享」就会出现在这里；备注写「不共享」的不列出）</span>
+        </div>
+        <div v-if="!shared.length" class="muted">还没有人共享资源。</div>
+        <div v-else class="shared-list">
+          <a v-for="it in shared" :key="it.id" class="shared-item" href="javascript:void 0" @click="openShared(it)">
+            <span>{{ it.kind === 'folder' ? '📁' : '📄' }}</span>
+            <span class="sname">{{ it.title }}<span v-if="it.more" class="muted"> 等 {{ it.more + 1 }} 项</span></span>
+            <span v-if="it.has_pwd" title="要提取码">🔒</span>
+            <el-tag size="small" :type="it.mine ? 'info' : 'primary'" effect="light">
+              {{ it.mine ? '我共享的' : '共享者：' + it.sharer }}
+            </el-tag>
+          </a>
+        </div>
+      </div>
 
       <div class="pwd">
         <template v-if="!info.password_custom">
@@ -145,6 +177,35 @@ async function syncBack() {
   background: var(--el-fill-color-light);
   padding: 1px 5px;
   border-radius: 4px;
+}
+.shared {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--el-border-color-light);
+}
+.shared-list {
+  max-height: 240px;
+  overflow: auto;
+}
+.shared-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: inherit;
+  text-decoration: none;
+  font-size: 13px;
+}
+.shared-item:hover {
+  background: var(--el-fill-color-light);
+}
+.sname {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .pwd {
   margin-top: 14px;

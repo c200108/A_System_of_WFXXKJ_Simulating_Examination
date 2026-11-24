@@ -44,6 +44,22 @@ class FakeOpenList:
             return _jwt(username)
         return None
 
+    shares = []
+
+    def admin(self, method, path, body=None, what=""):
+        self._check()
+        if path.startswith("/api/share/list"):
+            return {"content": self.shares, "total": len(self.shares)}
+        raise AssertionError(path)
+
+    def _req(self, method, path, body=None, token="", **kw):
+        if path == "/api/me":
+            name = cloud._jwt_username(token)
+            if name and any(u["username"] == name for u in self.accounts.values()):
+                return {"code": 200, "data": {"username": name}}
+            return {"code": 401, "message": "token is invalidated", "data": None}
+        raise AssertionError(path)
+
     def login_raw(self, path, body, client_ip=""):
         self.last_ip = client_ip
         if path.endswith("/hash"):
@@ -283,7 +299,11 @@ def test_密码加密能解开_换了密钥解不开():
     assert cloud.decrypt("") is None
     assert cloud.decrypt("中文密码9") is None and cloud.decrypt(cloud.encrypt("中文密码9")) == "中文密码9"
     # 改一个字节就解不开（有校验）
-    bad = enc[:-3] + ("A" if enc[-3] != "A" else "B") + enc[-2:]
+    import base64
+
+    raw = bytearray(base64.urlsafe_b64decode(enc[3:]))
+    raw[20] ^= 1                                     # 改密文里的一个字节（直接改 base64 末位可能只动到填充位）
+    bad = "w1:" + base64.urlsafe_b64encode(bytes(raw)).decode()
     assert cloud.decrypt(bad) is None
 
 
@@ -292,7 +312,9 @@ def test_老的Fernet格式还能解开():
     import base64
     import hashlib
 
-    from cryptography.fernet import Fernet
+    import pytest
+
+    Fernet = pytest.importorskip("cryptography.fernet").Fernet   # 机房版不装 cryptography，跳过
 
     key = hashlib.sha256(f"wfxx-cloud-password:{settings.jwt_secret}".encode()).digest()
     old = Fernet(base64.urlsafe_b64encode(key)).encrypt(b"oldpass1").decode()
@@ -334,3 +356,46 @@ def test_OpenList页面头部脚本():
     head = cloud.HEAD_SCRIPT % {"prefix": cloud.TOKEN_KEY_PREFIX, "color": "#409eff"}
     assert "'/api/cloud/ol-login'" in head and r"/\/api\/auth\/login\/hash$/" in head
     assert "hope-breadcrumb__link" in head
+
+
+def test_全校共享_列出别的老师的分享并标出共享者(client, auth, fake):
+    a, ta = _teacher(client, auth, "share_a")
+    b, tb = _teacher(client, auth, "share_b")
+    client.patch(f"/api/auth/users/{a}", json={"name": "王老师"}, headers=auth)
+    client.put("/api/cloud/admin/total", json={"total_gb": 10}, headers=auth)
+    client.put(f"/api/cloud/admin/users/{a}", json={"quota_gb": 1}, headers=auth)
+    client.put(f"/api/cloud/admin/users/{b}", json={"quota_gb": 1}, headers=auth)
+    cloud._shared_cache["at"] = 0
+    fake.shares = [
+        {"id": "s1", "files": ["/share_a/七年级/课件.pptx"], "creator": "share_a", "pwd": "", "remark": "第5课",
+         "disabled": False, "expires": None, "accessed": 3, "max_accessed": 0},
+        {"id": "s2", "files": ["/share_a/素材"], "creator": "share_a", "pwd": "1234", "remark": "",
+         "disabled": False, "expires": "0001-01-01T00:00:00Z", "accessed": 0, "max_accessed": 0},
+        {"id": "s3", "files": ["/share_a/给学生.zip"], "creator": "share_a", "remark": "不共享，只发学生",
+         "disabled": False, "expires": None},
+        {"id": "s4", "files": ["/share_a/过期.doc"], "creator": "share_a", "remark": "", "disabled": False,
+         "expires": "2020-01-01T00:00:00.123456789+08:00"},
+        {"id": "s5", "files": ["/share_a/停用.doc"], "creator": "share_a", "disabled": True},
+        {"id": "s6", "files": ["/share_b/b.txt", "/share_b/c.txt"], "creator": "share_b", "remark": ""},
+        {"id": "s7", "files": ["/x/y.txt"], "creator": "stranger"},   # 不是平台分配的账号
+        {"id": "s8", "files": ["/share_b"], "creator": "share_b", "remark": ""},   # 整个云盘
+    ]
+    items = client.get("/api/cloud/shared", headers=tb).json()["items"]
+    by = {i["id"]: i for i in items}
+    assert set(by) == {"s1", "s2", "s6", "s8"}
+    assert by["s8"]["title"].endswith("的整个云盘") and by["s8"]["kind"] == "folder"
+    assert by["s1"]["sharer"] == "王老师" and by["s1"]["kind"] == "file" and by["s1"]["url"] == "/cloud/@s/s1"
+    assert by["s2"]["has_pwd"] and by["s2"]["kind"] == "folder"
+    assert by["s6"]["mine"] and by["s6"]["more"] == 1
+    # 云盘页面里的面板：拿 OpenList 令牌换
+    r = client.get("/api/cloud/shared/ol", headers={"Authorization": _jwt("share_a")})
+    assert r.status_code == 200 and {i["id"] for i in r.json()["items"] if i["mine"]} == {"s1", "s2"}
+    assert client.get("/api/cloud/shared/ol", headers={"Authorization": _jwt("nobody")}).status_code == 401
+    # 页面里有按钮和面板，分享页能在线预览
+    assert "/api/cloud/shared/ol" in cloud.BODY_HTML
+    from app.database import SessionLocal
+
+    with SessionLocal() as db:
+        assert cloud._brand_values(db)["share_preview"] == "true"
+    client.put(f"/api/cloud/admin/users/{a}", json={"quota_gb": 0}, headers=auth)
+    client.put(f"/api/cloud/admin/users/{b}", json={"quota_gb": 0}, headers=auth)

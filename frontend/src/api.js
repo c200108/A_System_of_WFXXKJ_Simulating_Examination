@@ -209,6 +209,7 @@ export const api = {
   // 个人云盘（2.25.0，routers/cloud.py）
   cloudMe: () => http.get('/cloud/me'),
   cloudOpen: () => http.post('/cloud/open', null, { silent: true }),
+  cloudShared: () => http.get('/cloud/shared', { silent: true }),
   cloudSetPassword: password => http.post('/cloud/password', { password }),
   cloudSyncPassword: current_password => http.post('/cloud/password/sync', { current_password }),
   cloudAdmin: () => http.get('/cloud/admin'),

@@ -137,9 +137,70 @@ HEAD_SCRIPT = r"""<script>
   .wfxx-back { position: fixed; left: 16px; bottom: 16px; z-index: 1000; padding: 6px 14px; border-radius: 999px;
     font-size: 13px; text-decoration: none; color: #fff; background: %(color)s; box-shadow: 0 2px 8px rgba(0,0,0,.18); opacity: .92; }
   .wfxx-back:hover { opacity: 1; }
+  .wfxx-share-btn { position: fixed; left: 16px; bottom: 56px; z-index: 1000; padding: 6px 14px; border-radius: 999px;
+    font-size: 13px; text-decoration: none; color: %(color)s; background: #fff; border: 1px solid %(color)s;
+    box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+  .wfxx-share-mask { position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,.35); display: flex;
+    align-items: center; justify-content: center; }
+  .wfxx-share-mask[hidden] { display: none; }
+  .wfxx-share-box { width: min(640px, 92vw); max-height: 80vh; display: flex; flex-direction: column; background: #fff;
+    color: #222; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,.25); overflow: hidden; }
+  .wfxx-share-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px;
+    border-bottom: 1px solid #eee; font-size: 16px; }
+  .wfxx-share-x { cursor: pointer; color: #999; }
+  .wfxx-share-tip { padding: 10px 18px; font-size: 12.5px; line-height: 1.7; color: #666; background: #fafafa; }
+  .wfxx-share-list { overflow: auto; padding: 6px 8px 12px; font-size: 14px; }
+  .wfxx-share-empty { padding: 30px; text-align: center; color: #999; }
+  .wfxx-share-item { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px;
+    text-decoration: none; color: inherit; }
+  .wfxx-share-item:hover { background: #f3f6fb; }
+  .wfxx-share-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wfxx-share-name i { font-style: normal; color: #999; font-size: 12px; }
+  .wfxx-share-name small { margin-left: 8px; color: #999; }
+  .wfxx-share-who { font-size: 12px; color: #fff; background: %(color)s; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .wfxx-share-who.me { background: #8c8c8c; }
 </style>"""
 
-BODY_HTML = '<a class="wfxx-back" href="/js/paper" title="回到教学平台的教师后台">← 返回教学平台</a>'
+BODY_HTML = r'''<a class="wfxx-back" href="/js/paper" title="回到教学平台的教师后台">← 返回教学平台</a>
+<a class="wfxx-share-btn" href="javascript:void 0" title="全校老师共享出来的资源">📂 全校共享</a>
+<div class="wfxx-share-mask" hidden><div class="wfxx-share-box">
+  <div class="wfxx-share-head"><b>全校共享</b><span class="wfxx-share-x" title="关闭">✕</span></div>
+  <div class="wfxx-share-tip">在自己的云盘里选中文件或文件夹，点「分享」建一个分享，就会出现在这里，全校老师都能看到并标出是谁共享的。
+    不想让同事看到的分享，备注里写「不共享」。设了提取码的要向共享者要。</div>
+  <div class="wfxx-share-list">正在读取…</div>
+</div></div>
+<script>
+(function () {
+  var mask = document.querySelector('.wfxx-share-mask'), list = mask.querySelector('.wfxx-share-list');
+  var btn = document.querySelector('.wfxx-share-btn');
+  function esc(t) { var d = document.createElement('div'); d.textContent = t == null ? '' : String(t); return d.innerHTML }
+  function sync() {     // 登录页、分享页上不显示按钮
+    var p = location.pathname, off = /\/@(login|s)\b/.test(p) || !localStorage.getItem('token');
+    btn.style.display = off ? 'none' : '';
+  }
+  setInterval(sync, 1000); sync();
+  function render(d) {
+    var items = d.items || [];
+    if (!items.length) { list.innerHTML = '<div class="wfxx-share-empty">还没有人共享资源。</div>'; return }
+    list.innerHTML = items.map(function (it) {
+      var icon = it.kind === 'folder' ? '📁' : '📄';
+      return '<a class="wfxx-share-item" target="_blank" rel="noopener" href="' + esc(it.url) + '">' +
+        '<span class="wfxx-share-ico">' + icon + '</span>' +
+        '<span class="wfxx-share-name">' + esc(it.title) + (it.more ? '<i> 等 ' + (it.more + 1) + ' 项</i>' : '') +
+        (it.remark ? '<small>' + esc(it.remark) + '</small>' : '') + '</span>' +
+        '<span class="wfxx-share-who' + (it.mine ? ' me' : '') + '">' + (it.mine ? '我共享的' : '共享者：' + esc(it.sharer)) + '</span>' +
+        (it.has_pwd ? '<span class="wfxx-share-lock" title="要提取码">🔒</span>' : '') + '</a>';
+    }).join('');
+  }
+  btn.addEventListener('click', function () {
+    mask.hidden = false; list.textContent = '正在读取…';
+    fetch('/api/cloud/shared/ol', { headers: { Authorization: localStorage.getItem('token') || '' } })
+      .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.detail || r.status); return d }) })
+      .then(render).catch(function (e) { list.textContent = '读取失败：' + e.message });
+  });
+  mask.addEventListener('click', function (e) { if (e.target === mask || e.target.className === 'wfxx-share-x') mask.hidden = true });
+})();
+</script>'''
 
 
 class CloudError(Exception):
@@ -370,6 +431,11 @@ def _brand_values(db: Session) -> dict[str, str]:
         "robots_txt": "User-agent: *\nDisallow: /",
         # 分块上传走 /api/fs/multipart/，那条路 nginx 不放行（配额管不住）；关了网页就走普通上传
         "multipart_enabled": "false",
+        # 全校共享（2.25.6）走的是 OpenList 的分享链接：分享页默认只能下载，打开在线预览，课件点开就能看
+        "share_preview": "true",
+        "share_archive_preview": "true",
+        "share_preview_download_by_default": "false",
+        "share_summary_content": "{{creator}} 共享了{{#each files}}{{#if @first}}「{{filename this}}」{{/if}}{{#if @last}}{{#unless (eq @index 0)}}等 {{@index}} 个文件{{/unless}}{{/if}}{{/each}}：{{base_url}}/@s/{{id}}{{#if pwd}}，提取码 {{pwd}}{{/if}}",
         "customize_head": HEAD_SCRIPT % {"prefix": TOKEN_KEY_PREFIX, "color": color},
         "customize_body": BODY_HTML,
     }
@@ -713,6 +779,91 @@ def gate(db: Session, token: str, length: int | None, writes: bool = True) -> st
             mine.append((now, need))
         _reserved[login] = mine
     return ""
+
+
+# ---------------------------------------------------------------- 全校共享（2.25.6）
+# 「共享」就是 OpenList 自带的「分享」：老师在自己云盘里选中文件 / 文件夹点「分享」，生成一个 /cloud/@s/<id> 的链接。
+# 这里用管理员接口把全校的分享都读出来，标上共享者的姓名，云盘页面右下角的「全校共享」面板和
+# 「我的账号」里都能看到 —— 不用复制文件（不占别人的空间），也不用给别人开自己文件夹的权限。
+# 备注里写了「不共享」的（只想发给学生的链接）不列出来。
+_shared_cache = {"at": 0.0, "rows": []}
+SHARED_TTL = 20
+
+
+def _all_sharings():
+    now = time.time()
+    if now - _shared_cache["at"] < SHARED_TTL:
+        return _shared_cache["rows"]
+    data = client().admin("GET", "/api/share/list?page=1&per_page=100000", what="读分享列表") or {}
+    rows = list(data.get("content") or [])
+    _shared_cache.update(at=now, rows=rows)
+    return rows
+
+
+def _expired(expires) -> bool:
+    if not expires:
+        return False
+    import re
+
+    text = re.sub(r"(\.\d{6})\d+", r"\1", str(expires).replace("Z", "+00:00"))   # Go 给到纳秒，Python 3.8 只认微秒
+    try:
+        t = datetime.fromisoformat(text)
+    except ValueError:
+        return False
+    if t.year < 2000:          # Go 的零值时间 0001-01-01 = 不过期
+        return False
+    return t.timestamp() < time.time()
+
+
+def shared_items(db: Session, viewer_login: str = "") -> list:
+    """全校老师共享出来的资源，按共享者分组排好。viewer_login 是看的人在 OpenList 里的登录名（标「我共享的」）。"""
+    accounts = {a.login: a for a in db.scalars(select(CloudAccount))}
+    names = {}
+    for login, acc in accounts.items():
+        user = db.get(User, acc.user_id)
+        if user is not None and user.is_active and acc.quota_mb > 0:
+            names[login] = user.name or user.username
+    out = []
+    for sh in _all_sharings():
+        creator = sh.get("creator") or ""
+        files = [f for f in (sh.get("files") or []) if f]
+        if creator not in names or not files or sh.get("disabled") or _expired(sh.get("expires")):
+            continue
+        if sh.get("max_accessed") and (sh.get("accessed") or 0) >= sh["max_accessed"]:
+            continue
+        remark = (sh.get("remark") or "").strip()
+        if "不共享" in remark:
+            continue
+        first = files[0].rstrip("/").rsplit("/", 1)[-1] or files[0]
+        acc = accounts[creator]
+        whole = files[0].rstrip("/") == "/" + acc.folder       # 把整个云盘分享出去了
+        if whole:
+            first = names[creator] + " 的整个云盘"
+        out.append({
+            "id": sh.get("id"),
+            "url": "/cloud/@s/" + str(sh.get("id")),
+            "title": first,
+            "more": len(files) - 1,
+            "kind": "folder" if whole or len(files) > 1 or "." not in first.lstrip(".") else "file",
+            "remark": remark,
+            "has_pwd": bool(sh.get("pwd")),
+            "accessed": sh.get("accessed") or 0,
+            "sharer": names[creator],
+            "sharer_login": creator,
+            "mine": creator == viewer_login,
+        })
+    out.sort(key=lambda x: (x["mine"], x["sharer"], x["title"]))
+    return out
+
+
+def whoami(token: str) -> str:
+    """用 OpenList 令牌问它「我是谁」，令牌不对返回空串（云盘页面里的面板拿它换全校共享列表）。"""
+    if not token:
+        return ""
+    out = client()._req("GET", "/api/me", token=token)
+    if out.get("code") != 200:
+        return ""
+    return str((out.get("data") or {}).get("username") or "")
 
 
 # ---------------------------------------------------------------- 后台：量用量、超额收权限、对账
