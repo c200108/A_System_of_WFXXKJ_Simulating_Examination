@@ -233,6 +233,28 @@ class CheckinEntry(Base):
     device: Mapped[str] = mapped_column(String(80))      # 学生端设备号（按网卡算），没有就用 ip:地址
     ip: Mapped[str] = mapped_column(String(64), default="", server_default="")
     at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
+    # 座号怎么来的（2.26.0）：pick 学生自己从下拉框选；auto 按认座规则从电脑名 / IP 认出；
+    # bind 这台电脑在「绑座模式」里绑过座号。auto / bind 的能把 pick 的从这个座号上挤走（座号认主人）
+    how: Mapped[str] = mapped_column(String(8), default="pick", server_default="pick")
+    host: Mapped[str] = mapped_column(String(64), default="", server_default="")   # 学生端报的电脑名
+
+
+class SeatBinding(Base):
+    """一台电脑固定坐哪个座号（2.26.0「绑座模式」）。
+
+    电脑名、IP 都跟座号对不上的机房用：老师开绑座模式，每台学生机登录后选一次座号，存在服务器上
+    （机房有还原卡，存在学生机上重启就没了）。按学生端的设备号（机器名 + 网卡算的 X-Device-Id）认电脑。
+    一个座号只绑一台电脑。签到时绑定优先于认座规则。全校共用一份，不分班。
+    """
+
+    __tablename__ = "seat_bindings"
+
+    device: Mapped[str] = mapped_column(String(80), primary_key=True)
+    seat: Mapped[str] = mapped_column(String(16), index=True)
+    host: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    lan_ip: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    bound_by: Mapped[str] = mapped_column(String(64), default="", server_default="")   # 绑的时候登录的学生
+    at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
 
 
 class ClientOnline(Base):
@@ -245,6 +267,9 @@ class ClientOnline(Base):
     last_seen: Mapped[datetime] = mapped_column(DateTime, index=True)
     device: Mapped[str] = mapped_column(String(80), default="", server_default="")
     ip: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    # 学生端自己报的电脑名和内网 IP（4.16.0 起）。认座规则的预览按它们算「哪台电脑→哪个座号」
+    host: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    lan_ip: Mapped[str] = mapped_column(String(64), default="", server_default="")
 
 
 class Student(Base):

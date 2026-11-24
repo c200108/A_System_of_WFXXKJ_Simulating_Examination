@@ -6,6 +6,11 @@
 签到时间里才登录的，问到的就是剩下的时间。
 
 一台电脑一次签到只能签一个人（服务端按设备号认）：给自己签完再换别人的号登录，签不了。
+
+按机器号自动认座（4.16.0，服务端 2.26.0）：问的时候带上电脑名和内网 IP。服务端按老师设的认座规则
+（电脑名最后一段 / 末尾数字 / IP 末段）或「绑座」认得出这台电脑的座号，就**直接签上**，这边不弹选择框，
+只在右下角提示几秒；认出来了但签不上（同一个座号被另一台电脑签了），弹框只给这一个座号、写明原因。
+老师开了绑座模式、这台电脑还没绑，弹「这台电脑是几号座位」让选一次（能关）。
 """
 
 from __future__ import annotations
@@ -29,6 +34,10 @@ class Watcher:
         self.job = None
         self.busy = False
         self.dialog: CheckinDialog | None = None
+        self.binder: BindDialog | None = None
+        self.notice = None
+        self.told: set = set()          # 已经提示过「自动签到了」的签到 id
+        self.bind_off = False           # 学生把绑座框关了：这一轮绑座模式里不再弹
         self.stopped = False
         self.job = shell.after(FIRST, self.tick)
 
@@ -41,6 +50,9 @@ class Watcher:
                 pass
         if self.dialog:
             self.dialog.close()
+        if self.binder:
+            self.binder.close()
+        self._drop_notice()
 
     def later(self, ms: int):
         if not self.stopped:
@@ -71,6 +83,43 @@ class Watcher:
             self.dialog.update_from(got)
         elif self.dialog:
             self.dialog.close()
+        signed = got.get("signed") or {}
+        if signed.get("how") in ("auto", "bind") and got.get("checkin_id") not in self.told:
+            self.told.add(got.get("checkin_id"))
+            self.tell(f"已按这台电脑的座号自动签到：{signed.get('seat', '')}")
+        bind = got.get("bind")
+        if not bind:
+            self.bind_off = False
+            if self.binder:
+                self.binder.close()
+        elif self.binder:
+            self.binder.update_from(bind)
+        elif not need and not self.bind_off:
+            self.binder = BindDialog(self, bind)
+
+    def tell(self, text: str, ms: int = 4000):
+        """右下角提示几秒，不抢焦点、不锁窗口。"""
+        self._drop_notice()
+        root = self.app.root
+        win = tk.Toplevel(root)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        win.configure(bg=GREEN)
+        tk.Label(win, text=text, bg=GREEN, fg="white", font=(FONT, 11, "bold"), padx=18, pady=10).pack()
+        win.update_idletasks()
+        x = root.winfo_rootx() + root.winfo_width() - win.winfo_width() - 24
+        y = root.winfo_rooty() + root.winfo_height() - win.winfo_height() - 24
+        win.geometry(f"+{max(0, x)}+{max(0, y)}")
+        self.notice = win
+        win.after(ms, self._drop_notice)
+
+    def _drop_notice(self):
+        if self.notice is not None:
+            try:
+                self.notice.destroy()
+            except tk.TclError:
+                pass
+            self.notice = None
 
 
 class CheckinDialog:
@@ -132,6 +181,13 @@ class CheckinDialog:
         """每次问回来刷新：剩余时间、哪些座号还空着（别人刚签走的就从下拉框里拿掉）。"""
         self.checkin_id = got.get("checkin_id", self.checkin_id)
         self.left = int(got.get("remaining") or 0)
+        auto = got.get("auto") or {}
+        if auto.get("seat"):
+            # 认出了这台电脑的座号但签不上：只能签这个座号，原因写给学生看
+            self.combo.config(values=[auto["seat"]])
+            self.seat.set(auto["seat"])
+            self.msg.config(text=f"这台电脑是 {auto['seat']} 号座位，{auto.get('error') or '没签上'}", fg=RED)
+            return
         free = [x["seat"] for x in got.get("seats") or [] if not x.get("taken")]
         self.combo.config(values=free)
         if self.seat.get() and self.seat.get() not in free:
@@ -182,6 +238,90 @@ class CheckinDialog:
             if self.tick_job:
                 self.win.after_cancel(self.tick_job)
             self.win.grab_release()
+            self.win.destroy()
+        except tk.TclError:
+            pass
+
+
+class BindDialog:
+    """绑座模式（4.16.0）：老师开着的时候，这台电脑还没绑座号就弹出来选一次。能关，不锁窗口。"""
+
+    def __init__(self, watcher: Watcher, bind: dict):
+        self.w = watcher
+        root = watcher.app.root
+        self.win = tk.Toplevel(root)
+        self.win.title("绑定座号")
+        self.win.configure(bg=CARD)
+        self.win.resizable(False, False)
+        self.win.transient(root)
+        self.win.attributes("-topmost", True)
+        self.win.protocol("WM_DELETE_WINDOW", self.dismiss)
+        self.sending = False
+
+        box = tk.Frame(self.win, bg=CARD, padx=26, pady=20)
+        box.pack(fill="both", expand=True)
+        tk.Label(box, text="老师在给机房的电脑绑座号", bg=CARD, font=(FONT, 14, "bold")).pack(anchor="w", pady=(0, 10))
+        tk.Label(box, text=f"这台电脑：{api.HOST_NAME or '（没有电脑名）'}", bg=CARD, fg=GRAY,
+                 font=(FONT, 10)).pack(anchor="w")
+        row = tk.Frame(box, bg=CARD)
+        row.pack(anchor="w", pady=(10, 4))
+        tk.Label(row, text="这台电脑的座号", bg=CARD, font=(FONT, 11)).pack(side="left")
+        self.seat = tk.StringVar()
+        self.combo = ttk.Combobox(row, textvariable=self.seat, state="readonly", width=10, font=(FONT, 11))
+        self.combo.pack(side="left", padx=8)
+        self.btn = tk.Button(row, text="绑 定", bg=BLUE, fg="white", font=(FONT, 11, "bold"),
+                             relief="flat", cursor="hand2", command=self.send)
+        self.btn.pack(side="left", ipadx=12)
+        self.msg = tk.Label(box, text="", bg=CARD, fg=GRAY, font=(FONT, 10), wraplength=360, justify="left")
+        self.msg.pack(anchor="w", pady=(8, 0))
+        tk.Label(box, text="看桌上贴的座号选。绑好以后签到时这台电脑自动签到这个座位，不用再选。",
+                 bg=CARD, fg=GRAY, font=(FONT, 9), wraplength=360, justify="left").pack(anchor="w", pady=(10, 0))
+        self.update_from(bind)
+        self.win.update_idletasks()
+        x = root.winfo_rootx() + max(0, (root.winfo_width() - self.win.winfo_width()) // 2)
+        y = root.winfo_rooty() + max(0, (root.winfo_height() - self.win.winfo_height()) // 3)
+        self.win.geometry(f"+{x}+{y}")
+
+    def update_from(self, bind: dict):
+        free = [x["seat"] for x in bind.get("seats") or [] if not x.get("taken")]
+        try:
+            self.combo.config(values=free)
+        except tk.TclError:
+            return
+        if self.seat.get() and self.seat.get() not in free:
+            self.seat.set("")
+            self.msg.config(text="你选的座号刚被别的电脑绑了，请重新选", fg=RED)
+
+    def send(self):
+        seat = self.seat.get().strip()
+        if not seat:
+            return self.msg.config(text="先在下拉框里选这台电脑的座号", fg=RED)
+        if self.sending:
+            return
+        self.sending = True
+        self.btn.config(state="disabled")
+        app = self.w.app
+
+        def done(got, err):
+            self.sending = False
+            try:
+                self.btn.config(state="normal")
+            except tk.TclError:
+                return
+            if err:
+                return self.msg.config(text=str(err), fg=RED)
+            self.msg.config(text=f"绑好了：这台电脑是 {got.get('seat', seat)} 号座位", fg=GREEN)
+            self.win.after(1200, self.close)
+        in_thread(self.win, lambda: api.seat_bind(app.server, app.token, seat), done)
+
+    def dismiss(self):
+        self.w.bind_off = True
+        self.close()
+
+    def close(self):
+        if self.w.binder is self:
+            self.w.binder = None
+        try:
             self.win.destroy()
         except tk.TclError:
             pass

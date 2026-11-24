@@ -577,13 +577,53 @@ def typing_submit(server: str, session_id: str, answer: str, token: str = "") ->
 
 
 # ================================================================ 课堂签到（4.15.0，服务端 2.24.0）
+HOST_NAME = (platform.node() or socket.gethostname() or "").strip()[:64]
+_lan_ip: dict = {}
+
+
+def lan_ip(server: str) -> str:
+    """这台电脑连教师端用的那块网卡的内网 IP（4.16.0，认座规则「IP 末段」用）。
+
+    UDP 的 connect 不发包，只让系统挑一块能到教师端的网卡；线上服务器在 nginx 后面、看到的是
+    机房出口 IP，所以由学生端自己报。取不到返回空串。按地址记住，不用每次都算。
+    """
+    s = norm(server)
+    if s in _lan_ip:
+        return _lan_ip[s]
+    host = urllib.parse.urlsplit(s if "://" in s else "http://" + s).hostname or ""
+    ip = ""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.connect((host, 9))
+            ip = sock.getsockname()[0]
+        finally:
+            sock.close()
+    except (OSError, UnicodeError):
+        ip = ""
+    _lan_ip[s] = "" if ip.startswith(("127.", "0.")) else ip
+    return _lan_ip[s]
+
+
+def _where(server: str) -> dict:
+    return {"host": HOST_NAME, "lan_ip": lan_ip(server)}
+
+
 def checkin_status(server: str, token: str) -> dict:
     """有没有签到：{"active": bool, "poll": 秒, "checkin_id", "remaining", "seats": [{seat, taken}],
-    "signed": {seat} | None}。这一问也是在线心跳 —— 老师那边据此看「已登录的学生」。"""
-    return _json(f"{base(server)}/api/student/checkin", token=token, timeout=8)
+    "signed": {seat, how} | None, "auto": {seat, error} | None, "bind": {...}（绑座模式）}。
+    这一问也是在线心跳 —— 老师那边据此看「已登录的学生」。带上电脑名和内网 IP（4.16.0）：
+    服务端按认座规则认得出座号就直接签上（signed.how = auto / bind）。"""
+    q = urllib.parse.urlencode(_where(server))
+    return _json(f"{base(server)}/api/student/checkin?{q}", token=token, timeout=8)
 
 
 def checkin_sign(server: str, token: str, checkin_id, seat: str) -> dict:
     """签到。座号被占、这台电脑已经给别人签过、时间到了都会抛 ApiError（后端写好的中文）。"""
     return _json(f"{base(server)}/api/student/checkin",
-                 {"checkin_id": int(checkin_id), "seat": str(seat)}, token=token)
+                 {"checkin_id": int(checkin_id), "seat": str(seat), **_where(server)}, token=token)
+
+
+def seat_bind(server: str, token: str, seat: str) -> dict:
+    """绑座模式里给这台电脑选座号（4.16.0）。座号被别的电脑绑了会抛 ApiError。"""
+    return _json(f"{base(server)}/api/student/seat-bind", {"seat": str(seat), **_where(server)}, token=token)

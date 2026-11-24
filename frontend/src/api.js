@@ -248,6 +248,14 @@ export const api = {
   checkinStart: (id, minutes) => http.post(`/classes/${id}/checkins`, { minutes }),
   checkinCurrent: id => http.get(`/classes/${id}/checkins/current`, { silent: true, timeout: 8000 }),
   checkinStop: (id, kid) => http.post(`/classes/${id}/checkins/${kid}/stop`),
+  checkinRevoke: (id, kid, eid) => http.delete(`/classes/${id}/checkins/${kid}/entries/${eid}`),
+  // 认座设置（2.26.0）：按电脑名 / IP 自动认座、绑座模式
+  seatRule: () => http.get('/checkin-seat/rule'),
+  seatRuleSave: (mode, offset) => http.put('/checkin-seat/rule', { mode, offset }),
+  seatRulePreview: params => http.get('/checkin-seat/preview', { params }),
+  seatBindMode: minutes => http.post('/checkin-seat/bind-mode', { minutes }),
+  seatBindings: () => http.get('/checkin-seat/bindings'),
+  seatBindingDelete: device => http.delete(`/checkin-seat/bindings/${encodeURIComponent(device)}`),
   // 课堂情况日志：在线座次右边那一栏，每次上机一条
   classLogs: id => http.get(`/classes/${id}/logs`),
   classLogCreate: (id, body) => http.post(`/classes/${id}/logs`, body),

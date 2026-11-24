@@ -99,7 +99,8 @@ app.include_router(config.router)  # 公开，前端启动时读
 app.include_router(auth.router)
 app.include_router(classes.router)  # 班级：老师能看，增删改要管理员
 app.include_router(checkins.router)  # 课堂签到、在线座次附加工作表（2.24.0）
-app.include_router(checkins.student_router)  # 学生桌面端：有没有签到、签到
+app.include_router(checkins.student_router)  # 学生桌面端：有没有签到、签到、绑座
+app.include_router(checkins.seat_router)  # 认座设置：按电脑名 / IP 自动认座、绑座模式（2.26.0）
 app.include_router(dicts.router)
 app.include_router(questions.router)
 app.include_router(sims.router)  # 仿真操作题：题面环境与判分规则

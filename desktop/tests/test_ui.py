@@ -1255,3 +1255,59 @@ def test_打字正确率太低不计成绩(app, server, exam, monkeypatch):
     age_typing_session(page.session, 30)
     page.submit()
     assert settle(app, until=lambda: "不计成绩" in page.live.cget("text")), page.live.cget("text")
+
+
+# ================================================================ 按机器号自动认座（4.16.0）
+def test_电脑名认得出座号_登录就自动签到_不弹选择框(app, server, exam, monkeypatch):
+    from conftest import call, teacher_token
+
+    from client import api
+
+    tk_ = teacher_token(server)
+    cid = next(c["id"] for c in call(server, "GET", "/api/classes", token=tk_)
+               if c["grade"] == "九年级" and c["name"] == "1班")
+    old = call(server, "GET", f"/api/classes/{cid}/seat-sheet", token=tk_)["sheet"]
+    call(server, "PUT", f"/api/classes/{cid}/seat-sheet",
+         {"sheet": {"data": [["A1", "", "A2", ""], ["A3", "", "A4", ""]]}}, tk_)
+    call(server, "POST", "/api/students", {"student_no": "26090183", "name": "认座三", "class_id": cid}, tk_)
+    call(server, "PUT", "/api/checkin-seat/rule", {"mode": "host_tail", "offset": 0}, tk_)
+    monkeypatch.setattr(api, "HOST_NAME", "C09-COMPUTE-A3")
+    k = call(server, "POST", f"/api/classes/{cid}/checkins", {"minutes": 2}, tk_)
+    try:
+        shell = signed_in(app, server, "26090183")
+        assert settle(app, until=lambda: shell.checkin.notice is not None), "没提示自动签到"
+        assert shell.checkin.dialog is None, "认得出座号就不弹选择框"
+        view = call(server, "GET", f"/api/classes/{cid}/checkins/current", token=tk_)["checkin"]
+        got = [(s["name"], s["seat"], s["how"], s["host"]) for s in view["signed"]]
+        assert ("认座三", "A3", "auto", "C09-COMPUTE-A3") in got
+    finally:
+        call(server, "POST", f"/api/classes/{cid}/checkins/{k['id']}/stop", token=tk_)
+        call(server, "PUT", "/api/checkin-seat/rule", {"mode": "pick", "offset": 0}, tk_)
+        call(server, "PUT", f"/api/classes/{cid}/seat-sheet", {"sheet": old or {"data": []}}, tk_)
+
+
+def test_绑座模式_弹框选一次_关掉不再弹(app, server, exam):
+    from conftest import call, teacher_token
+
+    tk_ = teacher_token(server)
+    call(server, "POST", "/api/checkin-seat/bind-mode", {"minutes": 5}, tk_)
+    try:
+        shell = signed_in(app, server, "26090111")
+        assert settle(app, until=lambda: shell.checkin.binder is not None), "绑座框没弹出来"
+        b = shell.checkin.binder
+        assert app.root.grab_current() is None, "绑座框不锁窗口"
+        b.dismiss()
+        shell.checkin.tick()
+        settle(app, seconds=2)
+        assert shell.checkin.binder is None, "关掉了这一轮不再弹"
+        shell.checkin.bind_off = False
+        shell.checkin.tick()
+        assert settle(app, until=lambda: shell.checkin.binder is not None)
+        b = shell.checkin.binder
+        b.seat.set(b.combo.cget("values")[0])
+        b.send()
+        assert settle(app, until=lambda: "绑好了" in b.msg.cget("text")), b.msg.cget("text")
+        assert len(call(server, "GET", "/api/checkin-seat/bindings", token=tk_)) == 1
+    finally:
+        call(server, "POST", "/api/checkin-seat/bind-mode", {"minutes": 0}, tk_)
+        call(server, "DELETE", "/api/checkin-seat/bindings/all", token=tk_)

@@ -11,6 +11,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
+import SeatRuleDialog from './SeatRuleDialog.vue'
 
 const props = defineProps({
   cls: { type: Object, required: true },
@@ -22,6 +23,8 @@ const minutes = ref(3)
 const view = ref(null)          // 最近一次签到的进度
 const starting = ref(false)
 const showDetail = ref(false)
+const showRule = ref(false)
+const HOW = { auto: '电脑认座', bind: '绑座', pick: '自己选' }
 const left = ref(0)
 let pollTimer = null
 let tickTimer = null
@@ -81,6 +84,13 @@ async function stop() {
   clearTimeout(pollTimer)
 }
 
+// 撤销一条签到（2.26.0）：坐错了、占了别人的座号。签到没结束的话那位同学会重新弹出签到框
+async function revoke(row) {
+  await ElMessageBox.confirm(`撤销「${row.name}」签在 ${row.seat} 的签到？表里的姓名会清掉。`, '撤销签到', { type: 'warning' })
+  apply(await api.checkinRevoke(props.cls.id, view.value.id, row.id))
+  schedule()
+}
+
 onMounted(poll)
 onUnmounted(() => {
   clearTimeout(pollTimer)
@@ -109,6 +119,8 @@ onUnmounted(() => {
         上次签到（{{ view.tab_name || '已删表' }}）：已签 {{ view.signed_count }} / {{ view.total }}
       </el-button>
     </template>
+    <el-button size="small" link @click="showRule = true">认座设置</el-button>
+    <SeatRuleDialog v-model="showRule" :cls="cls" />
 
     <el-dialog v-model="showDetail" :title="`签到详情 · ${cls.display}`" width="min(94vw, 720px)" append-to-body>
       <template v-if="view">
@@ -130,10 +142,22 @@ onUnmounted(() => {
           <section>
             <h5>已签到（{{ view.signed.length }}）</h5>
             <el-table :data="view.signed" size="small" max-height="320">
-              <el-table-column prop="seat" label="座号" width="70" />
+              <el-table-column prop="seat" label="座号" width="62" />
               <el-table-column prop="name" label="姓名" />
-              <el-table-column label="时间" width="90">
+              <el-table-column label="怎么认的" width="84">
+                <template #default="{ row }">
+                  <span :class="{ muted: row.how === 'pick' }" :title="row.host ? `电脑名 ${row.host}` : ''">
+                    {{ HOW[row.how] || '自己选' }}
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column label="时间" width="76">
                 <template #default="{ row }">{{ String(row.at).replace('T', ' ').slice(11, 19) }}</template>
+              </el-table-column>
+              <el-table-column v-if="canEdit" width="52">
+                <template #default="{ row }">
+                  <el-button size="small" link type="danger" @click="revoke(row)">撤销</el-button>
+                </template>
               </el-table-column>
             </el-table>
           </section>
