@@ -1234,7 +1234,10 @@ def test_课堂签到_弹框锁住_选座号签到_同一台电脑不能再给�
         assert shell.checkin.dialog is d, "没签上框不能关"
     finally:
         call(server, "POST", f"/api/classes/{cid}/checkins/{k['id']}/stop", token=tk_)
-        call(server, "PUT", f"/api/classes/{cid}/seat-sheet", {"sheet": old or {"data": []}}, tk_)
+        if old:
+            call(server, "PUT", f"/api/classes/{cid}/seat-sheet", {"sheet": old}, tk_)
+        else:       # 原来没存过：删掉，回到「用学校默认表」，别存一张空表影响后面的测试
+            call(server, "DELETE", f"/api/classes/{cid}/seat-sheet", token=tk_)
     # 签到结束：下一轮一问，框自己关掉
     shell.checkin.tick()
     assert settle(app, until=lambda: shell.checkin.dialog is None), "签到结束了框还在"
@@ -1283,13 +1286,21 @@ def test_电脑名认得出座号_登录就自动签到_不弹选择框(app, ser
     finally:
         call(server, "POST", f"/api/classes/{cid}/checkins/{k['id']}/stop", token=tk_)
         call(server, "PUT", "/api/checkin-seat/rule", {"mode": "pick", "offset": 0}, tk_)
-        call(server, "PUT", f"/api/classes/{cid}/seat-sheet", {"sheet": old or {"data": []}}, tk_)
+        if old:
+            call(server, "PUT", f"/api/classes/{cid}/seat-sheet", {"sheet": old}, tk_)
+        else:       # 原来没存过：删掉，回到「用学校默认表」，别存一张空表影响后面的测试
+            call(server, "DELETE", f"/api/classes/{cid}/seat-sheet", token=tk_)
 
 
 def test_绑座模式_弹框选一次_关掉不再弹(app, server, exam):
     from conftest import call, teacher_token
 
     tk_ = teacher_token(server)
+    cid = next(c["id"] for c in call(server, "GET", "/api/classes", token=tk_)
+               if c["grade"] == "九年级" and c["name"] == "1班")
+    old = call(server, "GET", f"/api/classes/{cid}/seat-sheet", token=tk_)["sheet"]
+    call(server, "PUT", f"/api/classes/{cid}/seat-sheet",
+         {"sheet": {"data": [["A1", "", "A2", ""], ["A3", "", "A4", ""]]}}, tk_)
     call(server, "POST", "/api/checkin-seat/bind-mode", {"minutes": 5}, tk_)
     try:
         shell = signed_in(app, server, "26090111")
@@ -1311,6 +1322,10 @@ def test_绑座模式_弹框选一次_关掉不再弹(app, server, exam):
     finally:
         call(server, "POST", "/api/checkin-seat/bind-mode", {"minutes": 0}, tk_)
         call(server, "DELETE", "/api/checkin-seat/bindings/all", token=tk_)
+        if old:
+            call(server, "PUT", f"/api/classes/{cid}/seat-sheet", {"sheet": old}, tk_)
+        else:
+            call(server, "DELETE", f"/api/classes/{cid}/seat-sheet", token=tk_)
 
 
 def test_签到框快结束变红_在别的电脑签过要说明(app):
