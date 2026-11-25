@@ -119,5 +119,35 @@ export function useSubmitGate(key, paper, answered, live = null) {
     )
   })
 
-  return { start, done, sync, canSubmit, reason, needs, waitSeconds, moreQuestions }
+  // 剩余答题时间（2.29.0）：答题页左下角一直显示。时间到了只是提示，不强制收卷
+  const startedRef = ref(0)
+  const remaining = computed(() =>
+    startedRef.value ? durationMinutes(paper.value?.duration) * 60 - (now.value - startedRef.value) / 1000 : null
+  )
+  const remainText = computed(() => {
+    const r = remaining.value
+    if (r === null) return ''
+    if (r <= 0) return '考试时间已到，请尽快交卷'
+    const s = Math.ceil(r)
+    const h = Math.floor(s / 3600)
+    const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0')
+    const ss = String(s % 60).padStart(2, '0')
+    return `剩余时间 ${h ? h + ':' : ''}${mm}:${ss}`
+  })
+
+  return {
+    start: () => {
+      start()
+      startedRef.value = startedAt
+    },
+    done,
+    sync,
+    canSubmit,
+    reason,
+    needs,
+    waitSeconds,
+    moreQuestions,
+    remaining,
+    remainText
+  }
 }

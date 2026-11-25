@@ -31,6 +31,7 @@ from ..models import Exam, ExamSubmission, Paper, SchoolClass, Student, User
 from ..routers.classes import owned_class_ids
 from ..schemas import ExamCreate, ExamOut, ExamUpdate, IdsIn, ManualGradeIn, SubmissionOut
 from ..services import recycle
+from ..services.paper import num, show
 from ..services.analysis import analyze
 from ..siteconfig import site
 from ..services.exam import (
@@ -409,10 +410,10 @@ def grade_manual(
 
     sub.detail_json = json.dumps(result["detail"], ensure_ascii=False)
     sub.manual_json = json.dumps(
-        {str(k): int(v) for k, v in body.scores.items()}, ensure_ascii=False
+        {str(k): show(v) for k, v in body.scores.items()}, ensure_ascii=False
     )
     sub.subjective_score = result["subjective_score"]
-    sub.score = sub.objective_score + sub.subjective_score
+    sub.score = show(num(sub.objective_score) + num(sub.subjective_score))
     sub.graded_by = user.id
     # 只有全批完才算"批过了"，批一半不该让考试列表上的待阅提示消失
     sub.graded_at = clock.now() if result["pending"] == 0 else None
@@ -481,7 +482,7 @@ def exam_paper(exam_id: int, user: User = Depends(get_current_user), db: Session
             items.append({
                 "no": no, "id": it["id"], "type": it["type"], "stem": it["stem"],
                 "options": it.get("options") or [], "answer": it.get("answer") or "",
-                "score": int(it.get("score") or 0), "scope": it.get("scope") or "",
+                "score": show(it.get("score")), "scope": it.get("scope") or "",
                 "image_url": it.get("image_url"),
                 "sim_kind": (it.get("sim") or {}).get("kind") or "",
                 "checks": [c.get("desc") or "" for c in (it.get("sim_checks") or [])
@@ -498,7 +499,7 @@ def exam_paper(exam_id: int, user: User = Depends(get_current_user), db: Session
         "paper_duration": paper.duration if paper else "",
         "code": paper.code if paper else "",
         "by_sections": bool(json.loads(paper.config_json or "{}").get("by_sections")) if paper else False,
-        "full_score": sum(g["score"] for g in out),
+        "full_score": show(sum(num(g["score"]) for g in out)),
         "groups": out,
     }
 
@@ -567,7 +568,7 @@ def export_scores(
 
     wb = Workbook()
 
-    full = sum(int(it.get("score") or 0) for it in items)
+    full = show(sum(num(it.get("score")) for it in items))
 
     ws = wb.active
     ws.title = "成绩汇总"

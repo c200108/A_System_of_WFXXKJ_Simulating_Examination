@@ -68,6 +68,7 @@ from ..deps import get_current_user
 from ..models import Exam, ExamSubmission, Student, User
 from ..schemas import ExamBrief, SignInIn, SignInOut, StudentBrief
 from ..services import docx_io, images, packcache
+from ..services.paper import num, show
 from ..services.exam import exam_duration, group_items, load_items, strip_answers, wants_shuffle
 
 router = APIRouter(prefix="/api/desk", tags=["桌面客户端"])
@@ -250,11 +251,17 @@ def build_package(db: Session, exam: Exam, server: str = "") -> bytes:
             no += 1
             row = {
                 "id": str(q["id"]), "no": no, "type": q["type"],
-                "stem": q.get("stem", ""), "score": int(q.get("score") or 0),
+                "stem": q.get("stem", ""), "score": show(q.get("score")),
                 "section": g.get("name") or q["type"],
             }
             if q.get("options"):
                 row["options"] = q["options"]
+            # 多选题画复选框、填空题画几个输入框（2.27.0 起网页端就有，学生端 4.17.0 认这两项）。
+            # 以前包里漏了这两项，exe 上的多选题全成了单选（2.29.0 修）
+            if q.get("multi"):
+                row["multi"] = True
+            if q.get("blanks"):
+                row["blanks"] = int(q["blanks"])
             # 配图：转成 PNG 放进包里。**不转的话学生看到的是一道没有图的带图题**
             # —— Tkinter 不认 JPEG，而题库里的图基本都是 jpg
             got_img = images.as_png(q.get("image_url") or "")
@@ -310,7 +317,7 @@ def build_package(db: Session, exam: Exam, server: str = "") -> bytes:
         # 老客户端不认，照原顺序考，判分照样对 —— 交的本来就是原选项字母）
         "shuffle": wants_shuffle(exam.paper),
         "count": len(paper),
-        "full_score": sum(q["score"] for q in paper),
+        "full_score": show(sum(num(q["score"]) for q in paper)),
         "created": clock.now().strftime("%Y-%m-%d %H:%M:%S"),
         # 桌面端交卷就是拿这两样去调 /api/take/{token}/submit
         "server": base,

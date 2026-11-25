@@ -15,6 +15,7 @@ from openpyxl import Workbook
 from ..config import settings
 from ..siteconfig import site
 from .importer import DIFFICULTY_COL, export_headers
+from .paper import show
 
 # 表头读配置（见 config.yaml 的 import.export_headers），
 # 「难度」这一列由 export_headers() 补进来 —— 服务器上那份 config.yaml 是
@@ -99,7 +100,7 @@ def student_html(paper: dict) -> str:
                     # 分大题按 s 走，不再按题型 —— 「物联网实践与探索」里
                     # 选择题和操作题同属一个大题，按题型分会把它拆成两段
                     "s": it.get("section") or name,
-                    "p": int(it.get("score") or 0),
+                    "p": show(it.get("score")),
                     "q": it["stem"],
                     "o": [[o["label"], o["content"]] for o in it.get("options") or []],
                     "a": it.get("answer") or "",
@@ -114,7 +115,7 @@ def student_html(paper: dict) -> str:
             "school": paper.get("school") or "",
             "time": paper.get("duration") or "",
             "code": paper.get("code") or "",
-            "full": int(paper.get("full_score") or 0),
+            "full": show(paper.get("full_score")),
             "items": items,
         },
         ensure_ascii=False,

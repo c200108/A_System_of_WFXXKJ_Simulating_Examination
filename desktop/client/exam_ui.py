@@ -374,8 +374,8 @@ class ExamFrame(ttk.Frame):
         qtype = q.get("type")
         if qtype in ("选择题", "判断题"):
             self._render_choice(q, qid)
-            # 多选题要勾好几个，不自动跳（_render_multi 里自己写了提示）
-            self.tip.config(text="多选题：勾完点「下一题」" if q.get("multi") else "选完自动跳下一题")
+            # 4.18.0 起选完不自动跳：选好了点「下一题」，或从左边答题卡跳
+            self.tip.config(text="多选题：勾完点「下一题」" if q.get("multi") else "选好后点「下一题」")
         elif qtype == "填空题":
             self._render_blank(q, qid)
             self.tip.config(text="")
@@ -475,22 +475,12 @@ class ExamFrame(ttk.Frame):
             ).pack(fill="x", pady=3)
 
     def _picked(self, qid: str, value: str) -> None:
-        """选完一个选项，**自动跳下一题** —— 中考的机考客户端就是这么走的。
+        """选了一个选项：记下来，**不换题**（4.18.0）。
 
-        停 220 毫秒再跳：立刻跳的话学生看不见自己刚点上的那个点，会以为没点上，
-        回头再点一次。最后一题不跳（没有下一题了）。
-
-        回头改答案照样会跳 —— 改完想接着改，从左边答题卡点回来就是。
+        以前选完 220 毫秒自动跳下一题，学生想改主意还得点回来；现在和网页端一样，
+        选好了自己点「上一题 / 下一题」，或者从左边答题卡跳。
         """
         self.answer(qid, value)
-        if self.index < len(self.paper) - 1:
-            self.after(220, self._jump_after_pick)
-
-    def _jump_after_pick(self) -> None:
-        # 这 220 毫秒里可能已经交卷了（时间到自动交），交完这一屏就没了
-        if self.submitted or not self.winfo_exists():
-            return
-        self.show(self.index + 1)
 
     def _render_blank(self, q, qid):
         """填空题：一个空一个输入框（4.17.0，q["blanks"] 是服务端给的空数）。

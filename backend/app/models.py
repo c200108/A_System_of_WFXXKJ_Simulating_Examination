@@ -17,6 +17,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.types import TypeDecorator
 
 # 装得下的大 JSON。**MySQL 的 TEXT 只有 65535 字节**（中文一个字 3 字节），
 # 装不下就是 1406「Data too long」——在接口上表现为 500。
@@ -33,6 +34,23 @@ BIG_JSON = Text().with_variant(LONGTEXT, "mysql")
 # 机房版（SQLite）里建的题目、仿真任务、导入记录导进服务器时，超了就整批导不进去。
 # 两边容量一致，互相导才不会出错。
 LONG_TEXT = BIG_JSON
+
+
+class Points(TypeDecorator):
+    """分数（2.29.0）：可以带小数（按题型卷子 40 题每题 2.5 分，答对 3 题 7.5 分）。
+    存成浮点，读出来整数还是整数（3 不是 3.0），小数保留两位。"""
+
+    impl = Float
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        return None if value is None else round(float(value), 2)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        v = round(float(value), 2)
+        return int(v) if v.is_integer() else v
 
 
 def now_local() -> datetime:
@@ -494,14 +512,14 @@ class ExamSubmission(Base):
     right_count: Mapped[int] = mapped_column(Integer, default=0)
     objective_count: Mapped[int] = mapped_column(Integer, default=0)
     # 总分 = 客观题得分 + 主观题得分。老卷子（没设分）时仍是百分制折算值。
-    score: Mapped[int] = mapped_column(Integer, default=0)
+    score: Mapped[float] = mapped_column(Points, default=0)
     # 交卷时就能算出来的那部分，以及它的满分
-    objective_score: Mapped[int] = mapped_column(Integer, default=0)
-    objective_total: Mapped[int] = mapped_column(Integer, default=0)
+    objective_score: Mapped[float] = mapped_column(Points, default=0)
+    objective_total: Mapped[float] = mapped_column(Points, default=0)
     # 操作题这类要老师看的部分。学生交完卷先看到客观题得分，
     # 老师在成绩页逐题给分之后，总分自动补上。
-    subjective_score: Mapped[int] = mapped_column(Integer, default=0)
-    subjective_total: Mapped[int] = mapped_column(Integer, default=0)
+    subjective_score: Mapped[float] = mapped_column(Points, default=0)
+    subjective_total: Mapped[float] = mapped_column(Points, default=0)
     manual_json: Mapped[str] = mapped_column(LONG_TEXT, default="{}")  # {题目id: 老师给的分}
     graded_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True

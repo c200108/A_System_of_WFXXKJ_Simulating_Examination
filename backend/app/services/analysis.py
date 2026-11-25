@@ -14,7 +14,12 @@
 - 操作题还没评完的，按**当前**得分算（检查点部分通过的是按比例预填的分），另外
   单独报"还有几份待评阅"—— 评完之后页面自动刷新，数跟着变。
 - 及格线取 config.yaml 的 exam.pass_score；优秀 ≥ 85%，低分 < 40%。
-- 区分度：按总分排，取前 27% 和后 27% 两组，这道题两组得分率之差（-1～1）。
+- **每人抽的卷子可能不一样**（2.28.0 起，开了乱序的按题型卷子每次取卷重抽）：每份答卷
+  按**它自己那一套**的满分算得分率（objective_total + subjective_total，一般是 100），
+  分数段、及格率、优秀率、名次里的得分率都按这个算；每题的得分率、区分度只用抽到这题
+  的学生；大题 / 知识范围 / 题型的得分率 = 各人这部分实得分之和 ÷ 各人这部分满分之和
+  （不会超过 100%）。没重抽的考试人人一套，结果和原来一样。
+- 区分度：按得分率排，取前 27% 和后 27% 两组，这道题两组得分率之差（-1～1）。
   高分组答得好、低分组答不好，说明这题能把会的和不会的分开；差不多甚至倒过来，
   多半是题目有歧义或者答案有问题。
 """
@@ -24,6 +29,8 @@ from __future__ import annotations
 import json
 import math
 from collections import OrderedDict
+
+from .paper import num, show
 
 EXCELLENT = 85        # 优秀线（得分率 %）
 LOW = 40              # 低分线（得分率 %）
@@ -57,18 +64,20 @@ def _std(values: list) -> float:
     return math.sqrt(sum((v - mean) ** 2 for v in values) / len(values))
 
 
-def _stats(scores: list, full: float, pass_score: int) -> dict:
+def _stats(scores: list, fulls: list, pass_score: int) -> dict:
+    """scores、fulls 一一对应：每份答卷的得分和它那一套卷子的满分。"""
     n = len(scores)
     if not n:
         return {"count": 0, "avg": None, "avg_rate": None, "median": None, "max": None,
                 "min": None, "std": None, "pass_rate": None, "excellent_rate": None,
                 "low_rate": None, "full_marks": 0}
-    rates = [s / full * 100 if full else 0 for s in scores]
+    rates = [s / f * 100 if f else 0 for s, f in zip(scores, fulls)]
     avg = sum(scores) / n
+    total_full = sum(fulls)
     return {
         "count": n,
         "avg": round(avg, 1),
-        "avg_rate": round(avg / full * 100, 1) if full else 0,
+        "avg_rate": round(sum(scores) / total_full * 100, 1) if total_full else 0,
         "median": round(_median(scores), 1),
         "max": max(scores),
         "min": min(scores),
@@ -76,7 +85,7 @@ def _stats(scores: list, full: float, pass_score: int) -> dict:
         "pass_rate": _pct(sum(1 for r in rates if r >= pass_score) / n),
         "excellent_rate": _pct(sum(1 for r in rates if r >= EXCELLENT) / n),
         "low_rate": _pct(sum(1 for r in rates if r < LOW) / n),
-        "full_marks": sum(1 for s in scores if full and s >= full),
+        "full_marks": sum(1 for s, f in zip(scores, fulls) if f and s >= f),
     }
 
 
@@ -85,32 +94,60 @@ def _earned_by_question(detail: list, scored: bool) -> dict:
     out = {}
     for d in detail:
         if scored:
-            out[d["id"]] = (int(d.get("earned") or 0), int(d.get("score") or 0), bool(d.get("mine")))
+            out[d["id"]] = (num(d.get("earned")), num(d.get("score")), bool(d.get("mine")))
         elif d.get("scored"):
             out[d["id"]] = (1 if d.get("ok") else 0, 1, bool(d.get("mine")))
     return out
 
 
 def _group_rates(items: list, earned: dict, key: str) -> "OrderedDict[str, dict]":
-    """按大题 / 知识范围 / 题型汇总：满分、平均得分、得分率。"""
+    """按大题 / 知识范围 / 题型汇总：每人这部分的满分、平均得分、得分率。
+
+    每个人抽到的题可能不一样，所以按人算：这个人卷子上属于这一组的题，满分加起来、
+    得分加起来。得分率 = 所有人得分之和 ÷ 所有人满分之和（不会超过 100%）；
+    「满分 / 平均」是平均每人的；题数是平均每人这一组有几题，pool 是全场一共出现过
+    几道不同的题。没人交卷时按卷面给满分和题数，得分率空着。
+    """
+    key_of = {it["id"]: (it.get(key) or it.get("type") or "其他") for it in items}
     out: "OrderedDict[str, dict]" = OrderedDict()
     for it in items:
-        name = it.get(key) or it.get("type") or "其他"
-        g = out.setdefault(name, {"name": name, "full": 0, "got": 0.0, "questions": 0})
-        g["questions"] += 1
-    for it in items:
-        name = it.get(key) or it.get("type") or "其他"
-        g = out[name]
-        pts = [e.get(it["id"]) for e in earned.values()]
-        pts = [p for p in pts if p]
-        full = pts[0][1] if pts else int(it.get("score") or 0)
-        g["full"] += full
-        g["got"] += (sum(p[0] for p in pts) / len(pts)) if pts else 0
-    for g in out.values():
-        g["avg"] = round(g["got"], 1)
-        g["rate"] = round(g["got"] / g["full"] * 100, 1) if g["full"] else None
-        del g["got"]
-    return out
+        g = out.setdefault(key_of[it["id"]], {"got": 0.0, "full": 0.0, "n": 0, "people": 0,
+                                              "ids": set(), "base_full": 0.0, "base_n": 0})
+        g["base_full"] += num(it.get("score"))
+        g["base_n"] += 1
+    for per in earned.values():
+        mine: dict = {}
+        for qid, (got, full, _) in per.items():
+            name = key_of.get(qid)
+            if name is None:
+                continue
+            m = mine.setdefault(name, [0.0, 0.0, 0])
+            m[0] += got
+            m[1] += full
+            m[2] += 1
+            out[name]["ids"].add(qid)
+        for name, (got, full, n) in mine.items():
+            g = out[name]
+            g["got"] += got
+            g["full"] += full
+            g["n"] += n
+            g["people"] += 1
+    res: "OrderedDict[str, dict]" = OrderedDict()
+    for name, g in out.items():
+        if g["people"]:
+            per_n = g["n"] / g["people"]
+            res[name] = {
+                "name": name,
+                "questions": int(per_n) if per_n.is_integer() else round(per_n, 1),
+                "pool": len(g["ids"]),
+                "full": show(g["full"] / g["people"]),
+                "avg": round(g["got"] / g["people"], 1),
+                "rate": round(g["got"] / g["full"] * 100, 1) if g["full"] else None,
+            }
+        elif not earned:
+            res[name] = {"name": name, "questions": g["base_n"], "pool": g["base_n"],
+                         "full": show(g["base_full"]), "avg": 0, "rate": None}
+    return res
 
 
 def analyze(items: list, subs: list, pass_score: int, scope: dict | None = None,
@@ -118,13 +155,33 @@ def analyze(items: list, subs: list, pass_score: int, scope: dict | None = None,
     """subs 是要分析的那一批（全部 / 某几个班 / 选中的几个学生），all_subs 是全场
     （算名次用）。scope 原样放回去，页面上用来显示"现在看的是谁"。"""
     all_subs = all_subs if all_subs is not None else subs
-    full = sum(int(it.get("score") or 0) for it in items) if scored else 100
+    paper_full = show(sum(num(it.get("score")) for it in items)) if scored else 100
+
+    def full_of(s) -> float:
+        """这份答卷那一套卷子的满分（重抽的卷子各自是 100）；老卷子（没设分）按百分制。"""
+        if not scored:
+            return 100
+        f = num(getattr(s, "objective_total", 0)) + num(getattr(s, "subjective_total", 0))
+        return f or paper_full
+
+    fulls_all = {s.id: full_of(s) for s in all_subs}
+    for s in subs:
+        fulls_all.setdefault(s.id, full_of(s))
+    # 页面上「/满分」：大家的一般都一样（100），万一不一样取人数最多的那个
+    tally_full: dict = {}
+    for s in subs:
+        tally_full[fulls_all[s.id]] = tally_full.get(fulls_all[s.id], 0) + 1
+    full = show(max(tally_full, key=tally_full.get)) if tally_full else paper_full
+
+    def pct(s) -> float:
+        f = fulls_all.get(s.id) or full
+        return s.score / f * 100 if f else 0
     # 每份答卷的明细只解析一次：带考场快照的答卷一份就上百 KB，按题循环里反复
     # json.loads 的话，60 份 × 60 道题就是三千多次，页面每 20 秒还要刷新一回
     details = {s.id: json.loads(s.detail_json or "[]") for s in subs}
     by_q = {sid: {d.get("id"): d for d in dl} for sid, dl in details.items()}
     scores = [s.score for s in subs]
-    summary = _stats(scores, full, pass_score)
+    summary = _stats(scores, [fulls_all[s.id] for s in subs], pass_score)
     summary["full"] = full
     # 老卷子（没设分值）操作题不计分，谈不上"待复核"
     summary["pending"] = sum(
@@ -137,23 +194,25 @@ def analyze(items: list, subs: list, pass_score: int, scope: dict | None = None,
     bands = []
     for i in range(10):
         lo, hi = full * i / 10, full * (i + 1) / 10
-        n = sum(1 for s in scores if (lo <= s < hi) or (i == 9 and s >= hi))
+        # 按得分率落段（每人用自己那一套的满分），标签写成卷面分数
+        n = sum(1 for s in subs if (i * 10 <= pct(s) < (i + 1) * 10) or (i == 9 and pct(s) >= 100))
         bands.append({"from": round(lo), "to": round(hi), "label": f"{round(lo)}–{round(hi)}", "count": n})
 
     # ---------------- 班级
     by_class = OrderedDict()
     for s in sorted(subs, key=lambda x: x.student_class or ""):
-        by_class.setdefault(s.student_class or "未填班级", []).append(s.score)
+        by_class.setdefault(s.student_class or "未填班级", []).append(s)
     classes = []
-    for name, sc in by_class.items():
-        st = _stats(sc, full, pass_score)
+    for name, ss in by_class.items():
+        sc = [s.score for s in ss]
+        st = _stats(sc, [fulls_all[s.id] for s in ss], pass_score)
         st["name"] = name
         st["box"] = _quartiles(sc)
         classes.append(st)
 
     # ---------------- 每题 / 大题 / 知识范围 / 题型
     earned = {s.id: _earned_by_question(details[s.id], scored) for s in subs}
-    ordered = sorted(subs, key=lambda x: -x.score)
+    ordered = sorted(subs, key=lambda x: -pct(x))
     k = max(1, round(len(ordered) * 0.27)) if ordered else 0
     high = [s.id for s in ordered[:k]]
     low = [s.id for s in ordered[-k:]] if k else []
@@ -161,13 +220,14 @@ def analyze(items: list, subs: list, pass_score: int, scope: dict | None = None,
     def rate_of(qid, ids):
         pts = [earned[i].get(qid) for i in ids]
         pts = [p for p in pts if p and p[1]]
-        return sum(p[0] / p[1] for p in pts) / len(pts) if pts else None
+        # 抽卷的考试里一道题可能只有一两个人抽到：高、低分组里各不到 2 人，区分度没意义
+        return sum(p[0] / p[1] for p in pts) / len(pts) if pts and len(pts) >= min(2, len(ids)) else None
 
     questions = []
     for no, it in enumerate(items, 1):
         pts = [e.get(it["id"]) for e in earned.values()]
         pts = [p for p in pts if p]
-        per_full = pts[0][1] if pts else int(it.get("score") or 0)
+        per_full = pts[0][1] if pts else num(it.get("score"))
         avg = sum(p[0] for p in pts) / len(pts) if pts else 0
         rate = avg / per_full * 100 if per_full else None
         hi, lo = rate_of(it["id"], high), rate_of(it["id"], low)
@@ -175,7 +235,7 @@ def analyze(items: list, subs: list, pass_score: int, scope: dict | None = None,
         questions.append({
             "no": no, "id": it["id"], "type": it["type"], "section": it.get("section") or it["type"],
             "scope": it.get("scope") or "", "stem": (it.get("stem") or "")[:80],
-            "score": per_full, "avg": round(avg, 2), "rate": round(rate, 1) if rate is not None else None,
+            "score": show(per_full), "avg": round(avg, 2), "rate": round(rate, 1) if rate is not None else None,
             "blank": sum(1 for p in pts if not p[2]), "answered": len(pts),
             "discrimination": disc,
         })
@@ -211,7 +271,7 @@ def analyze(items: list, subs: list, pass_score: int, scope: dict | None = None,
         rank_of[s.id] = last_rank
     ranking = [{
         "sub_id": s.id, "rank": rank_of.get(s.id), "name": s.student_name, "class": s.student_class,
-        "no": s.student_no, "score": s.score, "rate": round(s.score / full * 100, 1) if full else 0,
+        "no": s.student_no, "score": s.score, "rate": round(pct(s), 1),
         "objective": s.objective_score, "subjective": s.subjective_score,
     } for s in sorted(subs, key=lambda x: (rank_of.get(x.id, 0), x.student_no or ""))]
 
@@ -222,7 +282,7 @@ def analyze(items: list, subs: list, pass_score: int, scope: dict | None = None,
             mine = {s.id: earned[s.id]}
             compare.append({
                 "sub_id": s.id, "name": s.student_name, "class": s.student_class,
-                "score": s.score, "rate": round(s.score / full * 100, 1) if full else 0,
+                "score": s.score, "rate": round(pct(s), 1),
                 "rank": rank_of.get(s.id), "of": len(board),
                 "by_scope": [{"name": g["name"], "rate": g["rate"]}
                              for g in _group_rates(items, mine, "scope").values()],
@@ -294,14 +354,16 @@ def conclusions(r: dict, pass_score: int) -> list:
         out.append("薄弱的知识范围：" + "、".join(f"{g['name']}（得分率 {g['rate']}%）" for g in weak)
                    + f"；掌握最好的是 {strong['name']}（{strong['rate']}%）。")
 
-    qs = [q for q in r["questions"] if q["rate"] is not None]
+    # 抽卷的考试：只有一两个人抽到的题，得分率说明不了问题，不拿来下结论（至少 3 人作答）
+    qs = [q for q in r["questions"] if q["rate"] is not None
+          and (q["answered"] >= 3 or q["answered"] >= s["count"])]
     if qs:
         hard = sorted(qs, key=lambda q: q["rate"])[:3]
         out.append("得分率最低的题：" + "、".join(f"第 {q['no']} 题（{q['type']}，{q['rate']}%）" for q in hard)
                    + "，讲评时优先讲。")
         under = [q for q in qs if q["rate"] < 40]
         if len(under) >= 3:
-            out.append(f"得分率不到 40% 的题有 {len(under)} 道，占全卷 {round(len(under) / len(qs) * 100)}%。")
+            out.append(f"得分率不到 40% 的题有 {len(under)} 道，占统计的 {len(qs)} 道题的 {round(len(under) / len(qs) * 100)}%。")
     odd = [q for q in r["questions"] if q["discrimination"] is not None and q["discrimination"] < 0.1
            and q["rate"] is not None and 15 < q["rate"] < 95]
     if odd:

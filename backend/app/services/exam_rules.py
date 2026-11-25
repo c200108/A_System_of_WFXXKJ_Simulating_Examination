@@ -50,7 +50,7 @@ def make_draw(db, exam: Exam) -> ExamDraw | None:
         return None
     base = load_items(db, paper)
     rnd = random.SystemRandom()
-    rows = [[it["id"], it.get("section") or it["type"], int(it.get("score") or 0)] for it in base]
+    rows = [[it["id"], it.get("section") or it["type"], it.get("score") or 0] for it in base]
     taken = {it["id"] for it in base if it["type"] not in REDRAW_TYPES}
     for qtype in REDRAW_TYPES:
         pos = [i for i, it in enumerate(base) if it["type"] == qtype]

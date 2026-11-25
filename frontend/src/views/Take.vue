@@ -199,6 +199,10 @@ async function submit() {
 <template>
   <div class="wrap" v-loading="loading">
     <!-- 开发者工具开着：盖住整页，不让交卷（examGuard.js） -->
+    <!-- 剩余答题时间：左下角固定显示（2.29.0） -->
+    <div v-if="paper && !result && gate.remainText.value" class="clock" :class="{ late: gate.remaining.value < 300 }">
+      {{ gate.remainText.value }}
+    </div>
     <div v-if="tampered && !result" class="guard">
       检测到开发者工具（F12）开着。<br />考试期间不能用，请关掉它，关掉后自动恢复答题。
     </div>
@@ -375,6 +379,30 @@ async function submit() {
 .tbar {
   font-size: 12px;
   color: var(--el-text-color-secondary);
+}
+.clock {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 2000;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: var(--el-bg-color-overlay, #fff);
+  border: 1px solid var(--el-border-color);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--el-text-color-primary);
+}
+@media (max-width: 760px) {
+  .clock {
+    bottom: 84px;     /* 窄屏时交卷栏会占满底部，挪到它上面 */
+  }
+}
+.clock.late {
+  color: var(--el-color-danger);
+  border-color: var(--el-color-danger-light-5);
 }
 .guard {
   position: fixed;

@@ -52,6 +52,7 @@ from ..routers.take import _submit_out as submit_out
 from ..services.exam_rules import check_submit
 from ..services.exam import exam_duration, submission_scores
 from ..services import recycle, roster
+from ..services.paper import num, show
 from ..services.exam import (
     grade,
     group_items,
@@ -427,7 +428,7 @@ def student_paper(
         "early_submit": bool(exam.early_submit),
         # 选择判断题乱序：答题页按「考试 + 学号」打乱，交上来的仍是原选项字母
         "shuffle": wants_shuffle(exam.paper),
-        "full_score": sum(int(it.get("score") or 0) for it in items),
+        "full_score": show(sum(num(it.get("score")) for it in items)),
         # 和公开答题页同一个函数，答案在这一步就被剥掉了
         "groups": strip_answers(group_items(items)),
     }
@@ -536,7 +537,7 @@ def student_review(
                 "stem": q.get("stem", ""),
                 "options": q.get("options") or [],
                 "image_url": q.get("image_url") or "",
-                "score": int(q.get("score") or 0),
+                "score": show(q.get("score")),
                 "mine": _mine_text(q, d.get("mine", "")),
             }
             if exam.show_answer:

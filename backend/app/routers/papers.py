@@ -16,7 +16,7 @@ from ..services import recycle
 from ..services.blueprint import slot_hint, slot_key, slot_pool
 from ..services.export import questions_to_xlsx, student_html
 from ..services.literacy import OBJECTIVE_TOTAL, split_scopes
-from ..services.paper import build_by_sections, build_paper, even_scores, type_pool
+from ..services.paper import build_by_sections, build_paper, even_scores, num, show, type_pool
 from ..services.sampler import allocate
 from ..siteconfig import site
 from .dicts import active_names, scope_order
@@ -65,7 +65,8 @@ def _persist(db: Session, paper: dict, user: User) -> int:
                     question_id=it["id"],
                     order_no=order,
                     section=it.get("section") or group.get("name") or group["type"],
-                    score=int(it.get("score") or 0),
+                    # 按题型的卷子不存分值（可能带小数，列是整数），取题时当场平均分（even_scores）
+                    score=int(it.get("score") or 0) if paper.get("by_sections") else 0,
                     # 打乱后的样子存快照，重新打开和当初印出去的一致
                     snapshot_json=json.dumps(
                         {"answer": it["answer"], "options": it["options"]}, ensure_ascii=False
@@ -314,11 +315,14 @@ def get_paper(paper_id: int, _: User = Depends(get_current_user), db: Session = 
         tally[q.scope] = tally.get(q.scope, 0) + 1
         total += 1
 
-    # 老的按题型卷子没设分：和考试里一样当场按比例补上（2.28.0）
+    # 按题型的卷子：和考试里一样当场每题平均分（2.28.0 补分，2.29.0 起每题一样）
     flat = [it for g in groups for it in g["items"]]
-    even_scores(flat)
+    even_scores(flat, force=conf.get("by_sections") is False)
+    full = show(sum(num(it["score"]) for it in flat))
     for g in groups:
-        g["score"] = sum(int(it["score"]) for it in g["items"])
+        g["score"] = show(sum(num(it["score"]) for it in g["items"]))
+        for it in g["items"]:
+            it["score"] = show(it["score"])
 
     return {
         "paper_id": paper.id,
@@ -328,7 +332,7 @@ def get_paper(paper_id: int, _: User = Depends(get_current_user), db: Session = 
         "code": paper.code,
         "seed": conf.get("seed", ""),
         "total": total,
-        "full_score": sum(g["score"] for g in groups),
+        "full_score": full,
         "by_sections": bool(conf.get("by_sections")),
         "shuffle": bool(conf.get("shuffle")),
         "tally": tally,

@@ -428,19 +428,17 @@ def two_choice_questions(frame):
     frame.app.root.update()
 
 
-def test_picking_an_option_jumps_to_the_next_question(app, server, exam):
-    """选完自动跳下一题 —— 中考的机考客户端就是这么走的，学生不用再点一次。
-
-    跳之前停 220 毫秒：立刻跳的话学生看不见自己刚点上的那个点，会以为没点上。
-    """
+def test_picking_an_option_stays_on_the_question(app, server, exam):
+    """4.18.0：选完不自动跳，只有点「上一题 / 下一题」（或答题卡）才换题。"""
     frame = start_exam(app, server, exam, "26090113")
     two_choice_questions(frame)
 
     radios = [w for w in frame.area.winfo_children() if isinstance(w, tk.Radiobutton)]
     radios[0].invoke()
     assert frame.answers["7001"] == "A"
-    assert frame.index == 0, "不该立刻跳 —— 学生得看见自己点上了"
-    assert settle(app, 3, lambda: frame.index == 1), "220 毫秒后该跳到第 2 题"
+    assert not settle(app, 1.5, lambda: frame.index != 0), "选完留在这一题"
+    radios[1].invoke()
+    assert frame.answers["7001"] == "B" and frame.index == 0, "改主意直接点别的选项"
 
 
 def test_the_last_question_does_not_jump(app, server, exam):

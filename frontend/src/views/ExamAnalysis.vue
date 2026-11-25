@@ -492,8 +492,11 @@ function printPage() {
             <EChart :option="scopeOpt" :axis-tip="plainTip" label="各知识范围的得分率" />
             <el-table v-if="tables.scopes" :data="data.scopes" size="small" border>
               <el-table-column prop="name" label="知识范围" />
-              <el-table-column prop="questions" label="题数" width="70" />
-              <el-table-column label="满分 / 平均" width="120">
+              <!-- 每人抽的题不一样时（2.28.0 重抽）：每人几题，括号里是全场一共出现过几道 -->
+              <el-table-column label="每人题数" width="160">
+                <template #default="{ row }">{{ row.questions }}<span v-if="row.pool > row.questions" style="color: var(--el-text-color-secondary); font-size: 12px">（共抽到 {{ row.pool }} 道）</span></template>
+              </el-table-column>
+              <el-table-column label="每人满分 / 平均" width="130">
                 <template #default="{ row }">{{ row.full }} / {{ row.avg }}</template>
               </el-table-column>
               <el-table-column label="得分率" width="90">
@@ -547,6 +550,7 @@ function printPage() {
               <template #default="{ row }"><span :class="rateClass(row.rate)">{{ row.rate ?? '—' }}%</span></template>
             </el-table-column>
             <el-table-column prop="discrimination" label="区分度" width="84" sortable />
+            <el-table-column prop="answered" label="作答人数" width="84" sortable />
             <el-table-column prop="blank" label="未作答" width="76" />
           </el-table>
         </section>

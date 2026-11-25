@@ -56,7 +56,10 @@ def fingerprint(db: Session, exam: Exam, server: str) -> str:
     paper_id = exam.paper_id
     # early_submit 写在包的 manifest 里：开关一改，包也得重建（以前漏了，老师考试中途
     # 打开「允许提前交卷」，后开考的学生拿到的还是缓存里关着的那份）
-    marks = [str(exam.id), str(exam.token), str(exam.is_open), str(exam.early_submit), server]
+    marks = [str(exam.id), str(exam.token), str(exam.is_open), str(exam.early_submit), server,
+             # 单独改的考试时长写进 manifest（2.28.0）；包的内容格式变了（2.29.0 起带多选 / 填空空数、
+             # 每题平均分）也要重建，老缓存不能再发
+             str(getattr(exam, "duration", "") or ""), "pkg-2.29.0"]
 
     row = db.execute(
         select(func.max(Paper.created_at)).where(Paper.id == paper_id)

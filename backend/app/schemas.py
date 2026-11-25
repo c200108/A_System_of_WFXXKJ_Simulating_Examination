@@ -1,9 +1,12 @@
 from datetime import date, datetime
-from typing import Literal
+from typing import Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .siteconfig import site
+
+# 分数：整数照旧是整数，按题型卷子平均赋分后可能带小数（2.29.0，40 题每题 2.5 分）
+Num = Union[int, float]
 
 
 class ORMModel(BaseModel):
@@ -283,10 +286,10 @@ class StudentExamOut(BaseModel):
     token: str
     total: int = 0
     submitted: bool = False
-    score: int | None = None          # 没交或老师关了看分数就是 None
-    objective_score: int | None = None
-    subjective_score: int | None = None
-    full_score: int | None = None     # 卷面总分；老卷子是 None，按百分制看
+    score: Num | None = None          # 没交或老师关了看分数就是 None
+    objective_score: Num | None = None
+    subjective_score: Num | None = None
+    full_score: Num | None = None     # 卷面总分；老卷子是 None，按百分制看
     pending_manual: bool = False      # 操作题还等着老师评阅
     show_score: bool = True
     allow_retake: bool = False
@@ -303,7 +306,7 @@ class StudentHomeOut(BaseModel):
     # 已出分的那几场考试的平均分，**折成百分制**：卷面总分各场不一样
     # （100 分的期末和 50 分的小测），直接平均出来的数没有意义。
     # 一场都没考、或者老师都关了"交卷后看分数"时是 None。
-    exam_avg_score: int | None = None
+    exam_avg_score: Num | None = None
     typing_count: int = 0
     typing_best_speed: int = 0
     typing_avg_accuracy: int = 0
@@ -424,7 +427,7 @@ class PaperItemOut(BaseModel):
     image_url: str | None = None
     difficulty: int = 3
     section: str = ""                     # 归属大题
-    score: int = 0                        # 本题分值，0 = 这份卷子没设分
+    score: Num = 0                        # 本题分值，0 = 这份卷子没设分
     options: list[OptionOut] = []
 
 
@@ -433,7 +436,7 @@ class PaperGroupOut(BaseModel):
     # type 留着是为了不打断老前端，值和 name 相同。
     name: str = ""
     type: str
-    score: int = 0                        # 本大题总分
+    score: Num = 0                        # 本大题总分
     items: list[PaperItemOut]
 
 
@@ -445,7 +448,7 @@ class PaperGenerateOut(BaseModel):
     code: str = ""                        # 卷号 NO.12345
     seed: str = ""
     total: int
-    full_score: int = 0                   # 卷面总分，0 = 这份卷子没设分
+    full_score: Num = 0                   # 卷面总分，0 = 这份卷子没设分
     by_sections: bool = False
     shuffle: bool = False                 # 选择判断题乱序：学生取卷时各自打乱
     tally: dict[str, int]                 # 各知识范围实际抽了几题
@@ -526,7 +529,7 @@ class ExamOut(ORMModel):
     submission_count: int = 0
     student_count: int = 0         # 交卷人数（一个人交几次算一个）
     avg_score: float | None = None
-    full_score: int = 0            # 卷面总分，0 = 老卷子（百分制）
+    full_score: Num = 0            # 卷面总分，0 = 老卷子（百分制）
     ungraded_count: int = 0        # 还有几份卷子的操作题没批完
     owner_name: str = ""
     # 能不能改设置／删除。老师看得到管理员发的考试，但只能查成绩
@@ -542,7 +545,7 @@ class TakeQuestionOut(BaseModel):
     stem: str
     scope: str
     image_url: str | None = None
-    score: int = 0                        # 本题分值。卷面上本来就印着，不是答案线索
+    score: Num = 0                        # 本题分值。卷面上本来就印着，不是答案线索
     options: list[OptionOut] = []
     # 2.27.0：多选题（画复选框）、填空题有几个空（画几个输入框）。只有形状，不是答案
     multi: bool = False
@@ -556,7 +559,7 @@ class TakeQuestionOut(BaseModel):
 class TakeGroupOut(BaseModel):
     name: str = ""
     type: str
-    score: int = 0
+    score: Num = 0
     items: list[TakeQuestionOut]
 
 
@@ -568,7 +571,7 @@ class TakePaperOut(BaseModel):
     duration: str = ""
     code: str = ""
     total: int
-    full_score: int = 0
+    full_score: Num = 0
     early_submit: bool = False      # 老师开了「允许提前交卷」：前端不拦交卷
     # 选择判断题乱序：答题页按「考试 + 学生」各自打乱（题号顺序、选择题选项），
     # 交上来的仍是原选项字母
@@ -592,14 +595,14 @@ class SubmitIn(BaseModel):
 class SubmitOut(BaseModel):
     submitted: bool = True
     message: str = ""
-    score: int | None = None              # show_score 关掉时为 None
+    score: Num | None = None              # show_score 关掉时为 None
     right_count: int | None = None
     objective_count: int | None = None
     # 主客观分开报：操作题要老师看，学生先拿到客观题这一段
-    objective_score: int | None = None
-    objective_total: int | None = None
-    subjective_total: int | None = None
-    full_score: int | None = None
+    objective_score: Num | None = None
+    objective_total: Num | None = None
+    subjective_total: Num | None = None
+    full_score: Num | None = None
     pending_manual: int = 0               # 还有几道题等着老师评阅
     detail: list[dict] = []               # show_answer 关掉时为空
     # 2.28.0：这份成绩在全部交卷同学里排第几（每人取最高分），show_score 关掉时不给
@@ -614,12 +617,12 @@ class SubmissionOut(ORMModel):
     student_no: str
     right_count: int
     objective_count: int
-    score: int
-    objective_score: int = 0
-    objective_total: int = 0
-    subjective_score: int = 0
-    subjective_total: int = 0
-    full_score: int = 0                   # 客观 + 主观满分，0 = 老卷子（百分制）
+    score: Num
+    objective_score: Num = 0
+    objective_total: Num = 0
+    subjective_score: Num = 0
+    subjective_total: Num = 0
+    full_score: Num = 0                   # 客观 + 主观满分，0 = 老卷子（百分制）
     pending_manual: int = 0               # 还有几道主观题没批
     graded_by_name: str = ""              # 谁批的
     can_grade: bool = True                # 当前这位老师批不批得了（只批自己带的班）
@@ -636,7 +639,7 @@ class IdsIn(BaseModel):
 class ManualGradeIn(BaseModel):
     """老师给一份答卷的主观题赋分。键是题目 id，值是得分，超过本题满分按满分算。"""
 
-    scores: dict[str, int] = Field(default_factory=dict)
+    scores: dict[str, float] = Field(default_factory=dict)
 
 
 # ---------- 导入 ----------

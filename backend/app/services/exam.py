@@ -26,7 +26,7 @@ from .. import clock
 from ..models import Exam, Paper, PaperItem, Question
 from ..siteconfig import site
 from . import answers as answer_rules, sim, stem as stem_rules
-from .paper import even_scores, right_letter
+from .paper import even_scores, num, right_letter, show
 
 
 def _json(raw, fallback):
@@ -55,7 +55,7 @@ def is_manual(item: dict) -> bool:
 
 def has_scores(items: list[dict]) -> bool:
     """这份卷子有没有设每题分值。没有就是 2.4.0 之前的老卷子。"""
-    return any(int(it.get("score") or 0) for it in items)
+    return any(num(it.get("score")) for it in items)
 
 
 def sim_kind_of(q: Question) -> str:
@@ -220,7 +220,7 @@ def load_items(db: Session, paper: Paper) -> list[dict]:
         q = db.get(Question, it.question_id)
         if q:
             out.append(_item_from_row(it, q))
-    even_scores(out)
+    even_scores(out, force=_json(paper.config_json, {}).get("by_sections") is False)
     return separate_workdirs(out)
 
 
@@ -239,6 +239,7 @@ def load_draw_items(db: Session, exam: Exam, rows: list) -> list[dict]:
         if q:
             fake = SimpleNamespace(snapshot_json=None, section=section, score=score)
             out.append(_item_from_row(fake, q))
+    even_scores(out, force=True)      # 只有按题型的卷子才重抽；早先存的 2/3 分也按平均分算
     return separate_workdirs(out)
 
 
@@ -261,7 +262,7 @@ def group_items(items: list[dict]) -> list[dict]:
             g = {"name": name, "type": name, "score": 0, "items": []}
             groups.append(g)
         g["items"].append(it)
-        g["score"] += int(it.get("score") or 0)
+        g["score"] = show(num(g["score"]) + num(it.get("score")))
     return groups
 
 
@@ -276,10 +277,12 @@ def strip_answers(groups: list[dict]) -> list[dict]:
             "type": g["type"],
             "score": g.get("score", 0),
             "items": [
-                # sim_checks 是仿真题的答案，和 answer 一样绝不能发给学生
+                # sim_checks 是仿真题的答案，和 answer 一样绝不能发给学生；
+                # 分值显示两位小数（43 题时每题约 2.33 分），判分按服务端的精确值
             {
-                k: v for k, v in it.items()
-                if k not in ("answer", "source", "difficulty", "sim_checks")
+                **{k: v for k, v in it.items()
+                   if k not in ("answer", "source", "difficulty", "sim_checks")},
+                "score": show(it.get("score")),
             }
                 for it in g["items"]
             ],
@@ -313,7 +316,10 @@ def grade(items: list[dict], answers: dict) -> dict:
     for it in items:
         mine = answers.get(str(it["id"]), answers.get(it["id"], ""))
         mine = "" if mine is None else str(mine).strip()
-        pts = int(it.get("score") or 0)
+        pts = num(it.get("score"))
+        whole = pts.is_integer()
+        if whole:
+            pts = int(pts)
 
         if not scorable(it):
             manual = is_manual(it)
@@ -324,7 +330,7 @@ def grade(items: list[dict], answers: dict) -> dict:
                 "type": it["type"],
                 "scored": False,
                 "manual": manual,
-                "score": pts,
+                "score": show(pts),
                 "earned": 0,
                 "mine": mine,
                 "answer": it.get("answer") or "",
@@ -367,7 +373,7 @@ def grade(items: list[dict], answers: dict) -> dict:
         correct = right_letter(it)
         # 多选题比字母集合、填空题按空给分（services/answers.py）；单选、判断照旧整串比
         ok, part = answer_rules.judge(it, mine, correct)
-        earned = pts if ok else int(round(pts * part))
+        earned = pts if ok else (int(round(pts * part)) if whole else pts * part)
         if ok:
             right += 1
         obj_score += earned
@@ -376,8 +382,8 @@ def grade(items: list[dict], answers: dict) -> dict:
             "type": it["type"],
             "scored": True,
             "manual": False,
-            "score": pts,
-            "earned": earned,
+            "score": show(pts),
+            "earned": show(earned),
             "ok": ok,
             "mine": mine,
             "answer": correct,
@@ -396,13 +402,13 @@ def grade(items: list[dict], answers: dict) -> dict:
     return {
         "right_count": right,
         "objective_count": objective,
-        "objective_score": obj_score,
-        "objective_total": obj_total,
-        "subjective_score": auto_sub,
-        "subjective_total": sub_total,
+        "objective_score": show(obj_score),
+        "objective_total": show(obj_total),
+        "subjective_score": show(auto_sub),
+        "subjective_total": show(sub_total),
         # 仿真题已经判了，总分把那部分算进去；剩下的等老师批完再补
-        "score": obj_score + auto_sub,
-        "full_score": obj_total + sub_total,
+        "score": show(obj_score + auto_sub),
+        "full_score": show(obj_total + sub_total),
         # 待老师评阅的：机器判不了的，加上检查点部分通过、等老师复核的
         "pending_manual": sum(1 for d in detail if d.get("manual") and not d.get("graded")),
         "auto_manual": auto_manual,
@@ -425,7 +431,7 @@ def settle_auto(d: dict) -> bool:
     passed = int(d.get("check_passed") or 0)
     if total <= 0:
         return False
-    full = int(d.get("score") or 0)
+    full = show(d.get("score"))
     if passed == total:
         d.update(earned=full, graded=True, auto_graded=True,
                  reason="检查点全部通过，自动给满分")
@@ -467,7 +473,7 @@ def settle_submission(sub) -> bool:
     return True
 
 
-def scale_sim(ran: dict, pts: int) -> int:
+def scale_sim(ran: dict, pts):
     """把检查点的得分折算成这道题在卷面上的分值。
 
     检查点的总分是出题时定的（比如四小问各 2 分），而卷面分值是组卷时按难度
@@ -477,7 +483,8 @@ def scale_sim(ran: dict, pts: int) -> int:
     full = int(ran.get("full") or 0)
     if not full or pts <= 0:
         return 0
-    got = int(round(pts * int(ran.get("score") or 0) / full))
+    raw = pts * int(ran.get("score") or 0) / full
+    got = int(round(raw)) if num(pts).is_integer() else show(raw)
     return max(0, min(pts, got))
 
 
@@ -516,11 +523,11 @@ def apply_manual(detail: list[dict], manual_scores: dict) -> dict:
     for d in detail:
         if not d.get("manual"):
             continue
-        full = int(d.get("score") or 0)
+        full = num(d.get("score"))
         raw = manual_scores.get(str(d["id"]), manual_scores.get(d["id"]))
         if (raw is None or raw == "") and d.get("auto_graded") and d.get("graded"):
             # 检查点全过 / 全没过、系统已经定了分的：老师这次没动它，保持原样
-            got += int(d.get("earned") or 0)
+            got += num(d.get("earned"))
             graded += 1
             continue
         if raw is None or raw == "":
@@ -529,10 +536,10 @@ def apply_manual(detail: list[dict], manual_scores: dict) -> dict:
             pending += 1
             continue
         try:
-            value = int(round(float(raw)))
+            value = show(raw)       # 老师可以给半分（2.29.0）
         except (TypeError, ValueError):
             value = 0
-        value = max(0, min(full, value))
+        value = show(max(0, min(full, value)))
         d["earned"] = value
         d["graded"] = True
         d["auto_graded"] = False             # 老师给的分，以后 settle_auto 不再碰它
@@ -541,7 +548,7 @@ def apply_manual(detail: list[dict], manual_scores: dict) -> dict:
 
     return {
         "detail": detail,
-        "subjective_score": got,
+        "subjective_score": show(got),
         "graded_count": graded,
         "pending": pending,
     }
@@ -576,7 +583,7 @@ def question_stats(exam: Exam, items: list[dict]) -> list[dict]:
                 "type": it["type"],
                 "scope": it["scope"],
                 "section": it.get("section") or it["type"],
-                "score": int(it.get("score") or 0),
+                "score": show(it.get("score")),
                 "difficulty": it.get("difficulty") or 3,
                 "stem": it["stem"][:60],
                 "answer": it.get("answer") or "",

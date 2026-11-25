@@ -137,10 +137,13 @@ def build_paper(
         groups.append({"name": qtype, "type": qtype, "score": 0, "items": items})
 
     flat = [it for g in groups for it in g["items"]]
-    # 2.28.0：按题型组卷也按比例给每题赋分，合计 100
-    even_scores(flat)
+    # 2.28.0：按题型组卷也给每题赋分，合计 100；2.29.0 起每题平均
+    even_scores(flat, force=True)
+    full = show(sum(num(it["score"]) for it in flat))
     for g in groups:
-        g["score"] = sum(int(it["score"]) for it in g["items"])
+        g["score"] = show(sum(num(it["score"]) for it in g["items"]))
+        for it in g["items"]:
+            it["score"] = show(it["score"])    # 卷面显示两位小数；判分时 load_items 按精确值重算
     tally: dict[str, int] = {k: 0 for k in scope_order}
     for it in flat:
         tally[it["scope"]] = tally.get(it["scope"], 0) + 1
@@ -152,7 +155,7 @@ def build_paper(
         "code": site.paper.code_prefix + str(_seed_int(seed_str) % 100000).zfill(5),
         "seed": seed_str,
         "total": len(flat),
-        "full_score": sum(int(it["score"]) for it in flat),
+        "full_score": full,
         "by_sections": False,
         "shuffle": bool(shuffle),
         "tally": tally,
@@ -162,18 +165,37 @@ def build_paper(
     }
 
 
-def even_scores(items: list[dict], total: int = 100) -> None:
-    """按题型组卷的卷子按比例给每题赋分（2.28.0），整卷合计 total 分。
+def num(x) -> float:
+    """分值转成数（可以带小数，2.29.0 起按题型卷子每题可能是 2.5 分）。"""
+    try:
+        return float(x or 0)
+    except (TypeError, ValueError):
+        return 0.0
 
-    原来这种卷子不设分值、判分按正确率折百分制，卷面上看不出一题几分。现在每题平分，
-    除不尽的余数从前往后每题多给 1 分（40 题就是前 20 题 3 分、后 20 题 2 分），合计正好 100。
-    操作题和别的题一样分；已经设了分的卷子不动。就地改 items 的 score。
+
+def show(x):
+    """给人看的分值：保留两位小数，整数就写整数（3 而不是 3.0，2.5 还是 2.5）。"""
+    v = round(num(x), 2)
+    return int(v) if v.is_integer() else v
+
+
+def even_scores(items: list[dict], total: int = 100, force: bool = False) -> None:
+    """按题型组卷的卷子每题平均赋分（2.29.0），整卷合计 total 分。
+
+    每题都一样：40 题每题 2.5 分、50 题每题 2 分，不会出现有的 2 分有的 3 分。除不尽的
+    （比如 43 题）每题按精确值判分，卷面上显示两位小数（约 2.33 分），总分仍是 100。
+    操作题和别的题一样分。就地改 items 的 score。
+    force=True（按题型的卷子）：不管存的是什么都重算 —— 2.28.0 存进去的「2 分、3 分」
+    也跟着变成平均分；六大题卷子不传 force，设了分的照旧不动。
     """
-    if not items or any(int(it.get("score") or 0) for it in items):
+    if not items:
         return
-    base, extra = divmod(int(total), len(items))
-    for i, it in enumerate(items):
-        it["score"] = base + (1 if i < extra else 0)
+    if not force and any(num(it.get("score")) for it in items):
+        return
+    n = len(items)
+    each = total // n if total % n == 0 else total / n
+    for it in items:
+        it["score"] = each
 
 
 def right_letter(item: dict) -> str:

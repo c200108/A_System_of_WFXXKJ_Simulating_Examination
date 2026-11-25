@@ -14,6 +14,7 @@ from ..database import get_db
 from ..models import Exam, ExamSubmission, SchoolClass, Student
 from ..schemas import SubmitIn, SubmitOut, TakePaperOut
 from ..services import throttle
+from ..services.paper import num, show
 from ..services.exam import (
     exam_duration,
     grade,
@@ -153,7 +154,7 @@ def take_paper(token: str, request: Request, draw: str = "", db: Session = Depen
         duration=exam_duration(exam),
         code=exam.paper.code,
         total=len(items),
-        full_score=sum(int(it.get("score") or 0) for it in items),
+        full_score=show(sum(num(it.get("score")) for it in items)),
         early_submit=bool(exam.early_submit),
         shuffle=wants_shuffle(exam.paper),
         draw=got.key if got is not None else "",
