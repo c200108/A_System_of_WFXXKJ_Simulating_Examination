@@ -363,6 +363,7 @@ class QuestionOut(ORMModel):
     image_url: str | None = None
     difficulty: int = 3
     is_pinned: bool
+    is_disabled: bool = False             # 停用的题组卷抽不到（2.27.0）
     # 挂着的仿真任务（只有操作题用）。sim_task 只带题型和标题，
     # 检查点不在这里 —— 那是答案
     sim_task_id: int | None = None
@@ -527,6 +528,9 @@ class TakeQuestionOut(BaseModel):
     image_url: str | None = None
     score: int = 0                        # 本题分值。卷面上本来就印着，不是答案线索
     options: list[OptionOut] = []
+    # 2.27.0：多选题（画复选框）、填空题有几个空（画几个输入框）。只有形状，不是答案
+    multi: bool = False
+    blanks: int = 0
     # 仿真操作题的**初始环境**：学生得拿到它才有东西可操作。
     # 里面只有 id/kind/title/env，检查点（等同于答案）由 sim.sim_for_student()
     # 和 exam.strip_answers() 两道关卡挡在服务端，见 test_checks_never_reach_the_student。
@@ -560,6 +564,8 @@ class SubmitIn(BaseModel):
     student_name: str = Field(default="", max_length=64)
     student_class: str = Field(default="", max_length=64)
     student_no: str = Field(default="", max_length=64)
+    # 网页答题页（2.27.0）：从下拉里选的班级。交卷时核对姓名在不在这个班的名单里
+    class_id: int | None = None
     answers: dict[str, str] = {}
 
 
@@ -660,6 +666,7 @@ class StatsOut(BaseModel):
     by_difficulty: dict[str, int] = {}    # {"1": 12, "2": 40, ...}
     with_image: int
     pinned: int = 0
+    disabled: int = 0                     # 停用的题数（2.27.0）
     sources: list[str] = []               # 题库里出现过的「来源」，供筛选下拉用
 
 

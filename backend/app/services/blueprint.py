@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from ..models import Question
 from ..siteconfig import PaperSectionConf, site
 from .exam import sim_kind_of
+from .literacy import EXAM_SCOPES
 from .sampler import pick
 
 # 主观题在同一个大题里的分数权重。乘 2 只是让它排在前面，
@@ -70,9 +71,11 @@ def slot_pool(
     db: Session, slot, *, scopes_filter: list[str] | None, require_answer: bool
 ) -> list[Question]:
     stmt = select(Question).where(
-        Question.is_deleted.is_(False), Question.type == slot.type
+        Question.is_deleted.is_(False), Question.is_disabled.is_(False), Question.type == slot.type,
+        # 人工智能通识教育测评题不进六大题（2.27.0）：哪一组都不从这两个范围抽
+        Question.scope.not_in(EXAM_SCOPES),
     )
-    wanted = slot.scopes or scopes_filter
+    wanted = [s for s in (slot.scopes or scopes_filter or []) if s not in EXAM_SCOPES]
     if wanted:
         stmt = stmt.where(Question.scope.in_(wanted))
     pool = list(db.scalars(stmt))

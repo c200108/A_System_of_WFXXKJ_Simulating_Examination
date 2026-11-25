@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download } from '../api'
 import { ArrowDown } from '@element-plus/icons-vue'
@@ -25,6 +25,8 @@ const query = reactive({
   difficulty: '',
   // 题目有无答案：'' 全部、true 有答案、false 没答案（没答案的题组卷时默认会被跳过）
   has_answer: '',
+  // 在用 / 已停用（2.27.0）；'' 全部
+  status: '',
   page: 1,
   page_size: 20
 })
@@ -51,14 +53,59 @@ const blank = () => ({
   is_pinned: false,
   // 操作题可以挂一个仿真任务：挂上之后学生在网页里真做一遍，交卷自动判分
   sim_task_id: null,
+  // 第五个选项 E 留空就不用（测评题里有五个选项的多选题）
   options: [
     { label: 'A', content: '' },
     { label: 'B', content: '' },
     { label: 'C', content: '' },
-    { label: 'D', content: '' }
+    { label: 'D', content: '' },
+    { label: 'E', content: '' }
   ]
 })
 const form = reactive(blank())
+
+/** 选择题的答案勾几个就是几选：勾一个是单选，勾两个以上是多选（答案存成 ABD） */
+const answerLetters = computed({
+  get: () => String(form.answer || '').toUpperCase().replace(/[^A-Z]/g, '').split('').filter(Boolean),
+  set: v => (form.answer = [...new Set(v)].sort().join(''))
+})
+
+// ---------- 勾选、批量操作（2.27.0） ----------
+const picked = ref([])
+const table = ref(null)
+const bulkScope = ref('')
+const bulkLevel = ref(null)
+const BULK_TEXT = {
+  disable: '停用',
+  enable: '启用',
+  delete: '删除',
+  pin: '设为必出',
+  unpin: '取消必出',
+  scope: '改知识范围',
+  difficulty: '改难度'
+}
+async function bulk(action, value = null) {
+  const ids = picked.value.map(r => r.id)
+  if (!ids.length) return ElMessage.warning('先在表格左边勾选题目')
+  if (action === 'scope' && !value) return ElMessage.warning('先选要改成的知识范围')
+  if (action === 'difficulty' && !value) return ElMessage.warning('先选要改成的难度')
+  const tip = {
+    delete: `删除选中的 ${ids.length} 道题？删掉的在回收站里，7 天内可以还原。`,
+    disable: `停用选中的 ${ids.length} 道题？停用的题还在题库里，组卷时不会被抽到，随时能再启用。`
+  }[action]
+  if (tip) {
+    await ElMessageBox.confirm(tip, BULK_TEXT[action], {
+      type: 'warning',
+      confirmButtonText: `${BULK_TEXT[action]} ${ids.length} 道`,
+      confirmButtonClass: action === 'delete' ? 'el-button--danger' : ''
+    })
+  }
+  const res = await api.bulkQuestions(ids, action, value)
+  ElMessage.success(`已${BULK_TEXT[action]} ${res.done} 道` + (res.skipped ? `，${res.skipped} 道已经不在了` : ''))
+  picked.value = []
+  table.value?.clearSelection()
+  load()
+}
 
 function activeFilters() {
   const params = { ...query }
@@ -69,6 +116,11 @@ function activeFilters() {
   if (onlyPinned.value) params.pinned = true
   return params
 }
+
+/** 停用的题整行变灰 */
+const rowClass = ({ row }) => (row.is_disabled ? 'row-disabled' : '')
+/** 选择题答案不止一个字母就是多选题 */
+const isMulti = row => row.type === '选择题' && String(row.answer || '').replace(/[^A-Za-z]/g, '').length > 1
 
 /** 选项拼成一行，给 ClampText 当「内容变了没」的依据（显示走插槽） */
 function optionsLine(row) {
@@ -131,8 +183,9 @@ function openEdit(row) {
     difficulty: row.difficulty || null,
     is_pinned: row.is_pinned,
     sim_task_id: row.sim_task_id || null,
+    // 老题只有 A~D 四项：补上空的 E，编辑框里照样能加第五项
     options: row.options.length
-      ? row.options.map(o => ({ ...o }))
+      ? [...row.options.map(o => ({ ...o })), ...blank().options.slice(row.options.length)]
       : blank().options
   })
   dialog.visible = true
@@ -141,6 +194,11 @@ function openEdit(row) {
 async function save() {
   if (!form.stem.trim()) return ElMessage.warning('题干不能为空')
   if (!form.scope) return ElMessage.warning('请选择知识范围')
+  if (form.type === '选择题') {
+    const have = new Set(form.options.filter(o => o.content.trim()).map(o => o.label))
+    const bad = answerLetters.value.filter(l => !have.has(l))
+    if (bad.length) return ElMessage.warning(`答案里的 ${bad.join('、')} 这一项是空的`)
+  }
 
   const payload = {
     ...form,
@@ -211,6 +269,10 @@ async function uploadImage(options) {
         <el-option label="有答案" :value="true" />
         <el-option label="无答案" :value="false" />
       </el-select>
+      <el-select v-model="query.status" placeholder="在用 / 停用" clearable style="width: 118px">
+        <el-option label="在用的" value="active" />
+        <el-option label="已停用" value="disabled" />
+      </el-select>
       <el-checkbox v-model="onlyPinned" @change="search">只看必出</el-checkbox>
       <el-button type="primary" @click="search">查询</el-button>
       <div class="flex-1" />
@@ -231,6 +293,7 @@ async function uploadImage(options) {
       共 <b>{{ stats.total }}</b> 题
       <span v-for="(v, k) in stats.by_type" :key="k"> ｜ {{ k }} {{ v }}</span>
       ｜ 带图 {{ stats.with_image }} ｜ 必出 {{ stats.pinned }}
+      <template v-if="stats.disabled"> ｜ <span class="dis-n">已停用 {{ stats.disabled }}</span></template>
       <template v-if="stats.by_difficulty">
         <br />难度分布：<span v-for="l in LEVELS" :key="l.value" class="lv">
           {{ l.value }} 级 <b>{{ stats.by_difficulty[l.value] || 0 }}</b>
@@ -241,9 +304,48 @@ async function uploadImage(options) {
   </el-card>
 
   <el-card shadow="never">
-    <el-table :data="rows" v-loading="loading" border stripe size="small">
-      <el-table-column prop="code" label="编号" width="80" />
-      <el-table-column prop="type" label="题型" width="80" />
+    <!-- 勾了题才出现：批量停用 / 启用 / 删除 / 必出 / 改知识范围 / 改难度 -->
+    <div v-if="picked.length" class="bulkbar">
+      <span>已勾选 <b>{{ picked.length }}</b> 道</span>
+      <el-button size="small" @click="bulk('disable')">停用</el-button>
+      <el-button size="small" @click="bulk('enable')">启用</el-button>
+      <el-button size="small" @click="bulk('pin')">设为必出</el-button>
+      <el-button size="small" @click="bulk('unpin')">取消必出</el-button>
+      <el-select v-model="bulkScope" size="small" placeholder="改成知识范围…" style="width: 200px">
+        <el-option v-for="s in scopes" :key="s" :label="s" :value="s" />
+      </el-select>
+      <el-button size="small" :disabled="!bulkScope" @click="bulk('scope', bulkScope)">改范围</el-button>
+      <el-select v-model="bulkLevel" size="small" placeholder="改成难度…" style="width: 120px">
+        <el-option v-for="l in LEVELS" :key="l.value" :label="l.text" :value="l.value" />
+      </el-select>
+      <el-button size="small" :disabled="!bulkLevel" @click="bulk('difficulty', bulkLevel)">改难度</el-button>
+      <el-button size="small" type="danger" plain @click="bulk('delete')">删除</el-button>
+      <el-button size="small" link @click="table?.clearSelection()">取消勾选</el-button>
+    </div>
+    <el-table
+      ref="table"
+      :data="rows"
+      v-loading="loading"
+      border
+      stripe
+      size="small"
+      row-key="id"
+      :row-class-name="rowClass"
+      @selection-change="picked = $event"
+    >
+      <el-table-column type="selection" width="40" reserve-selection />
+      <el-table-column label="编号" width="86">
+        <template #default="{ row }">
+          {{ row.code }}
+          <el-tag v-if="row.is_disabled" size="small" type="info" effect="plain">已停用</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="题型" width="86">
+        <template #default="{ row }">
+          {{ row.type }}
+          <el-tag v-if="isMulti(row)" size="small" type="warning" effect="plain">多选</el-tag>
+        </template>
+      </el-table-column>
       <!-- 长内容只露两行，末尾「展开」看全文（ClampText） -->
       <el-table-column label="题干" min-width="280">
         <template #default="{ row }"><ClampText :text="row.stem" /></template>
@@ -324,9 +426,25 @@ async function uploadImage(options) {
           <el-option label="正确" value="正确" />
           <el-option label="错误" value="错误" />
         </el-select>
-        <el-select v-else-if="form.type === '选择题'" v-model="form.answer" style="width: 160px">
-          <el-option v-for="o in form.options" :key="o.label" :label="o.label" :value="o.label" />
-        </el-select>
+        <template v-else-if="form.type === '选择题'">
+          <el-checkbox-group v-model="answerLetters">
+            <el-checkbox v-for="o in form.options" :key="o.label" :value="o.label" :disabled="!o.content.trim()">
+              {{ o.label }}
+            </el-checkbox>
+          </el-checkbox-group>
+          <span class="hint">勾一个是单选；勾两个以上就是多选题（学生作答时出复选框，全对才得分）</span>
+        </template>
+        <template v-else-if="form.type === '填空题'">
+          <el-input
+            v-model="form.answer"
+            type="textarea"
+            :rows="2"
+            placeholder="第一空：数据（特征数据）；第二空：特征库"
+          />
+          <span class="hint">
+            几个空用「；」隔开，可以写「第一空：」；括号里写也算对的说法，如「专业（或领域专属）」。学生每空一个输入框，按空给分。
+          </span>
+        </template>
         <el-input v-else v-model="form.answer" type="textarea" :rows="2" />
       </el-form-item>
       <el-form-item label="知识范围">
@@ -431,6 +549,26 @@ async function uploadImage(options) {
 .opt-label {
   width: 18px;
   color: #909399;
+}
+.bulkbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--el-color-primary-light-9);
+  font-size: 13px;
+}
+.bulkbar :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+.dis-n {
+  color: var(--el-color-warning);
+}
+:deep(.row-disabled) td {
+  color: var(--el-text-color-placeholder);
 }
 .pager {
   margin-top: 14px;

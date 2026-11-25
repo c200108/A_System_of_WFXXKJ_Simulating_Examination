@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import gc
+import json
 import time
 import tkinter as tk
 from tkinter import messagebox
@@ -332,6 +333,82 @@ def test_choices_start_unselected(app, server, exam):
     radios[0].invoke()
     app.root.update()
     assert frame.answers["8888"] == "A"
+
+
+def test_多选题是复选框_勾几个交几个_不自动跳(app, server, exam):
+    """多选题（4.17.0）：服务端给 multi=True 就画复选框；交的是原字母按字母序连起来。"""
+    frame = start_exam(app, server, exam, "26090113")
+    frame.paper = [
+        {"id": "9101", "no": 1, "type": "选择题", "score": 2, "multi": True,
+         "stem": "下列做法正确的有（ ）",
+         "options": [{"label": "A", "content": "甲", "show": "B"},
+                     {"label": "B", "content": "乙", "show": "A"},
+                     {"label": "C", "content": "丙"},
+                     {"label": "D", "content": "丁"}]},
+        {"id": "9102", "no": 2, "type": "判断题", "score": 1, "stem": "对不对（ ）",
+         "options": [{"label": "A", "content": "正确"}, {"label": "B", "content": "错误"}]},
+    ]
+    frame.num_btns = frame.num_btns[:2]
+    frame.show(0)
+    app.root.update()
+    boxes = [w for w in frame.area.winfo_children() if isinstance(w, tk.Checkbutton)]
+    assert len(boxes) == 4, "多选题要画成复选框"
+    assert not [w for w in frame.area.winfo_children() if isinstance(w, tk.Radiobutton)]
+    assert boxes[0].cget("text").startswith("B"), "乱序时显示新字母"
+    boxes[3].invoke()
+    boxes[0].invoke()
+    app.root.update()
+    assert frame.answers["9101"] == "AD"
+    assert not settle(app, 1, lambda: frame.index != 0), "多选题勾完不自动跳"
+    boxes[3].invoke()
+    assert frame.answers["9101"] == "A"
+    # 回到这题时勾选还在
+    frame.show(1)
+    frame.show(0)
+    app.root.update()
+    boxes = [w for w in frame.area.winfo_children() if isinstance(w, tk.Checkbutton)]
+    assert [b.getvar(b.cget("variable")) for b in boxes][0] in (1, True, "1")
+
+
+def test_多空填空题每空一个输入框(app, server, exam):
+    """填空题（4.17.0）：blanks=2 画两个输入框，交 JSON 数组；一个空交原文。"""
+    frame = start_exam(app, server, exam, "26090113")
+    frame.paper = [
+        {"id": "9201", "no": 1, "type": "填空题", "score": 2, "blanks": 2,
+         "stem": "形成特征的________；建立「________」。", "options": []},
+        {"id": "9202", "no": 2, "type": "填空题", "score": 2, "blanks": 1,
+         "stem": "需要使用＿＿＿的视觉模型。", "options": []},
+    ]
+    frame.num_btns = frame.num_btns[:2]
+    frame.show(0)
+    app.root.update()
+
+    def entries():
+        out = []
+        for w in frame.area.winfo_children():
+            out += [c for c in w.winfo_children() if isinstance(c, tk.Entry)]
+            if isinstance(w, tk.Entry):
+                out.append(w)
+        return out
+
+    es = entries()
+    assert len(es) == 2
+    es[1].insert(0, "特征库")
+    es[1].event_generate("<KeyRelease>")
+    app.root.update()
+    assert json.loads(frame.answers["9201"]) == ["", "特征库"]
+    es[1].delete(0, "end")
+    es[1].event_generate("<KeyRelease>")
+    app.root.update()
+    assert frame.answers["9201"] == "", "全空算没作答"
+    frame.show(1)
+    app.root.update()
+    es = entries()
+    assert len(es) == 1
+    es[0].insert(0, "专业")
+    es[0].event_generate("<KeyRelease>")
+    app.root.update()
+    assert frame.answers["9202"] == "专业"
 
 
 def two_choice_questions(frame):

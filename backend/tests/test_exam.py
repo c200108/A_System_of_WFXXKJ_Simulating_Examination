@@ -91,7 +91,9 @@ def test_answers_never_reach_the_student(client, exam):
             # sim 是仿真操作题的初始环境（3.0 加的），普通题是 null。
             # 它只含 id/kind/title/env，检查点在服务端，见 test_sim.py 里那条断言。
             assert set(q.keys()) <= {
-                "id", "code", "type", "stem", "scope", "image_url", "score", "options", "sim"
+                "id", "code", "type", "stem", "scope", "image_url", "score", "options", "sim",
+                # 2.27.0：多选题、填空题几个空 —— 题目的形状，不是答案
+                "multi", "blanks",
             }
             # 抽到的操作题带不带仿真环境，要看题库里恰好抽中了哪一道 ——
             # 所以这里不假设"没有仿真题"，而是断言**就算有，也只有能给学生的

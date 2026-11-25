@@ -15,6 +15,7 @@ import { applyShuffle } from '../../shuffle'
 import { currentStudent } from '../../auth'
 import { useSubmitGate } from '../../submitGate'
 import SimHost from '../../components/sim/SimHost.vue'
+import ObjectiveAnswer from '../../components/ObjectiveAnswer.vue'
 
 const CN = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
 const route = useRoute()
@@ -209,23 +210,8 @@ function back() {
             />
           </div>
           <div v-else class="body">
-            <label
-              v-for="o in q.options"
-              :key="o.label"
-              class="op"
-              :class="{ picked: answers[q.id] === o.label, disabled: !!result }"
-            >
-              <input
-                type="radio"
-                :name="'q' + q.id"
-                :value="o.label"
-                :disabled="!!result"
-                :checked="answers[q.id] === o.label"
-                @change="answers[q.id] = o.label"
-              />
-              <!-- 乱序时显示新位置的字母（o.show），交的仍是原字母（o.label） -->
-              <span class="L">{{ o.show || o.label }}</span><span>{{ o.content }}</span>
-            </label>
+            <!-- 单选 / 多选（复选框）/ 判断 / 填空（每空一个输入框），见 ObjectiveAnswer.vue -->
+            <ObjectiveAnswer v-model="answers[q.id]" :q="q" :disabled="!!result" />
           </div>
 
           <div v-if="detailOf[q.id] && detailOf[q.id].scored && !detailOf[q.id].ok" class="key">

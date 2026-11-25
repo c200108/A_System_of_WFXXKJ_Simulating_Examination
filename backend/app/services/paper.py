@@ -50,6 +50,32 @@ def shuffle_options(
     return new_options, labels[new_pos]
 
 
+def type_pool(
+    db: Session, qtype: str, scopes: list[str] | None, require_answer: bool
+) -> list[Question]:
+    """按题型组卷时某一种题型能抽的题。组卷和预览共用这一个，两边永远对得上。
+
+    人工智能通识教育测评题（2.27.0）和其他知识范围互斥：scopes 里是测评范围就只抽它；
+    没选测评范围（包括什么都没选 =「全部十类」）就把两个测评范围排除在外。
+    停用的题一律不抽。
+    """
+    from sqlalchemy import select
+
+    from .literacy import EXAM_SCOPES
+
+    stmt = select(Question).where(
+        Question.is_deleted.is_(False), Question.is_disabled.is_(False), Question.type == qtype
+    )
+    if scopes:
+        stmt = stmt.where(Question.scope.in_(scopes))
+    if not any(s in EXAM_SCOPES for s in scopes or []):
+        stmt = stmt.where(Question.scope.not_in(EXAM_SCOPES))
+    pool = list(db.scalars(stmt))
+    if require_answer:
+        pool = [q for q in pool if (q.answer or "").strip()]
+    return pool
+
+
 def build_paper(
     db: Session,
     *,
@@ -66,8 +92,6 @@ def build_paper(
     duration: str,
 ) -> dict:
     """抽题并排版成一份完整的卷子。返回可以直接给前端渲染的结构。"""
-    from sqlalchemy import select
-
     seed_str = seed or f"{time.time()}-{random.random()}"
     rnd = random.Random(_seed_int(seed_str))
 
@@ -80,14 +104,7 @@ def build_paper(
         if want <= 0:
             continue
 
-        stmt = select(Question).where(
-            Question.is_deleted.is_(False), Question.type == qtype
-        )
-        if scopes:
-            stmt = stmt.where(Question.scope.in_(scopes))
-        pool = list(db.scalars(stmt))
-        if require_answer:
-            pool = [q for q in pool if (q.answer or "").strip()]
+        pool = type_pool(db, qtype, scopes, require_answer)
 
         if want > len(pool):
             warnings.append(f"{qtype}最多 {len(pool)} 题，已按可用上限收窄")

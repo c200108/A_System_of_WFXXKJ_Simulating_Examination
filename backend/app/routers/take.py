@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Exam, ExamSubmission, Student
+from ..models import Exam, ExamSubmission, SchoolClass, Student
 from ..schemas import SubmitIn, SubmitOut, TakePaperOut
 from ..services.exam import (
     grade,
@@ -77,6 +77,47 @@ def take_live(token: str, db: Session = Depends(get_db)):
     return {"early_submit": bool(exam.early_submit), "is_open": bool(exam.is_open)}
 
 
+def _exam_classes(db: Session, exam: Exam) -> list[SchoolClass]:
+    """这场考试能选的班：有在用学生的班；老师指定了班级的只列那几个。"""
+    used = select(Student.class_id).where(Student.is_active.is_(True), Student.class_id.is_not(None))
+    rows = list(db.scalars(
+        select(SchoolClass).where(SchoolClass.is_active.is_(True), SchoolClass.id.in_(used))
+        .order_by(SchoolClass.grade, SchoolClass.sort_order, SchoolClass.name)
+    ))
+    wanted = [c.strip() for c in (exam.target_classes or "").split(",") if c.strip()]
+    if wanted:
+        rows = [c for c in rows if c.display in wanted]
+    return rows
+
+
+@router.get("/{token}/classes", summary="答题页的班级下拉（不用登录）")
+def take_classes(token: str, db: Session = Depends(get_db)):
+    """网页答题（2.27.0）不再让学生随手写班级：从这里选，交卷时按名单核对姓名。
+    只给班级 id 和名字，不给名单。"""
+    exam = _open_exam(db, token)
+    return [{"id": c.id, "display": c.display} for c in _exam_classes(db, exam)]
+
+
+def _match_roster(db: Session, exam: Exam, body: SubmitIn) -> tuple[Student | None, str, str]:
+    """网页答题：选的班 + 填的姓名 → 名单里的那位同学。对不上就交不了卷。
+
+    返回 (学生, 姓名, 班级名)。同一个班里有重名的，挂不到具体账号上，但照样收卷（成绩表里有姓名班级）。
+    """
+    name = body.student_name.strip()
+    cls = db.get(SchoolClass, body.class_id) if body.class_id else None
+    if cls is None or cls.id not in {c.id for c in _exam_classes(db, exam)}:
+        raise HTTPException(status_code=400, detail="请先选择自己的班级")
+    hits = list(db.scalars(select(Student).where(
+        Student.class_id == cls.id, Student.name == name, Student.is_active.is_(True))))
+    if not hits:
+        raise HTTPException(
+            status_code=400,
+            detail=f"「{cls.display}」的名单里没有「{name}」。请检查班级和姓名有没有选错、写错（姓名要写全名），"
+                   "还是不对请询问老师。卷子还在，改好再交。",
+        )
+    return (hits[0] if len(hits) == 1 else None), name, cls.display
+
+
 @router.get("/{token}", response_model=TakePaperOut, summary="学生取卷（不含答案）")
 def take_paper(token: str, db: Session = Depends(get_db)):
     exam = _open_exam(db, token)
@@ -102,8 +143,26 @@ def submit(token: str, body: SubmitIn, db: Session = Depends(get_db)):
     if not body.student_name.strip():
         raise HTTPException(status_code=400, detail="请先填写姓名")
 
+    no = body.student_no.strip()
+    # 学生端 exe 是账号登录后交卷，带着学号 —— 照旧按学号认人（下面那段）。
+    # 网页答题页（2.27.0）不带学号：必须选班级，姓名要在这个班的名单里，不然交不上。
+    # 都没有（老页面、手搓的请求）不收，免得名字乱写也能交上
+    roster_hit = None
+    if not no:
+        if body.class_id is None:
+            raise HTTPException(status_code=400, detail="请先选择班级、填写姓名再交卷")
+        roster_hit, name, cls_name = _match_roster(db, exam, body)
+        body.student_name, body.student_class = name, cls_name
+
+    # 同一个人默认只能交一次，避免反复试答案
+    if roster_hit is not None and not exam.allow_retake:
+        dup = db.scalar(select(ExamSubmission).where(
+            ExamSubmission.exam_id == exam.id, ExamSubmission.student_id == roster_hit.id))
+        if dup:
+            raise HTTPException(status_code=409, detail="你已经交过这场考试的卷子了，如需重考请联系老师")
+
     # 同一学号默认只能交一次，避免反复试答案
-    if body.student_no.strip() and not exam.allow_retake:
+    if no and not exam.allow_retake:
         dup = db.scalar(
             select(ExamSubmission).where(
                 ExamSubmission.exam_id == exam.id,
@@ -121,15 +180,14 @@ def submit(token: str, body: SubmitIn, db: Session = Depends(get_db)):
     # 自己的「我的考试」里看不到自己刚交的卷：列表还显示「开始考试」，回看也
     # 说"你还没交过这场考试"。挂不上（校外链接、学号写错）就照旧留空，
     # 成绩表里仍然有学号姓名，老师照样看得见。
-    no = body.student_no.strip()
-    mine = db.scalar(select(Student).where(Student.student_no == no)) if no else None
+    mine = db.scalar(select(Student).where(Student.student_no == no)) if no else roster_hit
 
     sub = ExamSubmission(
         exam_id=exam.id,
         student_id=mine.id if mine else None,
         student_name=body.student_name.strip(),
         student_class=body.student_class.strip(),
-        student_no=no,
+        student_no=no or (roster_hit.student_no if roster_hit else ""),
         answers_json=json.dumps(body.answers, ensure_ascii=False),
         detail_json=json.dumps(result["detail"], ensure_ascii=False),
         **submission_scores(result),

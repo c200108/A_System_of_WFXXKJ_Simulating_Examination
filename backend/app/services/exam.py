@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from .. import clock
 from ..models import Exam, Paper, PaperItem, Question
 from ..siteconfig import site
-from . import sim, stem as stem_rules
+from . import answers as answer_rules, sim, stem as stem_rules
 from .paper import right_letter
 
 
@@ -92,6 +92,12 @@ def _item_from_row(item: PaperItem, q: Question) -> dict:
         "options": snap.get("options")
         or [{"label": o.label, "content": o.content} for o in q.options],
     }
+    # 答题端要知道怎么画（2.27.0）：多选题画复选框、填空题画几个输入框。
+    # 只给「是不是多选」「几个空」，不给答案本身
+    if out["type"] == "选择题":
+        out["multi"] = answer_rules.is_multi(out)
+    elif out["type"] == "填空题":
+        out["blanks"] = answer_rules.blank_count(out)
     if q.sim_task is not None:
         # sim  —— 学生要拿到的：打开时看到什么
         # sim_checks —— **等同于答案**，只在服务端读，由 strip_answers() 摘掉
@@ -336,23 +342,26 @@ def grade(items: list[dict], answers: dict) -> dict:
         objective += 1
         obj_total += pts
         correct = right_letter(it)
-        ok = mine == correct
+        # 多选题比字母集合、填空题按空给分（services/answers.py）；单选、判断照旧整串比
+        ok, part = answer_rules.judge(it, mine, correct)
+        earned = pts if ok else int(round(pts * part))
         if ok:
             right += 1
-            obj_score += pts
-        detail.append(
-            {
-                "id": it["id"],
-                "type": it["type"],
-                "scored": True,
-                "manual": False,
-                "score": pts,
-                "earned": pts if ok else 0,
-                "ok": ok,
-                "mine": mine,
-                "answer": correct,
-            }
-        )
+        obj_score += earned
+        entry = {
+            "id": it["id"],
+            "type": it["type"],
+            "scored": True,
+            "manual": False,
+            "score": pts,
+            "earned": earned,
+            "ok": ok,
+            "mine": mine,
+            "answer": correct,
+        }
+        if not ok and 0 < part < 1:
+            entry["partial"] = round(part, 3)       # 填空题对了一部分空
+        detail.append(entry)
 
     if not scored:
         # 老卷子：没设分值，照旧按客观题正确率折百分制

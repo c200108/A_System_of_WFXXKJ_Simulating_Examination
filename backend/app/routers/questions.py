@@ -2,7 +2,10 @@ import os
 import uuid
 from urllib.parse import quote
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -32,9 +35,15 @@ def _filtered(
     pinned: bool | None,
     difficulty: int | None = None,
     has_answer: bool | None = None,
+    status: str | None = None,
 ):
     """题库列表和题库导出用同一套筛选条件，避免两处走样。"""
     stmt = select(Question).where(Question.is_deleted.is_(False))
+    # 在用 / 已停用（2.27.0）；不传就是全部
+    if status == "active":
+        stmt = stmt.where(Question.is_disabled.is_(False))
+    elif status == "disabled":
+        stmt = stmt.where(Question.is_disabled.is_(True))
     if keyword:
         stmt = stmt.where(Question.stem.like(f"%{keyword}%"))
     if qtype:
@@ -70,12 +79,13 @@ def list_questions(
     pinned: bool | None = None,
     difficulty: int | None = Query(None, ge=1, le=5),
     has_answer: bool | None = Query(None, description="true 只看有答案的，false 只看没答案的"),
+    status: str | None = Query(None, description="active 只看在用的，disabled 只看停用的"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
     _: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    stmt = _filtered(keyword, type, scope, source, pinned, difficulty, has_answer)
+    stmt = _filtered(keyword, type, scope, source, pinned, difficulty, has_answer, status)
 
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     items = db.scalars(
@@ -106,6 +116,12 @@ def stats(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
         )
         or 0
     )
+    disabled = (
+        db.scalar(
+            select(func.count()).select_from(Question).where(alive, Question.is_disabled.is_(True))
+        )
+        or 0
+    )
     by_difficulty = {
         str(k): v
         for k, v in db.execute(
@@ -122,6 +138,7 @@ def stats(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
         by_difficulty=by_difficulty,
         with_image=with_image,
         pinned=pinned,
+        disabled=disabled,
         sources=sorted(sources),
     )
 
@@ -135,12 +152,13 @@ def export_questions(
     pinned: bool | None = None,
     difficulty: int | None = Query(None, ge=1, le=5),
     has_answer: bool | None = None,
+    status: str | None = None,
     filename: str = "信息技术题库",
     _: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     rows = list(
-        db.scalars(_filtered(keyword, type, scope, source, pinned, difficulty, has_answer)
+        db.scalars(_filtered(keyword, type, scope, source, pinned, difficulty, has_answer, status)
                    .order_by(Question.id))
     )
     data = questions_to_xlsx(rows, "题库")
@@ -168,6 +186,57 @@ async def upload_image(file: UploadFile = File(...), _: User = Depends(get_curre
         f.write(content)
     # 图片存磁盘，数据库只记路径，不再像原页面那样把 base64 塞进数据里
     return {"image_url": f"/uploads/images/{name}"}
+
+
+class BulkIn(BaseModel):
+    """题库勾选一批题一起处理（2.27.0）。value：改知识范围时是范围名，改难度时是 1~5。"""
+
+    ids: list[int] = Field(min_length=1, max_length=5000)
+    action: Literal["disable", "enable", "delete", "pin", "unpin", "scope", "difficulty"]
+    value: str | int | None = None
+
+
+@router.post("/bulk", summary="批量停用 / 启用 / 删除 / 设必出 / 改知识范围 / 改难度")
+def bulk(body: BulkIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """一次一个事务：要么全改，要么一道不动。已经删掉的题跳过（算进 skipped）。
+
+    删除和单个删一样要「删除权限」，删掉的整批进回收站一条，能一起还原。
+    """
+    ids = list(dict.fromkeys(body.ids))
+    rows = list(db.scalars(select(Question).where(Question.id.in_(ids), Question.is_deleted.is_(False))))
+    if not rows:
+        raise HTTPException(status_code=404, detail="勾选的题都不在了（可能已经被删了）")
+    act = body.action
+    if act == "delete":
+        require_delete_permission(user)
+        recycle.trash(db, user, "question", f"{len(rows)} 道题目",
+                      detail=recycle.names(rows, "code"),
+                      soft_questions=[q.id for q in rows])
+        for q in rows:
+            q.is_deleted = True
+    elif act in ("disable", "enable"):
+        for q in rows:
+            q.is_disabled = act == "disable"
+    elif act in ("pin", "unpin"):
+        for q in rows:
+            q.is_pinned = act == "pin"
+    elif act == "scope":
+        scope = str(body.value or "").strip()
+        if scope not in active_names(db, DICT_SCOPE):
+            raise HTTPException(status_code=400, detail=f"知识范围「{scope}」不存在")
+        for q in rows:
+            q.scope = scope
+    elif act == "difficulty":
+        try:
+            level = int(body.value)
+        except (TypeError, ValueError):
+            level = 0
+        if not 1 <= level <= 5:
+            raise HTTPException(status_code=400, detail="难度只能是 1~5")
+        for q in rows:
+            q.difficulty = level
+    db.commit()
+    return {"ok": True, "done": len(rows), "skipped": len(ids) - len(rows)}
 
 
 @router.get("/{qid}", response_model=QuestionOut, summary="题目详情")

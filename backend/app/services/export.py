@@ -144,6 +144,9 @@ label.op{display:flex;gap:9px;align-items:flex-start;padding:5px 8px;border-radi
 label.op:hover{background:var(--bg)}
 label.op input{margin-top:5px;accent-color:var(--teal)}
 .L{font-family:ui-monospace,Consolas,monospace;font-weight:600;color:var(--mut);min-width:18px}
+.mtip{font-size:12.5px;color:var(--amber);margin:4px 0}
+.blank{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:13px;color:var(--mut)}
+.blank input{flex:1;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit;background:var(--sf)}
 textarea{width:100%;min-height:76px;border:1px solid var(--line);border-radius:8px;padding:9px;font:inherit;background:var(--sf);resize:vertical}
 .ok{background:var(--gsoft);border-color:var(--green)}.no{background:var(--rsoft);border-color:var(--red)}
 .key{margin-top:10px;background:var(--rsoft);border-left:3px solid var(--red);border-radius:0 7px 7px 0;padding:7px 11px;font-size:13.5px;color:var(--red);white-space:pre-wrap;display:none}
@@ -166,6 +169,22 @@ document.title = P.title;
 document.querySelector('h1').textContent = P.title;
 document.querySelector('.meta').textContent = (P.school||'') + (P.time?'　·　'+P.time+' 分钟':'') + '　·　' + P.code;
 const E = s => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// 多选题、填空题（2.27.0），规矩和服务端 services/answers.py 一样：多选比字母集合，填空按空给分
+const LET = s => [...new Set(String(s||'').toUpperCase().split('').filter(c => c >= 'A' && c <= 'Z'))].sort().join('');
+const NRM = s => String(s==null?'':s).normalize('NFKC').toLowerCase().replace(/[\s"'“”‘’「」『』《》()（）\[\]【】,，。.、;；:：!！?？·]/g,'');
+function KEYS(a){
+  let s = String(a||'').trim().replace(/^[（(]?\s*答案\s*[:：]\s*/,'');
+  if((s.match(/[（(]/g)||[]).length < (s.match(/[）)]/g)||[]).length) s = s.replace(/[）)]\s*$/,'');
+  const out = [];
+  s.split(/[；;\n]/).forEach(p => {
+    p = p.trim().replace(/^第[一二三四五六七八九十\d]+空\s*[:：]\s*/,''); if(!p) return;
+    const alts = p.replace(/[（(][^（）()]*[）)]/g,'').split(/\s*[/／]\s*/);
+    (p.match(/[（(][^（）()]*[）)]/g)||[]).forEach(m => alts.push(...m.slice(1,-1).split(/\s*(?:或者|或|也可以|也可|\/|／)\s*/)));
+    const k = [...new Set(alts.map(NRM).filter(Boolean))]; if(k.length) out.push(k);
+  });
+  return out;
+}
+const MULTI = it => it.t === '选择题' && LET(it.a).length > 1;
 let graded = false;
 const groups = [];
 // 按大题分组：s 是大题名，可能和题型不一样（「物联网实践与探索」里两种题型都有）
@@ -181,6 +200,12 @@ groups.forEach((g,gi) => {
     if(it.img) inner += '<img src="' + it.img + '" alt="配图">';
     if(it.t === '操作题'){
       inner += '<textarea data-i="' + i + '" placeholder="写下你的操作步骤"></textarea>';
+    } else if(it.t === '填空题'){
+      const nb = Math.max(1, KEYS(it.a).length);
+      for(let b=0; b<nb; b++) inner += '<div class="blank">' + (nb>1 ? '第' + (CNn[b]||b+1) + '空 ' : '') + '<input class="bl" data-b="' + b + '" placeholder="在这里填写"></div>';
+    } else if(MULTI(it)){
+      inner += '<div class="mtip">多选题：有两个或两个以上正确选项，多选、错选、漏选均不得分</div>';
+      inner += it.o.map(o => '<label class="op" data-i="' + i + '" data-v="' + o[0] + '"><input type="checkbox" value="' + o[0] + '"><span class="L">' + o[0] + '</span><span>' + E(o[1]) + '</span></label>').join('')
     } else {
       inner += it.o.map(o => '<label class="op" data-i="' + i + '" data-v="' + o[0] + '"><input type="radio" name="q' + i + '" value="' + o[0] + '"><span class="L">' + o[0] + '</span><span>' + E(o[1]) + '</span></label>').join('')
     }
@@ -214,16 +239,25 @@ document.getElementById('sub').addEventListener('click', () => {
     }
     obj++; objFull += (it.p||0);
     const cl = letterOf(it);
-    const sel = box.querySelector('input:checked');
-    const val = sel ? sel.value : '';
-    if(val === cl){ right++; got += (it.p||0); }
+    let ok = false, part = 0, val = '';
+    if(it.t === '填空题'){
+      const keys = KEYS(it.a);
+      const got2 = [...box.querySelectorAll('input.bl')].map(x => x.value);
+      const hits = keys.filter((k,j) => k.includes(NRM(got2[j]))).length;
+      ok = keys.length > 0 && hits === keys.length; part = keys.length ? hits / keys.length : 0;
+    } else {
+      val = LET([...box.querySelectorAll('input:checked')].map(x => x.value).join(''));
+      ok = !!val && val === LET(cl); part = ok ? 1 : 0;
+    }
+    if(ok) right++;
+    got += ok ? (it.p||0) : Math.round((it.p||0) * part);
     box.querySelectorAll('input').forEach(x => x.disabled = true);
     box.querySelectorAll('label.op').forEach(l => {
-      if(l.dataset.v === cl) l.classList.add('ok');
-      else if(l.dataset.v === val) l.classList.add('no');
+      if(LET(cl).includes(l.dataset.v)) l.classList.add('ok');
+      else if(val.includes(l.dataset.v)) l.classList.add('no');
     });
     key.textContent = '答案：' + (it.a || '原卷未给答案');
-    const b=document.createElement('span'); b.className = 'badge ' + (val===cl?'b-ok':'b-no'); b.textContent = val===cl?'✓':'✕';
+    const b=document.createElement('span'); b.className = 'badge ' + (ok?'b-ok':'b-no'); b.textContent = ok?'✓':'✕';
     box.querySelector('.stem').appendChild(b);
   });
   // 设了分值就报分，没设（自由组卷的卷子）还是报题数，两种卷子都说得清
@@ -242,7 +276,8 @@ document.getElementById('dl').addEventListener('click', () => {
     const box = document.querySelector('[data-q="' + i + '"]');
     let mine = '';
     if(it.t === '操作题') mine = (box.querySelector('textarea').value || '').replace(/\s+/g,' ');
-    else { const s = box.querySelector('input:checked'); mine = s ? s.value : '未作答'; }
+    else if(it.t === '填空题') mine = [...box.querySelectorAll('input.bl')].map(x => x.value || '（空）').join('；');
+    else { mine = LET([...box.querySelectorAll('input:checked')].map(x => x.value).join('')) || '未作答'; }
     txt += (i+1) + '. 我的答案：' + mine + '　参考答案：' + (it.a||'—') + '\r\n';
   });
   const blob = new Blob(['﻿' + txt], {type:'text/plain;charset=utf-8'});

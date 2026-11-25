@@ -334,7 +334,9 @@ def test_checks_never_reach_the_student(client, sim_exam):
     for g in body["groups"]:
         for q in g["items"]:
             assert set(q.keys()) <= {
-                "id", "code", "type", "stem", "scope", "image_url", "score", "options", "sim"
+                "id", "code", "type", "stem", "scope", "image_url", "score", "options", "sim",
+                # 2.27.0：多选题、填空题几个空 —— 题目的形状，不是答案
+                "multi", "blanks",
             }
             if q.get("sim"):
                 seen += 1

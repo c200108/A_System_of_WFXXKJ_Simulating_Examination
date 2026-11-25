@@ -349,6 +349,8 @@ class Question(Base):
     )
     is_pinned: Mapped[bool] = mapped_column(Boolean, default=False)  # 必出题
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    # 停用（2.27.0）：题还在题库里、随时能启用，只是组卷抽不到它
+    is_disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

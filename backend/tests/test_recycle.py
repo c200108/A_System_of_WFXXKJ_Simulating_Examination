@@ -42,9 +42,10 @@ def _paper(client, auth, title):
 def test_exam_with_submissions_restores_in_full(client, auth):
     pid = _paper(client, auth, "回收站考试卷")
     exam = client.post("/api/exams", json={"paper_id": pid}, headers=auth).json()
-    for name in ("甲", "乙"):
+    for i, name in enumerate(("甲", "乙")):
+        # 2.27.0 起凭链接交卷要么带学号（学生端 exe），要么选班级按名单核对（网页）
         res = client.post(f"/api/take/{exam['token']}/submit", json={
-            "student_name": name, "student_class": "七年级1班", "student_no": "", "answers": {}})
+            "student_name": name, "student_class": "七年级1班", "student_no": f"HS{i}", "answers": {}})
         assert res.status_code == 200, res.text
     assert client.delete(f"/api/exams/{exam['id']}", headers=auth).status_code == 200
     with SessionLocal() as db:

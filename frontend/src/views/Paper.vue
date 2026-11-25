@@ -3,6 +3,8 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { siteConfig } from '../siteConfig'
 import { api, download, safeName } from '../api'
+import { blankCount, isMulti, judge } from '../answerRules'
+import ObjectiveAnswer from '../components/ObjectiveAnswer.vue'
 
 const CN = siteConfig.paper.section_numerals
 
@@ -21,6 +23,51 @@ const KIND = {
 
 const scopes = ref([])
 const types = ref([])
+
+// ---------- 人工智能通识教育测评题（2.27.0） ----------
+// 两个范围（七、八年级）不进六大题，只在「按题型」里单独选；和其他知识范围互斥，两个年级之间也互斥
+const isExamScope = s => String(s).startsWith('人工智能通识教育测评题')
+const examScopes = computed(() => scopes.value.filter(isExamScope))
+const normalScopes = computed(() => scopes.value.filter(s => !isExamScope(s)))
+const EXAM_TOTAL = 40 // 选了测评题：选择题 + 判断题一共 40 道
+// 按题型组卷时题目从哪来：'' = 平常的十类；否则就是那个测评范围
+const source = ref('')
+const examMode = computed(() => !form.by_sections && !!source.value)
+
+/** 选择题占大多数，比例每次随机（选择题 24~34 道，剩下的是判断题） */
+function rollSplit() {
+  const pick = 24 + Math.floor(Math.random() * 11)
+  form.counts['选择题'] = pick
+  form.counts['判断题'] = EXAM_TOTAL - pick
+}
+function chooseSource(v) {
+  source.value = v
+  if (v) {
+    form.scopes = [v]
+    form.counts['操作题'] = 0
+    form.counts['填空题'] = 0
+    rollSplit()
+  } else {
+    form.scopes = []
+    form.counts = { ...siteConfig.paper.default_counts }
+    for (const t of types.value) if (form.counts[t] === undefined) form.counts[t] = 0
+  }
+}
+/** 测评题模式下改了选择题，判断题跟着补齐 40；改判断题同理 */
+function onCount(t, v) {
+  if (!examMode.value) return
+  const n = Math.max(0, Math.min(EXAM_TOTAL, Number(v) || 0))
+  if (t === '选择题') form.counts['判断题'] = EXAM_TOTAL - n
+  if (t === '判断题') form.counts['选择题'] = EXAM_TOTAL - n
+}
+const examWarn = computed(() => {
+  if (!examMode.value) return ''
+  const p = Number(form.counts['选择题']) || 0
+  const j = Number(form.counts['判断题']) || 0
+  if (p + j !== EXAM_TOTAL) return `选择题 + 判断题要正好 ${EXAM_TOTAL} 道（现在 ${p + j}）`
+  if (p <= j) return '选择题要占大多数（比判断题多）'
+  return ''
+})
 const plan = ref(null)
 const paper = ref(null)
 const history = ref([])
@@ -111,6 +158,13 @@ onMounted(async () => {
   await refreshPlan()
   history.value = await api.papers()
 })
+
+watch(
+  () => form.by_sections,
+  v => {
+    if (v && source.value) chooseSource('')
+  }
+)
 
 watch(
   () => [
@@ -211,10 +265,9 @@ function submitQuiz() {
       if (!scorable(q)) return
       obj++
       full += q.score || 0
-      if (resp[q.id] === rightLetter(q)) {
-        right++
-        got += q.score || 0
-      }
+      const r = judge(q, resp[q.id], rightLetter(q))
+      if (r.ok) right++
+      got += r.ok ? q.score || 0 : Math.round((q.score || 0) * r.part)
     })
   )
   score.right = right
@@ -238,13 +291,11 @@ function sectionHint(g) {
   return hasOp ? '按题目要求在计算机上完成操作。' : '把答案写在题号前的括号里。'
 }
 
-function optionClass(q, label) {
-  if (!graded.value || !scorable(q)) return ''
-  const correct = rightLetter(q)
-  if (label === correct) return 'op-ok'
-  if (resp[q.id] === label) return 'op-no'
-  return ''
+/** 自测用：给作答组件的题目带上「多选」「几个空」（教师这边有答案，直接算） */
+function quizQ(q) {
+  return { ...q, multi: isMulti(q), blanks: q.type === '填空题' ? blankCount(q) : 0 }
 }
+const quizOk = q => judge(q, resp[q.id], rightLetter(q)).ok
 
 // ---------- 导出 ----------
 async function exportXlsx() {
@@ -343,15 +394,37 @@ function printPaper() {
 
           <!-- ===== 按题型：老的自由组卷，不设分值 ===== -->
           <template v-else>
-            <el-form-item v-for="t in types" :key="t" :label="t">
-              <el-input-number v-model="form.counts[t]" :min="0" :max="300" size="small" />
+            <el-form-item label="题目来源">
+              <el-radio-group :model-value="source" class="srcs" @change="chooseSource">
+                <el-radio value="">十类知识范围（平常组卷）</el-radio>
+                <el-radio v-for="s in examScopes" :key="s" :value="s">{{ s }}</el-radio>
+              </el-radio-group>
+              <span class="sub">
+                测评题和其他知识范围互斥、七八年级互斥，只能按题型组卷；选它时操作题固定 0 道，
+                选择题 + 判断题共 {{ EXAM_TOTAL }} 道（选择题占多数，点 🎲 换个比例），填空题默认 0、可以改。
+              </span>
             </el-form-item>
+            <el-form-item v-for="t in types" :key="t" :label="t">
+              <el-input-number
+                v-model="form.counts[t]"
+                :min="0"
+                :max="examMode && t !== '填空题' ? EXAM_TOTAL : 300"
+                :disabled="examMode && t === '操作题'"
+                size="small"
+                @change="onCount(t, $event)"
+              />
+              <el-button v-if="examMode && t === '选择题'" link type="primary" class="roll" @click="rollSplit">
+                🎲 换个比例
+              </el-button>
+              <span v-if="examMode && t === '操作题'" class="sub inline">测评题不出操作题</span>
+            </el-form-item>
+            <p v-if="examWarn" class="short">{{ examWarn }}</p>
             <p class="note">这种方式不给题目赋分，判分仍按客观题正确率折成百分制。</p>
           </template>
 
-          <el-form-item label="知识范围">
+          <el-form-item v-if="!examMode" label="知识范围">
             <el-select v-model="form.scopes" multiple collapse-tags placeholder="不选表示全部十类" style="width: 100%">
-              <el-option v-for="s in scopes" :key="s" :label="s" :value="s" />
+              <el-option v-for="s in normalScopes" :key="s" :label="s" :value="s" />
             </el-select>
             <span v-if="form.by_sections" class="sub">
               只作用于上面没限定范围的那几组；限定了范围的组仍按各自的范围抽。
@@ -374,7 +447,13 @@ function printPaper() {
             </div>
           </el-form-item>
 
-          <el-button type="primary" :loading="loading" style="width: 100%" @click="generate(false)">
+          <el-button
+            type="primary"
+            :loading="loading"
+            :disabled="!!examWarn"
+            style="width: 100%"
+            @click="generate(false)"
+          >
             生成试卷
           </el-button>
         </el-form>
@@ -553,8 +632,8 @@ function printPaper() {
                   <span
                     v-else-if="mode === 'quiz' && graded"
                     class="mark"
-                    :class="resp[q.id] === rightLetter(q) ? 'ok' : 'no'"
-                  >{{ resp[q.id] === rightLetter(q) ? '✓ 正确' : '✕ 错误' }}</span>
+                    :class="quizOk(q) ? 'ok' : 'no'"
+                  >{{ quizOk(q) ? '✓ 正确' : '✕ 错误' }}</span>
                 </div>
 
                 <el-image
@@ -567,22 +646,8 @@ function printPaper() {
 
                 <!-- 自测：可选 -->
                 <div v-if="mode === 'quiz' && q.type !== '操作题'" class="opts">
-                  <label
-                    v-for="o in q.options"
-                    :key="o.label"
-                    class="op"
-                    :class="optionClass(q, o.label)"
-                  >
-                    <input
-                      type="radio"
-                      :name="'q' + q.id"
-                      :value="o.label"
-                      :disabled="graded"
-                      :checked="resp[q.id] === o.label"
-                      @change="resp[q.id] = o.label"
-                    />
-                    <span class="L">{{ o.label }}</span><span>{{ o.content }}</span>
-                  </label>
+                  <!-- 单选 / 多选 / 判断 / 填空，和学生答题页同一个组件 -->
+                  <ObjectiveAnswer v-model="resp[q.id]" :q="quizQ(q)" :disabled="graded" />
                 </div>
                 <div v-else-if="mode === 'quiz'" class="opts">
                   <el-input
@@ -621,6 +686,17 @@ function printPaper() {
 </template>
 
 <style scoped>
+.srcs {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.roll {
+  margin-left: 10px;
+}
+.sub.inline {
+  margin-left: 10px;
+}
 .checks {
   display: flex;
   flex-direction: column;

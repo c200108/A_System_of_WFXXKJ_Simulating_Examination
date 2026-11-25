@@ -17,6 +17,7 @@ from .models import AppMeta, DictItem, ExamSubmission, User
 from .security import hash_password
 from .changelog_seed import seed_changelog
 from .services.exam import settle_submission
+from .services.literacy import EXAM_SCOPES, ensure_scopes, seed_literacy
 from .services.supplement import seed_supplement
 from .services.typing_texts import ensure_default_theme, seed_from_config
 from .siteconfig import site
@@ -36,6 +37,9 @@ def _sync_dict(db, category: str, names: list[str], sync: bool) -> None:
     if sync:
         # 配置里删掉的项停用（不物理删除，历史题目还引用着它）
         for name, item in existing.items():
+            # 测评题的两个范围是代码带的，不在 config.yaml 的十类里，别当成「配置里删掉的」
+            if name in EXAM_SCOPES:
+                continue
             if name not in names and item.is_active:
                 item.is_active = False
                 print(f"[seed] 配置里已无「{name}」，停用（历史题目不受影响）")
@@ -94,6 +98,14 @@ def seed(supplement: bool = True) -> None:
         db.commit()
         if n:
             print(f"[seed] 补充题新增 {n} 道")
+
+        # 人工智能通识教育测评题（2.27.0）：两个知识范围总要有（组卷页要列出来），
+        # 题目和补充题一样跟着代码走、按题干查重
+        ensure_scopes(db)
+        n = seed_literacy(db) if supplement else 0
+        db.commit()
+        if n:
+            print(f"[seed] 人工智能通识教育测评题新增 {n} 道")
 
         # 更新日志按内容去重，可反复执行；新版本追加到 changelog_seed.py 即可
         n = seed_changelog(db)

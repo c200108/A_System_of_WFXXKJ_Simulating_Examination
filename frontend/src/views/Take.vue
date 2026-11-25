@@ -11,6 +11,7 @@ import { optionText } from '../optionText'
 import { applyShuffle, browserSeed } from '../shuffle'
 import { useSubmitGate } from '../submitGate'
 import SimHost from '../components/sim/SimHost.vue'
+import ObjectiveAnswer from '../components/ObjectiveAnswer.vue'
 
 const CN = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
 const route = useRoute()
@@ -22,7 +23,10 @@ const loading = ref(true)
 const submitting = ref(false)
 const result = ref(null)
 
-const me = reactive({ student_name: '', student_class: '', student_no: '' })
+// 2.27.0：班级从下拉里选（不再随手写），不填学号；交卷时服务端核对姓名在不在这个班的名单里
+const me = reactive({ student_name: '', class_id: null })
+const classes = ref([])
+const className = computed(() => classes.value.find(c => c.id === me.class_id)?.display || '')
 const answers = reactive({})
 
 const numbering = computed(() => {
@@ -64,6 +68,7 @@ onMounted(async () => {
     // 选择判断题乱序：这个页面取卷时还不知道是谁，按这台浏览器的固定种子打乱
     paper.value = applyShuffle(await api.takePaper(token), `${token}-${browserSeed(token)}`)
     gate.start()
+    classes.value = await api.takeClasses(token).catch(() => [])
   } catch (e) {
     loadError.value = e.response?.data?.detail || '打不开这场考试，请向老师确认链接'
   } finally {
@@ -85,8 +90,12 @@ async function submit() {
     return
   }
 
+  if (!me.class_id) {
+    ElMessage.warning('请先在卷头选择自己的班级')
+    return
+  }
   if (!me.student_name.trim()) {
-    ElMessage.warning('请先填写姓名')
+    ElMessage.warning('请先填写姓名（写全名）')
     return
   }
 
@@ -108,9 +117,17 @@ async function submit() {
 
   submitting.value = true
   try {
-    result.value = await api.submitPaper(token, { ...me, answers })
+    result.value = await api.submitPaper(
+      token,
+      { student_name: me.student_name.trim(), class_id: me.class_id, answers },
+      { silent: true }
+    )
     gate.done()
     window.scrollTo({ top: 0, behavior: 'smooth' })
+  } catch (e) {
+    // 姓名不在这个班的名单里：交不上，弹窗说清楚，卷子还在、改好再交
+    const msg = e.response?.data?.detail || '交卷没成功，请稍后再试，或询问老师'
+    ElMessageBox.alert(msg, '交不上卷', { type: 'error', confirmButtonText: '我去检查' })
   } finally {
     submitting.value = false
   }
@@ -132,9 +149,19 @@ async function submit() {
           <span>{{ paper.code }}</span>
         </div>
         <div v-if="!result" class="who">
-          <el-input v-model="me.student_name" placeholder="姓名" style="width: 140px" />
-          <el-input v-model="me.student_class" placeholder="班级" style="width: 160px" />
-          <el-input v-model="me.student_no" placeholder="学号" style="width: 160px" />
+          <el-select
+            v-model="me.class_id"
+            filterable
+            placeholder="选择班级"
+            no-data-text="还没有班级，请询问老师"
+            style="width: 180px"
+          >
+            <el-option v-for="c in classes" :key="c.id" :label="c.display" :value="c.id" />
+          </el-select>
+          <el-input v-model="me.student_name" placeholder="姓名（写全名）" maxlength="20" style="width: 160px" />
+        </div>
+        <div v-if="!result" class="whotip">
+          先选班级再写姓名，交卷时会核对你在不在这个班的名单里；对不上交不了卷，请检查或询问老师。
         </div>
       </div>
 
@@ -154,7 +181,7 @@ async function submit() {
           </p>
         </template>
         <template #extra>
-          <p class="tip">{{ me.student_name }}　{{ me.student_class }}　{{ me.student_no }}</p>
+          <p class="tip">{{ className }}　{{ me.student_name }}</p>
           <p class="tip">这个页面可以关掉了。</p>
         </template>
       </el-result>
@@ -195,26 +222,8 @@ async function submit() {
             />
           </div>
           <div v-else class="body">
-            <label
-              v-for="o in q.options"
-              :key="o.label"
-              class="op"
-              :class="{
-                picked: answers[q.id] === o.label,
-                disabled: !!result
-              }"
-            >
-              <input
-                type="radio"
-                :name="'q' + q.id"
-                :value="o.label"
-                :disabled="!!result"
-                :checked="answers[q.id] === o.label"
-                @change="answers[q.id] = o.label"
-              />
-              <!-- 乱序时显示新位置的字母（o.show），交的仍是原字母（o.label） -->
-              <span class="L">{{ o.show || o.label }}</span><span>{{ o.content }}</span>
-            </label>
+            <!-- 单选 / 多选（复选框）/ 判断 / 填空（每空一个输入框），见 ObjectiveAnswer.vue -->
+            <ObjectiveAnswer v-model="answers[q.id]" :q="q" :disabled="!!result" />
           </div>
 
           <div v-if="detailOf[q.id] && detailOf[q.id].scored && !detailOf[q.id].ok" class="key">
@@ -275,6 +284,11 @@ async function submit() {
   flex-wrap: wrap;
   justify-content: center;
   margin-top: 14px;
+}
+.whotip {
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: var(--el-text-color-secondary);
 }
 .pt {
   color: var(--mut, #61757A);

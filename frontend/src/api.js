@@ -293,6 +293,8 @@ export const api = {
   createQuestion: data => http.post('/questions', data),
   updateQuestion: (id, data) => http.put(`/questions/${id}`, data),
   deleteQuestion: id => http.delete(`/questions/${id}`),
+  // 题库批量操作（2.27.0）：action = disable / enable / delete / pin / unpin / scope / difficulty
+  bulkQuestions: (ids, action, value = null) => http.post('/questions/bulk', { ids, action, value }),
 
   importQuestions(file) {
     const fd = new FormData()
@@ -470,7 +472,9 @@ export const api = {
   // 凭链接答题（不需要登录）
   takePaper: token => http.get(`/take/${token}`),
   takeLive: token => http.get(`/take/${token}/live`, { silent: true }),
-  submitPaper: (token, data) => http.post(`/take/${token}/submit`, data)
+  // 2.27.0：班级下拉（只有班级名，不给名单）；交卷可以传 { silent: true } 自己处理报错
+  takeClasses: token => http.get(`/take/${token}/classes`, { silent: true }),
+  submitPaper: (token, data, opts = {}) => http.post(`/take/${token}/submit`, data, opts)
 }
 
 export default http

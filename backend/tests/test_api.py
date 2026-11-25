@@ -28,7 +28,9 @@ def test_me(client, auth):
 def test_dicts_seeded(client, auth):
     dicts = client.get("/api/dicts", headers=auth).json()
     scopes = [d["name"] for d in dicts if d["category"] == "scope"]
-    assert len(scopes) == 10
+    # 十类 + 人工智能通识教育测评题的七、八年级两个范围（2.27.0，排在最后）
+    assert len(scopes) == 12
+    assert scopes[-2:] == ["人工智能通识教育测评题（七年级）", "人工智能通识教育测评题（八年级）"]
     assert "Windows系统操作" in scopes
     assert "物联网" in scopes
 

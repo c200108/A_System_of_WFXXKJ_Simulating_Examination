@@ -15,7 +15,8 @@ from ..schemas import IdsIn, PaperExportIn, PaperGenerateIn, PaperGenerateOut, P
 from ..services import recycle
 from ..services.blueprint import slot_hint, slot_key, slot_pool
 from ..services.export import questions_to_xlsx, student_html
-from ..services.paper import build_by_sections, build_paper
+from ..services.literacy import OBJECTIVE_TOTAL, split_scopes
+from ..services.paper import build_by_sections, build_paper, type_pool
 from ..services.sampler import allocate
 from ..siteconfig import site
 from .dicts import active_names, scope_order
@@ -87,12 +88,42 @@ def _sections_for(body: PaperGenerateIn):
     return out
 
 
+def _check_literacy(body: PaperGenerateIn) -> str | None:
+    """人工智能通识教育测评题的规矩（2.27.0），组卷和预览都先过一遍。返回选中的测评范围。
+
+    - 和其他知识范围互斥，七、八年级之间也互斥；
+    - 只能按题型组卷（六大题里根本没有它）；
+    - 操作题固定 0 道；选择题 + 判断题合计 40 道，选择题多于判断题；填空题随意。
+    """
+    try:
+        _, exam = split_scopes(body.scopes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    if not exam:
+        return None
+    if body.by_sections:
+        raise HTTPException(status_code=400, detail="人工智能通识教育测评题只能「按题型」组卷，六大题里没有它")
+    counts = {k: max(0, int(v or 0)) for k, v in body.counts.items()}
+    counts["操作题"] = 0
+    pick_n, judge_n = counts.get("选择题", 0), counts.get("判断题", 0)
+    if pick_n + judge_n != OBJECTIVE_TOTAL:
+        raise HTTPException(
+            status_code=400,
+            detail=f"测评题的选择题和判断题一共要 {OBJECTIVE_TOTAL} 道（现在 {pick_n} + {judge_n}）",
+        )
+    if pick_n <= judge_n:
+        raise HTTPException(status_code=400, detail="测评题的选择题要占大多数（比判断题多）")
+    body.counts = counts
+    return exam
+
+
 @router.post("/generate", response_model=PaperGenerateOut, summary="均衡抽题组卷")
 def generate(
     body: PaperGenerateIn,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _check_literacy(body)
     order = scope_order(db)
     picked_order = [k for k in order if not body.scopes or k in body.scopes]
 
@@ -130,6 +161,7 @@ def preview_plan(
     _: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _check_literacy(body)
     if body.by_sections:
         return _preview_sections(body, db)
 
@@ -142,14 +174,7 @@ def preview_plan(
     for qtype, want in body.counts.items():
         if want <= 0:
             continue
-        stmt = select(Question).where(
-            Question.is_deleted.is_(False), Question.type == qtype
-        )
-        if body.scopes:
-            stmt = stmt.where(Question.scope.in_(body.scopes))
-        pool = list(db.scalars(stmt))
-        if body.require_answer:
-            pool = [q for q in pool if (q.answer or "").strip()]
+        pool = type_pool(db, qtype, body.scopes, body.require_answer)
         if want > len(pool):
             shortfall.append(f"{qtype}最多 {len(pool)} 题")
         for k, cnt in allocate(pool, want, picked_order).items():

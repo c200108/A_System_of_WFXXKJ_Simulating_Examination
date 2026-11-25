@@ -40,14 +40,24 @@ const stats = ref(null)
 // 全拿下来再筛比每敲一个字问一次服务器快
 const filterClass = ref('')
 const keyword = ref('')
+// 按交卷时间查（2.27.0）：[起, 止]，两头都是 'YYYY-MM-DD HH:mm:ss'
+const timeRange = ref(null)
+const subTime = s => String(s.submitted_at || '').replace('T', ' ').slice(0, 19)
+/** 班级排序：「七年级2班」排在「七年级10班」前面（数字按大小比） */
+const byClass = (a, b) =>
+  String(a.student_class || '').localeCompare(String(b.student_class || ''), 'zh-CN', { numeric: true })
+const byTime = (a, b) => subTime(a).localeCompare(subTime(b))
 const selected = ref([])
 const classOptions = computed(() =>
   [...new Set(subs.value.map(s => s.student_class || '未填班级'))].sort()
 )
 const shownSubs = computed(() => {
   const k = keyword.value.trim().toLowerCase()
+  const [from, to] = timeRange.value || []
   return subs.value.filter(s =>
     (!filterClass.value || (s.student_class || '未填班级') === filterClass.value) &&
+    (!from || subTime(s) >= from) &&
+    (!to || subTime(s) <= to) &&
     (!k ||
       String(s.student_name || '').toLowerCase().includes(k) ||
       String(s.student_no || '').toLowerCase().includes(k))
@@ -168,6 +178,7 @@ async function openScores(exam) {
   if (current.value?.id !== exam.id) {
     filterClass.value = ''
     keyword.value = ''
+    timeRange.value = null
   }
   selected.value = []
   current.value = exam
@@ -447,6 +458,17 @@ const hardest = computed(() => {
             placeholder="搜姓名或学号"
             style="width: 150px"
           />
+          <el-date-picker
+            v-model="timeRange"
+            type="datetimerange"
+            size="small"
+            value-format="YYYY-MM-DD HH:mm:ss"
+            range-separator="到"
+            start-placeholder="交卷时间从"
+            end-placeholder="到"
+            :default-time="[new Date(2000, 0, 1, 0, 0, 0), new Date(2000, 0, 1, 23, 59, 59)]"
+            style="width: 330px"
+          />
           <span class="of">
             {{ shownSubs.length === subs.length ? `共 ${subs.length} 人` : `筛出 ${shownSubs.length} / ${subs.length} 人` }}
           </span>
@@ -469,7 +491,15 @@ const hardest = computed(() => {
         >
           <el-table-column v-if="current.can_edit" type="selection" width="36" reserve-selection />
           <el-table-column prop="student_name" label="姓名" width="90" />
-          <el-table-column prop="student_class" label="班级" width="110" show-overflow-tooltip />
+          <!-- 班级、交卷时间都能点表头升降序（2.27.0） -->
+          <el-table-column
+            prop="student_class"
+            label="班级"
+            width="110"
+            show-overflow-tooltip
+            sortable
+            :sort-method="byClass"
+          />
           <el-table-column prop="student_no" label="学号" width="110" show-overflow-tooltip />
           <el-table-column prop="score" label="总分" width="84" sortable>
             <template #default="{ row }">
@@ -492,7 +522,7 @@ const hardest = computed(() => {
               <span v-else class="of">{{ row.right_count }} / {{ row.objective_count }} 题</span>
             </template>
           </el-table-column>
-          <el-table-column label="交卷时间" min-width="120">
+          <el-table-column prop="submitted_at" label="交卷时间" min-width="128" sortable :sort-method="byTime">
             <template #default="{ row }">
               {{ String(row.submitted_at).replace('T', ' ').slice(5, 19) }}
             </template>

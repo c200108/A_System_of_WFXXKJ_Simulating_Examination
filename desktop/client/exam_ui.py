@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import json
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
@@ -373,7 +374,8 @@ class ExamFrame(ttk.Frame):
         qtype = q.get("type")
         if qtype in ("选择题", "判断题"):
             self._render_choice(q, qid)
-            self.tip.config(text="选完自动跳下一题")
+            # 多选题要勾好几个，不自动跳（_render_multi 里自己写了提示）
+            self.tip.config(text="多选题：勾完点「下一题」" if q.get("multi") else "选完自动跳下一题")
         elif qtype == "填空题":
             self._render_blank(q, qid)
             self.tip.config(text="")
@@ -433,11 +435,14 @@ class ExamFrame(ttk.Frame):
         只做后者其实就够，但这一条坏掉的表现是"全班看见四个黑点"，而代码和
         测试都看不出毛病 —— 多一道保险便宜。
         """
-        picked = self.answers.get(qid) or self.NOT_ANSWERED
-        var = tk.StringVar(value=picked)
         opts = q.get("options") or ([{"label": "A", "content": "正确"},
                                      {"label": "B", "content": "错误"}]
                                     if q["type"] == "判断题" else [])
+        if q.get("multi"):
+            self._render_multi(q, qid, opts)
+            return
+        picked = self.answers.get(qid) or self.NOT_ANSWERED
+        var = tk.StringVar(value=picked)
         for o in opts:
             # 乱序时显示新位置的字母（show），交的仍是原字母（label）
             tk.Radiobutton(
@@ -446,6 +451,27 @@ class ExamFrame(ttk.Frame):
                 variable=var, bg=BG, font=(FONT, 11), anchor="w", justify="left",
                 wraplength=self._option_wrap(), tristatevalue="\x01",
                 command=lambda v=var, k=qid: self._picked(k, v.get()),
+            ).pack(fill="x", pady=3)
+
+    def _render_multi(self, q, qid, opts):
+        """多选题（4.17.0）：复选框，勾几个都行。交上去的是勾中的**原字母**按字母序连起来（"ABD"），
+        乱序时屏幕上显示新字母（show）。多选题**不自动跳题** —— 学生还要接着勾。"""
+        tk.Label(self.area, text="多选题：有两个或两个以上正确选项，多选、错选、漏选均不得分",
+                 bg=BG, fg=AMBER, font=(FONT, 9)).pack(anchor="w", pady=(0, 2))
+        have = set(self.answers.get(qid) or "")
+        boxes = {}
+
+        def changed():
+            got = "".join(sorted(k for k, v in boxes.items() if v.get()))
+            self.answer(qid, got)
+
+        for o in opts:
+            v = tk.BooleanVar(value=o["label"] in have)
+            boxes[o["label"]] = v
+            tk.Checkbutton(
+                self.area, text=f"{o.get('show') or o['label']}．{o['content']}",
+                variable=v, bg=BG, font=(FONT, 11), anchor="w", justify="left",
+                wraplength=self._option_wrap(), command=changed,
             ).pack(fill="x", pady=3)
 
     def _picked(self, qid: str, value: str) -> None:
@@ -467,12 +493,44 @@ class ExamFrame(ttk.Frame):
         self.show(self.index + 1)
 
     def _render_blank(self, q, qid):
-        tk.Label(self.area, text="在下面填写答案：", bg=BG, fg=GRAY,
-                 font=(FONT, 9)).pack(anchor="w")
-        var = tk.StringVar(value=self.answers.get(qid, ""))
-        e = tk.Entry(self.area, textvariable=var, font=(FONT, 12), relief="solid", bd=1)
-        e.pack(fill="x", pady=6)
-        e.bind("<KeyRelease>", lambda _e, k=qid, v=var: self.answer(k, v.get()))
+        """填空题：一个空一个输入框（4.17.0，q["blanks"] 是服务端给的空数）。
+
+        一个空交那段文字；几个空交 JSON 数组 '["数据","特征库"]'，全空交空串（答题卡上算没做）。
+        服务端按空给分（backend/app/services/answers.py）。"""
+        n = max(1, int(q.get("blanks") or 1))
+        tk.Label(self.area, text="在下面填写答案：" if n == 1 else f"本题有 {n} 个空，每空填一个：",
+                 bg=BG, fg=GRAY, font=(FONT, 9)).pack(anchor="w")
+        old = self.answers.get(qid, "")
+        if n == 1:
+            values = [old]
+        else:
+            try:
+                got = json.loads(old) if old.startswith("[") else [old]
+            except ValueError:
+                got = [old]
+            values = [str(got[i]) if i < len(got) and got[i] is not None else "" for i in range(n)]
+        cn = "一二三四五六七八九十"
+        vars_ = []
+
+        def changed(_e=None):
+            texts = [v.get() for v in vars_]
+            if n == 1:
+                self.answer(qid, texts[0])
+            else:
+                self.answer(qid, json.dumps(texts, ensure_ascii=False) if any(t.strip() for t in texts) else "")
+
+        for i in range(n):
+            row = tk.Frame(self.area, bg=BG)
+            row.pack(fill="x", pady=4)
+            if n > 1:
+                tk.Label(row, text=f"第{cn[i] if i < len(cn) else i + 1}空", bg=BG, fg=GRAY,
+                         font=(FONT, 10), width=5, anchor="w").pack(side="left")
+            var = tk.StringVar(value=values[i])
+            vars_.append(var)
+            e = tk.Entry(row, textvariable=var, font=(FONT, 12), relief="solid", bd=1)
+            e.pack(side="left", fill="x", expand=True)
+            # 跟着变量走而不是键盘事件：右键粘贴、输入法上屏都算
+            var.trace_add("write", lambda *_a: changed())
 
     def _render_operation(self, q, qid):
         """操作题按类型分岔。
