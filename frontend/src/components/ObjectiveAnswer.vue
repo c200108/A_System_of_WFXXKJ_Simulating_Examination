@@ -16,8 +16,24 @@ import { computed, ref, watch } from 'vue'
 const props = defineProps({
   q: { type: Object, required: true },
   modelValue: { type: String, default: '' },
-  disabled: { type: Boolean, default: false }
+  disabled: { type: Boolean, default: false },
+  // 学生答题页打开（2.28.0）：只认真人点的、真人敲的；控制台里用脚本点选项、填内容不算数
+  guard: { type: Boolean, default: false }
 })
+/** 脚本造出来的事件（isTrusted 为 false）：撤回界面上的变化，不记作答 */
+// 选项是不是真人点的：脚本 input.click() 造出来的 click 是不可信的，可接下来浏览器自己派发的
+// change 却是可信的 —— 所以要记住前面那次 click。键盘方向键选（没有 click）按可信算
+let clickTrusted = null
+function noteClick(e) {
+  clickTrusted = e.isTrusted
+}
+function fake(e, restore) {
+  const viaClick = clickTrusted
+  clickTrusted = null
+  if (!props.guard || !e || (e.isTrusted && viaClick !== false)) return false
+  restore()
+  return true
+}
 const emit = defineEmits(['update:modelValue'])
 
 const isBlank = computed(() => props.q.type === '填空题')
@@ -29,10 +45,12 @@ const toSet = v => new Set(String(v || '').toUpperCase().split('').filter(Boolea
 const picked = ref(toSet(props.modelValue))
 let lastPicked = props.modelValue
 
-function pickOne(label) {
+function pickOne(label, e) {
+  if (fake(e, () => (e.target.checked = props.modelValue === label))) return
   if (!props.disabled) emit('update:modelValue', label)
 }
-function toggle(label) {
+function toggle(label, e) {
+  if (fake(e, () => (e.target.checked = picked.value.has(label)))) return
   if (props.disabled) return
   const s = new Set(picked.value)
   s.has(label) ? s.delete(label) : s.add(label)
@@ -63,6 +81,10 @@ watch(
     if (v !== lastPicked) picked.value = toSet(v)
   }
 )
+function onBlank(i, e) {
+  if (fake(e, () => (e.target.value = blanks.value[i]))) return
+  setBlank(i, e.target.value)
+}
 function setBlank(i, v) {
   const next = blanks.value.slice()
   next[i] = v
@@ -79,12 +101,14 @@ const CN = '一二三四五六七八九十'
     <template v-if="isBlank">
       <div v-for="(v, i) in blanks" :key="i" class="blank">
         <span class="bl">{{ blankCount > 1 ? `第${CN[i] || i + 1}空` : '答案' }}</span>
-        <el-input
-          :model-value="v"
+        <input
+          class="bin"
+          :value="v"
           :disabled="disabled"
           maxlength="200"
           placeholder="在这里填写"
-          @update:model-value="setBlank(i, $event)"
+          autocomplete="off"
+          @input="onBlank(i, $event)"
         />
       </div>
     </template>
@@ -98,7 +122,7 @@ const CN = '一二三四五六七八九十'
         class="op"
         :class="{ picked: picked.has(o.label), disabled }"
       >
-        <input type="checkbox" :disabled="disabled" :checked="picked.has(o.label)" @change="toggle(o.label)" />
+        <input type="checkbox" :disabled="disabled" :checked="picked.has(o.label)" @click="noteClick" @change="toggle(o.label, $event)" />
         <span class="L">{{ o.show || o.label }}</span><span>{{ o.content }}</span>
       </label>
     </template>
@@ -117,7 +141,8 @@ const CN = '一二三四五六七八九十'
           :value="o.label"
           :disabled="disabled"
           :checked="modelValue === o.label"
-          @change="pickOne(o.label)"
+          @click="noteClick"
+          @change="pickOne(o.label, $event)"
         />
         <!-- 乱序时显示新位置的字母（o.show），交的仍是原字母（o.label） -->
         <span class="L">{{ o.show || o.label }}</span><span>{{ o.content }}</span>
@@ -162,6 +187,24 @@ label.op.disabled {
   align-items: center;
   gap: 10px;
   margin: 6px 0;
+}
+.bin {
+  flex: 1;
+  height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--el-border-color);
+  border-radius: var(--el-border-radius-base, 4px);
+  background: var(--el-fill-color-blank, #fff);
+  color: var(--el-text-color-regular);
+  font: inherit;
+  outline: none;
+}
+.bin:focus {
+  border-color: var(--el-color-primary);
+}
+.bin:disabled {
+  background: var(--el-disabled-bg-color, #f5f7fa);
+  color: var(--el-text-color-placeholder);
 }
 .bl {
   flex: none;

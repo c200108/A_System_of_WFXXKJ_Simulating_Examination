@@ -142,7 +142,11 @@ def test_full_marks(client, auth, exam):
     )
     assert res.status_code == 200, res.text
     body = res.json()
-    assert body["score"] == 100
+    # 2.28.0 起按题型组卷也按比例给每题赋分（合计 100），操作题的分等老师批
+    assert body["full_score"] == 100
+    assert body["score"] == body["objective_score"] == body["objective_total"] > 0
+    assert body["subjective_total"] == 100 - body["objective_total"]
+    assert body["rank"] == 1 and body["rank_total"] >= 1
     assert body["right_count"] == body["objective_count"] == exam["objective"]  # 操作题不计分
     assert body["detail"] == []  # show_answer 关着，不回传对错明细
 
@@ -171,7 +175,7 @@ def test_same_student_cannot_submit_twice(client, exam):
         json={"student_name": "张三", "student_no": "20260101", "answers": {}},
     )
     assert res.status_code == 409
-    assert "交过卷" in res.json()["detail"]
+    assert "交过" in res.json()["detail"]
 
 
 def test_带整份考场快照的答卷交得上去(client, auth, exam):
@@ -253,7 +257,7 @@ def test_teacher_sees_scores(client, auth, exam):
     assert len(subs) >= 4
     assert subs[0]["score"] >= subs[-1]["score"]  # 按分数从高到低
     top = subs[0]
-    assert top["student_name"] == "张三" and top["score"] == 100
+    assert top["student_name"] == "张三" and top["score"] == top["objective_total"]
 
 
 def test_submission_detail_carries_the_stem(client, auth, exam):
@@ -270,7 +274,9 @@ def test_submission_detail_carries_the_stem(client, auth, exam):
 def test_question_stats(client, auth, exam):
     st = client.get(f"/api/exams/{exam['exam']['id']}/stats", headers=auth).json()
     assert st["submission_count"] >= 4
-    assert st["max_score"] == 100
+    assert st["max_score"] == max(s["score"] for s in client.get(
+        f"/api/exams/{exam['exam']['id']}/submissions", headers=auth).json())
+    assert 1 <= st["student_count"] <= st["submission_count"]
     assert len(st["questions"]) == exam["total"]
     graded = [q for q in st["questions"] if q["scorable"]]
     assert len(graded) == exam["objective"]
@@ -289,13 +295,13 @@ def test_export_scores_xlsx(client, auth, exam):
     wb = load_workbook(io.BytesIO(res.content), read_only=True)
     assert wb.sheetnames == ["成绩汇总", "题目分析", "主观题作答"]
     rows = [list(r) for r in wb["成绩汇总"].iter_rows(values_only=True)]
-    # 这份卷子是「按题型自由组卷」出来的，不设分值，所以表头写"得分(百分制)"
-    assert rows[0] == [
-        "姓名", "班级", "学号", "得分(百分制)",
+    # 2.28.0 起按题型组卷也按比例赋分了，表头和六大题卷子一样写"总分"
+    assert rows[0][3] != "得分(百分制)"
+    assert rows[0][4:] == [
         "客观题得分", "客观题满分", "操作题得分", "操作题满分",
         "待评阅", "评阅人", "答对", "客观题数", "交卷时间",
     ]
-    assert any(r[0] == "张三" and r[3] == 100 for r in rows[1:])
+    assert any(r[0] == "张三" and r[3] == r[5] for r in rows[1:])
 
 
 def test_delete_exam_removes_submissions(client, auth):

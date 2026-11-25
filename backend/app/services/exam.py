@@ -26,7 +26,7 @@ from .. import clock
 from ..models import Exam, Paper, PaperItem, Question
 from ..siteconfig import site
 from . import answers as answer_rules, sim, stem as stem_rules
-from .paper import right_letter
+from .paper import even_scores, right_letter
 
 
 def _json(raw, fallback):
@@ -210,12 +210,35 @@ def separate_workdirs(items: list[dict]) -> list[dict]:
 
 
 def load_items(db: Session, paper: Paper) -> list[dict]:
-    """按卷面顺序取出全部题目（含答案，仅供服务端使用）。"""
+    """按卷面顺序取出全部题目（含答案，仅供服务端使用）。
+
+    2.28.0：老的「按题型组卷」卷子没设分值，这里当场按比例补上（合计 100），
+    已经发出去的考试跟着新版本一起有了每题分值。
+    """
     out = []
     for it in paper.items:
         q = db.get(Question, it.question_id)
         if q:
             out.append(_item_from_row(it, q))
+    even_scores(out)
+    return separate_workdirs(out)
+
+
+def exam_duration(exam: Exam) -> str:
+    """这场考试的时长（分钟）：发布后单独改过的优先，没改过用试卷上的（2.28.0）。"""
+    return (exam.duration or "").strip() or (exam.paper.duration if exam.paper else "") or ""
+
+
+def load_draw_items(db: Session, exam: Exam, rows: list) -> list[dict]:
+    """一份重抽的卷子（ExamDraw.items_json）→ 和 load_items 一样的题目结构。"""
+    from types import SimpleNamespace
+
+    out = []
+    for qid, section, score in rows:
+        q = db.get(Question, qid)
+        if q:
+            fake = SimpleNamespace(snapshot_json=None, section=section, score=score)
+            out.append(_item_from_row(fake, q))
     return separate_workdirs(out)
 
 

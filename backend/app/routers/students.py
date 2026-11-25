@@ -49,7 +49,8 @@ from ..security import (
 )
 from ..routers.classes import owned_class_ids
 from ..routers.take import _submit_out as submit_out
-from ..services.exam import submission_scores
+from ..services.exam_rules import check_submit
+from ..services.exam import exam_duration, submission_scores
 from ..services import recycle, roster
 from ..services.exam import (
     grade,
@@ -409,20 +410,18 @@ def student_paper(
 ):
     exam = _exam_for(db, me, exam_id)
 
-    if not exam.allow_retake:
-        dup = db.scalar(
-            select(ExamSubmission).where(
-                ExamSubmission.exam_id == exam.id, ExamSubmission.student_id == me.id
-            )
-        )
-        if dup:
-            raise HTTPException(status_code=409, detail="你已经交过这场考试了，如需重考请找老师")
+    # 交满次数的直接拦在取卷这一步（交卷频率只在交卷时查：取卷不算交）
+    try:
+        check_submit(db, exam, student_id=me.id)
+    except HTTPException as exc:
+        if exc.status_code == 409:
+            raise
 
     items = load_items(db, exam.paper)
     return {
         "title": exam.title,
         "school": exam.paper.school,
-        "duration": exam.paper.duration,
+        "duration": exam_duration(exam),
         "code": exam.paper.code,
         "total": len(items),
         "early_submit": bool(exam.early_submit),
@@ -444,35 +443,29 @@ def student_submit(
     exam = _exam_for(db, me, exam_id)
     answers = {str(k): str(v) for k, v in (body.get("answers") or {}).items()}
 
-    if not exam.allow_retake:
-        dup = db.scalar(
-            select(ExamSubmission).where(
-                ExamSubmission.exam_id == exam.id, ExamSubmission.student_id == me.id
-            )
-        )
-        if dup:
-            raise HTTPException(status_code=409, detail="你已经交过这场考试了，如需重考请找老师")
+    # 重考次数、交卷频率（考试设置里定）；超了不收，答题页原样留着
+    check_submit(db, exam, student_id=me.id)
 
     items = load_items(db, exam.paper)
     result = grade(items, answers)
 
     # 姓名班级从账号来，学生填不了也改不了，成绩不会张冠李戴
-    db.add(
-        ExamSubmission(
-            exam_id=exam.id,
-            student_id=me.id,
-            student_name=me.name,
-            student_class=me.student_class,
-            student_no=me.student_no,
-            answers_json=json.dumps(answers, ensure_ascii=False),
-            detail_json=json.dumps(result["detail"], ensure_ascii=False),
-            **submission_scores(result),
-        )
+    sub = ExamSubmission(
+        exam_id=exam.id,
+        student_id=me.id,
+        student_name=me.name,
+        student_class=me.student_class,
+        student_no=me.student_no,
+        answers_json=json.dumps(answers, ensure_ascii=False),
+        detail_json=json.dumps(result["detail"], ensure_ascii=False),
+        **submission_scores(result),
     )
+    db.add(sub)
     db.commit()
+    db.refresh(exam)
 
-    # 和公开答题页共用同一段"给学生看什么"的逻辑，两处口径不会走样
-    return submit_out(exam, result).model_dump()
+    # 和公开答题页共用同一段"给学生看什么"的逻辑，两处口径不会走样（含排名）
+    return submit_out(exam, result, sub).model_dump()
 
 
 def _mine_text(item: dict, raw: str) -> str:

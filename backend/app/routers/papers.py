@@ -16,7 +16,7 @@ from ..services import recycle
 from ..services.blueprint import slot_hint, slot_key, slot_pool
 from ..services.export import questions_to_xlsx, student_html
 from ..services.literacy import OBJECTIVE_TOTAL, split_scopes
-from ..services.paper import build_by_sections, build_paper, type_pool
+from ..services.paper import build_by_sections, build_paper, even_scores, type_pool
 from ..services.sampler import allocate
 from ..siteconfig import site
 from .dicts import active_names, scope_order
@@ -258,7 +258,8 @@ def export_student_html(body: PaperGenerateOut, _: User = Depends(get_current_us
 def list_papers(
     limit: int = 50, _: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
-    rows = db.scalars(select(Paper).order_by(Paper.id.desc()).limit(limit)).all()
+    rows = db.scalars(select(Paper).where(Paper.is_hidden.is_(False))
+                      .order_by(Paper.id.desc()).limit(limit)).all()
     exams = dict(db.execute(
         select(Exam.paper_id, func.count()).where(Exam.paper_id.in_([p.id for p in rows]))
         .group_by(Exam.paper_id)
@@ -313,6 +314,12 @@ def get_paper(paper_id: int, _: User = Depends(get_current_user), db: Session = 
         tally[q.scope] = tally.get(q.scope, 0) + 1
         total += 1
 
+    # 老的按题型卷子没设分：和考试里一样当场按比例补上（2.28.0）
+    flat = [it for g in groups for it in g["items"]]
+    even_scores(flat)
+    for g in groups:
+        g["score"] = sum(int(it["score"]) for it in g["items"])
+
     return {
         "paper_id": paper.id,
         "title": paper.title,
@@ -332,15 +339,18 @@ def get_paper(paper_id: int, _: User = Depends(get_current_user), db: Session = 
 
 
 def _trash_paper(db: Session, user: User, paper: Paper) -> int:
-    """删一份卷：试题条目、用这份卷发的考试和答卷都会跟着删（外键级联），一起进回收站。
-    返回连带删掉的考试场数。不提交 —— 单个删和批量删都在调用方一次提交。"""
+    """删一份存档卷（2.28.0 起**不再连带删考试**）。
+
+    还有考试在用这份卷：只把卷子从「历史试卷」里藏起来（is_hidden），考试照常能考、能看成绩、
+    能看样卷 —— 两边解除绑定；没有考试在用：照旧真删，进回收站。
+    返回「保留下来的考试场数」（藏起来的那种）。不提交 —— 单个删和批量删都在调用方一次提交。"""
     exams = db.scalars(select(Exam).where(Exam.paper_id == paper.id)).all()
-    recycle.trash(db, user, "paper", f"试卷「{paper.title}」", Paper, [paper.id],
-                  detail=(paper.code or "") + (f"，连同 {len(exams)} 场考试" if exams else ""))
-    for exam in exams:
-        db.delete(exam)
+    if exams:
+        paper.is_hidden = True
+        return len(exams)
+    recycle.trash(db, user, "paper", f"试卷「{paper.title}」", Paper, [paper.id], detail=paper.code or "")
     db.delete(paper)
-    return len(exams)
+    return 0
 
 
 @router.delete("/{paper_id}", summary="删除试卷")
@@ -348,9 +358,9 @@ def delete_paper(paper_id: int, user: User = Depends(get_current_user), db: Sess
     paper = db.get(Paper, paper_id)
     if not paper:
         raise HTTPException(status_code=404, detail="试卷不存在")
-    _trash_paper(db, user, paper)
+    kept = _trash_paper(db, user, paper)
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "kept_exams": kept}
 
 
 @router.post("/bulk-delete", summary="批量删除勾选的历史试卷（进回收站）")

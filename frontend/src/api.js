@@ -470,7 +470,8 @@ export const api = {
     http.get(`/data-apis/${id}/export`, { params, responseType: 'blob' }),
 
   // 凭链接答题（不需要登录）
-  takePaper: token => http.get(`/take/${token}`),
+  // draw：临时保存时记下的那一套（2.28.0），带上就取回同一套题
+  takePaper: (token, draw = '') => http.get(`/take/${token}`, { params: draw ? { draw } : {} }),
   takeLive: token => http.get(`/take/${token}/live`, { silent: true }),
   // 2.27.0：班级下拉（只有班级名，不给名单）；交卷可以传 { silent: true } 自己处理报错
   takeClasses: token => http.get(`/take/${token}/classes`, { silent: true }),

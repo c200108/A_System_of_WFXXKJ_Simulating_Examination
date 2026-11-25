@@ -35,7 +35,8 @@ def test_列表带考试场数(client, auth):
     assert _ids(client, auth)[pid]["exam_count"] == 1
 
 
-def test_批量删除_连考试一起进回收站_每份能单独还原(client, auth):
+def test_批量删除_有考试的卷只藏起来_考试照常(client, auth):
+    """2.28.0：删存档试卷不再连带删考试 —— 有考试在用的卷子只从历史试卷里藏起来。"""
     a, b = _paper(client, auth, "批量删甲"), _paper(client, auth, "批量删乙")
     exam = client.post("/api/exams", json={"paper_id": a}, headers=auth).json()
     res = client.post("/api/papers/bulk-delete", json={"ids": [a, b, 999999, a]}, headers=auth)
@@ -45,16 +46,16 @@ def test_批量删除_连考试一起进回收站_每份能单独还原(client, 
     assert got["failed"] == [{"id": 999999, "reason": "试卷不存在（可能已经被删了）"}]
     left = _ids(client, auth)
     assert a not in left and b not in left
-    assert client.get(f"/api/exams/{exam['id']}", headers=auth).status_code == 404
+    assert client.get(f"/api/exams/{exam['id']}", headers=auth).status_code == 200, "考试还在"
+    assert client.get(f"/api/take/{exam['token']}").status_code == 200, "学生照样能考"
+    assert client.get(f"/api/exams/{exam['id']}/paper", headers=auth).status_code == 200
 
     items = client.get("/api/recycle", params={"kind": "paper"}, headers=auth).json()["items"]
     mine = [i for i in items if "批量删甲" in i["title"] or "批量删乙" in i["title"]]
-    assert len(mine) == 2, "每份卷各占回收站一条"
-    one = next(i for i in mine if "批量删甲" in i["title"])
-    assert "连同 1 场考试" in one["detail"]
-    assert client.post("/api/recycle/restore", json={"ids": [one["id"]]},
+    assert [i["title"] for i in mine] == ["试卷「批量删乙」"], "没考试的那份进回收站，有考试的只藏起来"
+    assert client.post("/api/recycle/restore", json={"ids": [mine[0]["id"]]},
                        headers=auth).json()["restored"] == 1
-    assert a in _ids(client, auth) and b not in _ids(client, auth)
+    assert b in _ids(client, auth)
 
 
 def test_批量删除_没选东西和没登录(client, auth):

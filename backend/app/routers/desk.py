@@ -68,7 +68,7 @@ from ..deps import get_current_user
 from ..models import Exam, ExamSubmission, Student, User
 from ..schemas import ExamBrief, SignInIn, SignInOut, StudentBrief
 from ..services import docx_io, images, packcache
-from ..services.exam import group_items, load_items, strip_answers, wants_shuffle
+from ..services.exam import exam_duration, group_items, load_items, strip_answers, wants_shuffle
 
 router = APIRouter(prefix="/api/desk", tags=["桌面客户端"])
 
@@ -303,7 +303,7 @@ def build_package(db: Session, exam: Exam, server: str = "") -> bytes:
         "exam_id": str(exam.id),
         "title": exam.title,
         "school": exam.paper.school or "",
-        "duration_min": _minutes(exam.paper.duration),
+        "duration_min": _minutes(exam_duration(exam)),
         # 老师开了「允许提前交卷」：客户端不拦交卷（老客户端不认这一项，照旧拦）
         "early_submit": bool(exam.early_submit),
         # 选择判断题乱序：学生端按「考试 + 学号」在本机打乱（4.14.0 起认这一项；
@@ -421,7 +421,7 @@ def signin(body: SignInIn, db: Session = Depends(get_db)):
             id=exam.id,
             title=exam.title,
             token=exam.token,
-            duration_min=_minutes(exam.paper.duration),
+            duration_min=_minutes(exam_duration(exam)),
             submitted=bool(done),
             # 交过卷又不许重考的，客户端直接灰掉，别让学生白考一场才被 409 挡回来
             can_take=bool(exam.allow_retake or not done),

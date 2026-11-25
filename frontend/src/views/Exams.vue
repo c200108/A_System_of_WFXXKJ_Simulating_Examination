@@ -7,6 +7,8 @@ import { api, download } from '../api'
 import { optionText } from '../optionText'
 import { loadPublicBase, studentLink } from '../publicUrl'
 import { currentUser } from '../auth'
+import ClassPicker from '../components/ClassPicker.vue'
+import { perQuestion } from '../scoreNote'
 
 // 管理员看得到全校的考试；老师看得到自己的 + 管理员发的（后者只读）。
 // 能不能改由后端给的 can_edit 决定，界面只是照着显示 —— 真正拦人的在后端。
@@ -28,7 +30,11 @@ const form = reactive({
   allow_retake: siteConfig.exam.defaults.allow_retake,
   show_score: siteConfig.exam.defaults.show_score,
   show_answer: siteConfig.exam.defaults.show_answer,
-  early_submit: false
+  early_submit: false,
+  // 2.28.0：重考次数（0 = 不限）、交卷频率（rate_window 分钟内最多 rate_max 次，0 = 不限）
+  max_attempts: 0,
+  rate_window: 0,
+  rate_max: 0
 })
 
 const router = useRouter()
@@ -115,7 +121,10 @@ function openPublish() {
     allow_retake: siteConfig.exam.defaults.allow_retake,
     show_score: siteConfig.exam.defaults.show_score,
     show_answer: siteConfig.exam.defaults.show_answer,
-    early_submit: false
+    early_submit: false,
+    max_attempts: 0,
+    rate_window: 0,
+    rate_max: 0
   })
   publishDlg.value = true
 }
@@ -193,7 +202,46 @@ function openAnalysis(exam) {
 
 async function openPaper() {
   paper.value = await api.examPaper(current.value.id)
+  durationEdit.value = Number(paper.value.duration) || null
   paperDlg.value = true
+}
+
+// 样卷里单独改这场考试的时长（2.28.0）：只改这一场，试卷本身和别的考试不受影响
+const durationEdit = ref(null)
+async function saveDuration(reset = false) {
+  const value = reset ? '' : String(durationEdit.value || '')
+  await api.updateExam(current.value.id, { duration: value })
+  paper.value = await api.examPaper(current.value.id)
+  durationEdit.value = Number(paper.value.duration) || null
+  await load()
+  current.value = exams.value.find(e => e.id === current.value.id) || current.value
+  ElMessage.success(reset ? '已恢复成试卷上的时长' : `考试时长改成 ${value} 分钟，学生刷新后按新时长算`)
+}
+
+// 重考次数、交卷频率（2.28.0）：发布后也能改
+const ruleDlg = ref(false)
+const rule = reactive({ exam: null, allow_retake: false, max_attempts: 0, rate_window: 0, rate_max: 0 })
+function openRules(exam) {
+  Object.assign(rule, {
+    exam,
+    allow_retake: exam.allow_retake,
+    max_attempts: exam.max_attempts || 0,
+    rate_window: exam.rate_window || 0,
+    rate_max: exam.rate_max || 0
+  })
+  ruleDlg.value = true
+}
+async function saveRules() {
+  const { exam, ...body } = rule
+  await api.updateExam(exam.id, body)
+  ruleDlg.value = false
+  await load()
+  ElMessage.success('交卷规则已更新')
+}
+function ruleText(e) {
+  const parts = [!e.allow_retake ? '只能交 1 次' : e.max_attempts ? `最多交 ${e.max_attempts} 次` : '重考不限次']
+  if (e.rate_window && e.rate_max) parts.push(`每 ${e.rate_window} 分钟最多 ${e.rate_max} 次`)
+  return parts.join('，')
 }
 
 async function removeSub(row) {
@@ -378,14 +426,22 @@ const hardest = computed(() => {
       </el-table-column>
       <el-table-column label="可重考" width="76">
         <template #default="{ row }">
-          <el-switch
-            :model-value="row.allow_retake"
-            :disabled="!row.can_edit"
-            @change="v => toggle(row, 'allow_retake', v)"
-          />
+          <el-tooltip :content="ruleText(row)" placement="top">
+            <el-switch
+              :model-value="row.allow_retake"
+              :disabled="!row.can_edit"
+              @change="v => toggle(row, 'allow_retake', v)"
+            />
+          </el-tooltip>
         </template>
       </el-table-column>
-      <el-table-column prop="submission_count" label="交卷" width="64" />
+      <el-table-column label="交卷" width="76">
+        <template #default="{ row }">
+          <span :title="`${row.student_count} 人交了 ${row.submission_count} 份`">
+            {{ row.student_count }}<span v-if="row.submission_count !== row.student_count" class="of"> 人/{{ row.submission_count }} 份</span>
+          </span>
+        </template>
+      </el-table-column>
       <el-table-column label="待阅" width="72">
         <template #default="{ row }">
           <el-tag v-if="row.ungraded_count" size="small" type="warning" effect="dark">
@@ -402,7 +458,7 @@ const hardest = computed(() => {
       <el-table-column label="操作" width="214" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openScores(row)">成绩</el-button>
-          <el-button link type="primary" @click="openAnalysis(row)">分析</el-button>
+          <el-button v-if="row.can_edit" link type="primary" :title="ruleText(row)" @click="openRules(row)">规则</el-button>
           <el-button
             link
             type="primary"
@@ -436,7 +492,9 @@ const hardest = computed(() => {
     </template>
 
     <div v-if="stats" class="kpi">
-      <div class="k"><span>交卷</span><b>{{ stats.submission_count }}</b></div>
+      <!-- 交卷人数和交卷份数分开（2.28.0）：允许重考时一个人可能交好几份 -->
+      <div class="k"><span>交卷人数</span><b>{{ stats.student_count ?? stats.submission_count }}</b></div>
+      <div class="k"><span>交卷份数</span><b>{{ stats.submission_count }}</b></div>
       <div class="k"><span>均分</span><b>{{ stats.avg_score ?? '—' }}</b></div>
       <div class="k"><span>最高</span><b>{{ stats.max_score ?? '—' }}</b></div>
       <div class="k"><span>最低</span><b>{{ stats.min_score ?? '—' }}</b></div>
@@ -574,16 +632,8 @@ const hardest = computed(() => {
         <el-input v-model="form.title" placeholder="留空就用试卷标题" />
       </el-form-item>
       <el-form-item label="发给哪些班">
-        <el-select
-          v-model="form.target_class_ids"
-          multiple
-          collapse-tags
-          collapse-tags-tooltip
-          :placeholder="isAdmin ? '不选 = 全体学生' : '不选 = 我带的全部班'"
-          style="width: 100%"
-        >
-          <el-option v-for="c in myClasses" :key="c.id" :label="c.display" :value="c.id" />
-        </el-select>
+        <!-- 按年级分行，点年级名一键全选这个年级（2.28.0） -->
+        <ClassPicker v-model="form.target_class_ids" :classes="myClasses" />
         <span class="fh">
           <template v-if="isAdmin">不选就是<b>全体学生</b>；选了就只发给这几个班。</template>
           <template v-else>只能选自己带的班。不选就是<b>我带的全部班</b>。</template>
@@ -608,7 +658,28 @@ const hardest = computed(() => {
       </el-form-item>
       <el-form-item label="允许重考">
         <el-switch v-model="form.allow_retake" />
-        <span class="fh">默认同一学号只能交一次</span>
+        <template v-if="form.allow_retake">
+          <span class="fh inl">最多交</span>
+          <el-input-number v-model="form.max_attempts" :min="0" :max="99" size="small" style="width: 96px" />
+          <span class="fh inl">次（0 = 不限）</span>
+        </template>
+        <span v-else class="fh">默认同一个人只能交一次</span>
+      </el-form-item>
+      <el-form-item label="交卷频率">
+        <span class="fh inl">每</span>
+        <el-select v-model="form.rate_window" size="small" style="width: 104px">
+          <el-option label="不限" :value="0" />
+          <el-option label="5 分钟" :value="5" />
+          <el-option label="10 分钟" :value="10" />
+          <el-option label="30 分钟" :value="30" />
+          <el-option label="60 分钟" :value="60" />
+        </el-select>
+        <template v-if="form.rate_window">
+          <span class="fh inl">最多交</span>
+          <el-input-number v-model="form.rate_max" :min="1" :max="99" size="small" style="width: 96px" />
+          <span class="fh inl">次</span>
+        </template>
+        <span class="fh">超了提示「提交次数过多，请等多久后再交卷」，作答不丢</span>
       </el-form-item>
     </el-form>
     <template #footer>
@@ -618,15 +689,8 @@ const hardest = computed(() => {
   </el-dialog>
 
   <el-dialog v-model="classDlg" :title="`发放班级 · ${classForm.exam?.title || ''}`" width="480px">
-    <el-select
-      v-model="classForm.ids"
-      multiple
-      filterable
-      :placeholder="isAdmin ? '不选 = 全体学生' : '不选 = 我带的全部班'"
-      style="width: 100%"
-    >
-      <el-option v-for="c in myClasses" :key="c.id" :label="c.display" :value="c.id" />
-    </el-select>
+    <ClassPicker v-model="classForm.ids" :classes="myClasses" />
+    <p class="fh">{{ isAdmin ? '一个都不选 = 全体学生' : '一个都不选 = 我带的全部班' }}</p>
     <p class="fh">
       考试已经发布也能改：勾上新的班，那个班的学生就能在平台上看到并参加这场考试；
       已经交卷的答卷、成绩都不受影响。<template v-if="!isAdmin">只能选自己带的班。</template>
@@ -637,37 +701,105 @@ const hardest = computed(() => {
     </template>
   </el-dialog>
 
-  <!-- 样卷：带答案，老师看 -->
-  <el-dialog v-model="paperDlg" :title="`样卷 · ${paper?.title || ''}`" width="780px" top="5vh">
-    <template v-if="paper">
-      <p class="who">
-        {{ paper.school }}　{{ paper.paper_title }}
-        <span v-if="paper.duration" class="of">　考试时长 {{ paper.duration }} 分钟</span>
-        <span class="of">　满分 {{ paper.full_score }}</span>
-      </p>
-      <div v-for="g in paper.groups" :key="g.name" class="pg">
-        <div class="pg-h">{{ g.name }}<span class="of">（共 {{ g.items.length }} 题，{{ g.score }} 分）</span></div>
-        <div v-for="q in g.items" :key="q.id" class="dq">
-          <div class="dstem">
-            {{ q.no }}. {{ q.stem }}
-            <span v-if="q.score" class="of">（{{ q.score }} 分）</span>
-            <el-tag v-if="q.scope" size="small" type="info" effect="plain">{{ q.scope }}</el-tag>
+  <!-- 样卷：带答案，老师看。样式和组卷页的卷面一样（2.28.0），这里还能单独改这场考试的时长 -->
+  <el-dialog v-model="paperDlg" :title="`样卷 · ${paper?.title || ''}`" width="860px" top="4vh">
+    <div v-if="paper" class="paper">
+      <div class="paper-head">
+        <h1>{{ paper.paper_title || paper.title }}</h1>
+        <div class="meta">
+          <span v-if="paper.school">{{ paper.school }}　·　</span>
+          <span>考试时长 {{ paper.duration || '—' }} 分钟　·　</span>
+          <span>满分 {{ paper.full_score }} 分</span>
+          <span v-if="paper.code">　·　{{ paper.code }}</span>
+        </div>
+      </div>
+      <div v-if="current?.can_edit" class="durbar">
+        <span>这场考试的时长</span>
+        <el-input-number v-model="durationEdit" :min="1" :max="600" size="small" style="width: 120px" />
+        <span>分钟</span>
+        <el-button size="small" type="primary" :disabled="!durationEdit" @click="saveDuration(false)">保存</el-button>
+        <el-button
+          v-if="paper.paper_duration && paper.duration !== paper.paper_duration"
+          size="small"
+          link
+          @click="saveDuration(true)"
+        >恢复试卷上的 {{ paper.paper_duration }} 分钟</el-button>
+        <span class="fh">只改这一场考试，试卷和别的考试不受影响；考试中途改了，学生刷新后按新时长</span>
+      </div>
+      <template v-for="(g, gi) in paper.groups" :key="g.name">
+        <div class="sect">
+          <h2>
+            {{ ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'][gi] || gi + 1 }}、{{ g.name }}（共 {{ g.items.length }} 题<template
+              v-if="g.score"
+            >，{{ perQuestion(g.items) }}，共 {{ g.score }} 分</template>）
+          </h2>
+        </div>
+        <div v-for="q in g.items" :key="q.id" class="q">
+          <div class="q-stem">
+            <span class="q-no">{{ q.no }}.</span>{{ q.stem }}
+            <span v-if="q.score" class="pt">（{{ q.score }} 分）</span>
           </div>
-          <img v-if="q.image_url" :src="q.image_url" class="qimg" alt="题目配图" />
-          <div v-if="q.options.length" class="opts">
-            <span v-for="o in q.options" :key="o.label" :class="{ right: String(q.answer).includes(o.label) }">
-              {{ o.label }}. {{ o.content }}
+          <img v-if="q.image_url" :src="q.image_url" class="q-img" alt="题目配图" />
+          <div v-if="q.options.length" class="opts flat">
+            <span
+              v-for="o in q.options"
+              :key="o.label"
+              class="op-flat"
+              :class="{ right: String(q.answer).includes(o.label) && q.type === '选择题' }"
+            >
+              <span class="L">{{ o.label }}</span>{{ o.content }}
             </span>
           </div>
-          <div v-if="q.answer" class="dans">参考答案：<b>{{ optionText(q.options, q.answer) }}</b></div>
+          <div v-if="q.answer" class="ans">答案：<b>{{ optionText(q.options, q.answer) }}</b></div>
           <div v-if="q.checks.length" class="checks">
             <span v-for="(c, i) in q.checks" :key="i" class="chip">判分点 {{ i + 1 }}：{{ c }}</span>
           </div>
+          <div class="q-tag">
+            <span v-if="q.scope" class="tag k">{{ q.scope }}</span>
+            <span class="tag">{{ q.type }}</span>
+          </div>
         </div>
-      </div>
-    </template>
+      </template>
+    </div>
     <template #footer>
       <el-button @click="paperDlg = false">关闭</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 交卷规则：重考次数、交卷频率（2.28.0） -->
+  <el-dialog v-model="ruleDlg" :title="`交卷规则 · ${rule.exam?.title || ''}`" width="500px">
+    <el-form label-width="90px">
+      <el-form-item label="允许重考">
+        <el-switch v-model="rule.allow_retake" />
+        <template v-if="rule.allow_retake">
+          <span class="fh inl">最多交</span>
+          <el-input-number v-model="rule.max_attempts" :min="0" :max="99" size="small" style="width: 96px" />
+          <span class="fh inl">次（0 = 不限）</span>
+        </template>
+        <span v-else class="fh inl">一个人只能交 1 次</span>
+      </el-form-item>
+      <el-form-item label="交卷频率">
+        <span class="fh inl">每</span>
+        <el-select v-model="rule.rate_window" size="small" style="width: 104px">
+          <el-option label="不限" :value="0" />
+          <el-option label="5 分钟" :value="5" />
+          <el-option label="10 分钟" :value="10" />
+          <el-option label="30 分钟" :value="30" />
+          <el-option label="60 分钟" :value="60" />
+        </el-select>
+        <template v-if="rule.rate_window">
+          <span class="fh inl">最多交</span>
+          <el-input-number v-model="rule.rate_max" :min="1" :max="99" size="small" style="width: 96px" />
+          <span class="fh inl">次</span>
+        </template>
+      </el-form-item>
+      <p class="fh">
+        超出次数：提示交满了、请联系老师；超出频率：提示「提交次数过多，请等多久后再交卷」。两种情况学生的作答都不丢、页面不刷新。
+      </p>
+    </el-form>
+    <template #footer>
+      <el-button @click="ruleDlg = false">取消</el-button>
+      <el-button type="primary" @click="saveRules">保存</el-button>
     </template>
   </el-dialog>
 
@@ -781,6 +913,108 @@ const hardest = computed(() => {
 .nodel {
   color: var(--el-text-color-placeholder);
   margin-left: 8px;
+}
+/* 样卷：和组卷页同一套卷面样式 */
+.paper-head {
+  text-align: center;
+  margin: 4px 0 10px;
+}
+.paper-head h1 {
+  margin: 0 0 6px;
+  font-size: 21px;
+  font-family: 'Heiti SC', 'SimHei', 'Microsoft YaHei', sans-serif;
+  letter-spacing: 0.05em;
+}
+.paper .meta {
+  color: var(--el-text-color-secondary);
+  font-size: 12.5px;
+}
+.durbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 14px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--el-color-primary-light-9);
+  font-size: 13px;
+}
+.paper .sect {
+  margin: 22px 0 10px;
+}
+.paper .sect h2 {
+  margin: 0;
+  font-size: 16px;
+  font-family: 'Heiti SC', 'SimHei', 'Microsoft YaHei', sans-serif;
+}
+.paper .q {
+  margin-bottom: 14px;
+  line-height: 1.85;
+}
+.q-no {
+  font-weight: 600;
+  margin-right: 5px;
+}
+.q-stem {
+  white-space: pre-wrap;
+}
+.q-img {
+  display: block;
+  max-width: 360px;
+  margin: 8px 0 4px 20px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 6px;
+}
+.paper .opts {
+  margin: 4px 0 0 20px;
+}
+.paper .opts.flat {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+}
+.op-flat {
+  min-width: 42%;
+}
+.op-flat.right {
+  color: var(--el-color-success);
+  font-weight: 600;
+}
+.paper .L {
+  font-family: ui-monospace, Consolas, monospace;
+  font-weight: 600;
+  color: var(--el-text-color-secondary);
+  margin-right: 6px;
+}
+.paper .ans {
+  margin: 6px 0 0 20px;
+  color: var(--el-color-danger);
+  font-size: 13.5px;
+}
+.paper .pt {
+  color: var(--el-text-color-secondary);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.q-tag {
+  margin: 4px 0 0 20px;
+  display: flex;
+  gap: 6px;
+}
+.paper .tag {
+  font-size: 11px;
+  color: var(--el-text-color-placeholder);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 4px;
+  padding: 0 6px;
+}
+.paper .tag.k {
+  color: var(--el-color-primary);
+  border-color: var(--el-color-primary-light-7);
+}
+.fh.inl {
+  margin: 0 6px;
 }
 .kpi {
   display: flex;

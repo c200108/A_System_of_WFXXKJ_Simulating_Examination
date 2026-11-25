@@ -8,8 +8,10 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
 import { optionText } from '../optionText'
-import { applyShuffle, browserSeed } from '../shuffle'
+import { applyShuffle } from '../shuffle'
 import { useSubmitGate } from '../submitGate'
+import { useExamGuard } from '../examGuard'
+import { perQuestion } from '../scoreNote'
 import SimHost from '../components/sim/SimHost.vue'
 import ObjectiveAnswer from '../components/ObjectiveAnswer.vue'
 
@@ -28,6 +30,46 @@ const me = reactive({ student_name: '', class_id: null })
 const classes = ref([])
 const className = computed(() => classes.value.find(c => c.id === me.class_id)?.display || '')
 const answers = reactive({})
+
+// ---------------- 临时保存（2.28.0） ----------------
+// 开了乱序：每次打开都重新抽一套题、重新打乱（服务端给 draw，这里再用随机种子排题序和选项）。
+// 点「临时保存」把这一套（draw + 种子）、作答、班级姓名存在这台电脑上：交卷前刷新，题目和作答原样回来；
+// 交卷成功就删掉 —— 再刷新又是新的一套。没点过临时保存，刷新就换题、作答清空。
+const SAVE_KEY = `take-save-${token}`
+const savedAt = ref('')
+let seed = ''
+function readSave() {
+  try {
+    return JSON.parse(localStorage.getItem(SAVE_KEY) || 'null')
+  } catch {
+    return null
+  }
+}
+function tempSave() {
+  if (!paper.value || result.value) return
+  const now = new Date()
+  const at = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      draw: paper.value.draw || '', seed, answers: { ...answers },
+      me: { student_name: me.student_name, class_id: me.class_id }, at
+    }))
+    savedAt.value = at
+    ElMessage.success('已临时保存：交卷前刷新页面，题目和已选内容都不变')
+  } catch {
+    ElMessage.error('这台电脑的浏览器存不了（可能开着无痕模式），请直接作答交卷')
+  }
+}
+function clearSave() {
+  try {
+    localStorage.removeItem(SAVE_KEY)
+  } catch {
+    /* 无痕模式 */
+  }
+}
+
+// 防开发者工具、防脚本代答（examGuard.js）
+const { tampered } = useExamGuard()
 
 const numbering = computed(() => {
   const map = {}
@@ -65,8 +107,19 @@ const detailOf = computed(() => {
 
 onMounted(async () => {
   try {
-    // 选择判断题乱序：这个页面取卷时还不知道是谁，按这台浏览器的固定种子打乱
-    paper.value = applyShuffle(await api.takePaper(token), `${token}-${browserSeed(token)}`)
+    // 有临时保存就取回那一套、用那个种子排；没有就每次都是新的一套（开了乱序时）
+    const saved = readSave()
+    seed = saved?.seed || `${Date.now()}-${Math.random()}`
+    const got = await api.takePaper(token, saved?.draw || '')
+    paper.value = applyShuffle(got, `${token}-${seed}`)
+    if (saved && (got.draw || '') === (saved.draw || '')) {
+      const ids = new Set(paper.value.groups.flatMap(g => g.items.map(q => String(q.id))))
+      Object.entries(saved.answers || {}).forEach(([k, v]) => ids.has(String(k)) && (answers[k] = v))
+      Object.assign(me, saved.me || {})
+      savedAt.value = saved.at || ''
+    } else if (saved) {
+      clearSave()        // 记下的那一套过期了，作答对不上新题，不往回填
+    }
     gate.start()
     classes.value = await api.takeClasses(token).catch(() => [])
   } catch (e) {
@@ -90,6 +143,10 @@ async function submit() {
     return
   }
 
+  if (tampered.value) {
+    ElMessage.error('检测到开发者工具开着，关掉以后才能交卷')
+    return
+  }
   if (!me.class_id) {
     ElMessage.warning('请先在卷头选择自己的班级')
     return
@@ -119,15 +176,20 @@ async function submit() {
   try {
     result.value = await api.submitPaper(
       token,
-      { student_name: me.student_name.trim(), class_id: me.class_id, answers },
+      { student_name: me.student_name.trim(), class_id: me.class_id, answers, draw: paper.value.draw || '' },
       { silent: true }
     )
+    clearSave()          // 交上了：再刷新就是新的一套
     gate.done()
     window.scrollTo({ top: 0, behavior: 'smooth' })
   } catch (e) {
-    // 姓名不在这个班的名单里：交不上，弹窗说清楚，卷子还在、改好再交
+    // 姓名不在名单里、交得太勤、交满次数：交不上，弹窗说清楚。页面不刷新，作答都还在
     const msg = e.response?.data?.detail || '交卷没成功，请稍后再试，或询问老师'
-    ElMessageBox.alert(msg, '交不上卷', { type: 'error', confirmButtonText: '我去检查' })
+    const busy = e.response?.status === 429
+    ElMessageBox.alert(msg, busy ? '提交次数过多' : '交不上卷', {
+      type: busy ? 'warning' : 'error',
+      confirmButtonText: busy ? '知道了' : '我去检查'
+    })
   } finally {
     submitting.value = false
   }
@@ -136,6 +198,10 @@ async function submit() {
 
 <template>
   <div class="wrap" v-loading="loading">
+    <!-- 开发者工具开着：盖住整页，不让交卷（examGuard.js） -->
+    <div v-if="tampered && !result" class="guard">
+      检测到开发者工具（F12）开着。<br />考试期间不能用，请关掉它，关掉后自动恢复答题。
+    </div>
     <el-result v-if="loadError" icon="warning" title="无法进入考试" :sub-title="loadError" />
 
     <template v-else-if="paper">
@@ -176,8 +242,13 @@ async function submit() {
               　·　操作题 {{ result.subjective_total }} 分待老师评阅
             </template>
           </p>
-          <p v-else-if="result.score !== null" class="rsub">
+          <p v-else-if="result.score !== null && result.score !== undefined" class="rsub">
             客观题答对 {{ result.right_count }} / {{ result.objective_count }}
+          </p>
+          <!-- 在全部交卷同学里排第几（每人取最高分，2.28.0） -->
+          <p v-if="result.rank" class="rsub rank">
+            当前排名：第 <b>{{ result.rank }}</b> 名 / 共 {{ result.rank_total }} 人
+            <span class="tbar">（每人取最高一次的分；后面还有同学交卷，名次会变）</span>
           </p>
         </template>
         <template #extra>
@@ -191,7 +262,7 @@ async function submit() {
         <div class="sect">
           {{ CN[gi] || gi + 1 }}、{{ g.name || g.type }}（共 {{ g.items.length }} 题<template
             v-if="g.score"
-          >，{{ g.score }} 分</template>）
+          >，{{ perQuestion(g.items) }}，共 {{ g.score }} 分</template>）
           <span v-if="g.items.some(q => q.type === '操作题')" class="sd">操作题由老师评阅</span>
         </div>
 
@@ -223,7 +294,7 @@ async function submit() {
           </div>
           <div v-else class="body">
             <!-- 单选 / 多选（复选框）/ 判断 / 填空（每空一个输入框），见 ObjectiveAnswer.vue -->
-            <ObjectiveAnswer v-model="answers[q.id]" :q="q" :disabled="!!result" />
+            <ObjectiveAnswer v-model="answers[q.id]" :q="q" :disabled="!!result" guard />
           </div>
 
           <div v-if="detailOf[q.id] && detailOf[q.id].scored && !detailOf[q.id].ok" class="key">
@@ -236,6 +307,8 @@ async function submit() {
       <div v-if="!result" class="bar">
         <span class="prog">已作答 {{ answered }} / {{ paper.total }}</span>
         <span v-if="gate.reason.value" class="gate">{{ gate.reason.value }}</span>
+        <el-button size="large" @click="tempSave">临时保存</el-button>
+        <span v-if="savedAt" class="tbar">{{ savedAt }} 已临时保存，交卷前刷新不会变</span>
         <el-button type="primary" size="large" :loading="submitting" @click="submit">
           交卷
         </el-button>
@@ -294,6 +367,28 @@ async function submit() {
   color: var(--mut, #61757A);
   font-size: 12.5px;
   white-space: nowrap;
+}
+.rank b {
+  font-size: 18px;
+  color: var(--el-color-primary);
+}
+.tbar {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.guard {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: 18px;
+  text-align: center;
+  line-height: 1.8;
+  padding: 20px;
 }
 .rsub {
   margin: 4px 0;

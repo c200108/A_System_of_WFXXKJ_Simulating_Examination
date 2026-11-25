@@ -5,6 +5,7 @@ import { siteConfig } from '../siteConfig'
 import { api, download, safeName } from '../api'
 import { blankCount, isMulti, judge } from '../answerRules'
 import ObjectiveAnswer from '../components/ObjectiveAnswer.vue'
+import { perQuestion } from '../scoreNote'
 
 const CN = siteConfig.paper.section_numerals
 
@@ -228,8 +229,10 @@ async function bulkRemove() {
   const withExam = rows.filter(r => r.exam_count).length
   await ElMessageBox.confirm(
     `确定删除选中的 ${rows.length} 份试卷？` +
-      (exams ? `其中 ${withExam} 份发过考试，会连同这 ${exams} 场考试和答卷一起删除。` : '') +
-      '删掉的都在回收站里，7 天内可以一份一份还原。',
+      (exams
+        ? `其中 ${withExam} 份发过考试：考试和答卷都不受影响，照常能考、能看成绩（只是这几份卷子从历史试卷里拿掉）。`
+        : '') +
+      '没发过考试的卷子进回收站，7 天内可以还原。',
     '批量删除',
     { type: 'warning', confirmButtonText: `删除 ${rows.length} 份`, confirmButtonClass: 'el-button--danger' }
   )
@@ -238,11 +241,16 @@ async function bulkRemove() {
   history.value = await api.papers()
   picked.value = []
   const extra = res.failed.length ? `，${res.failed.length} 份已经不在了` : ''
-  ElMessage.success(`已删除 ${res.deleted.length} 份${res.exams ? `（连同 ${res.exams} 场考试）` : ''}${extra}`)
+  ElMessage.success(`已删除 ${res.deleted.length} 份${res.exams ? `（${res.exams} 场考试照常保留）` : ''}${extra}`)
 }
 
 async function removePaper(row) {
-  await ElMessageBox.confirm(`确定删除《${row.title}》？`, '提示', { type: 'warning' })
+  await ElMessageBox.confirm(
+    `确定删除《${row.title}》？` +
+      (row.exam_count ? `用它发的 ${row.exam_count} 场考试不受影响，照常能考、能看成绩。` : ''),
+    '提示',
+    { type: 'warning' }
+  )
   await api.deletePaper(row.id)
   history.value = await api.papers()
   ElMessage.success('已删除')
@@ -419,7 +427,7 @@ function printPaper() {
               <span v-if="examMode && t === '操作题'" class="sub inline">测评题不出操作题</span>
             </el-form-item>
             <p v-if="examWarn" class="short">{{ examWarn }}</p>
-            <p class="note">这种方式不给题目赋分，判分仍按客观题正确率折成百分制。</p>
+            <p class="note">按题型组卷整卷 100 分，按题数平分给每题（除不尽的前面的题多 1 分），大题标题后面写着每题几分。</p>
           </template>
 
           <el-form-item v-if="!examMode" label="知识范围">
@@ -617,7 +625,7 @@ function printPaper() {
                 <h2>
                   {{ CN[gi] || gi + 1 }}、{{ g.name || g.type }}（共 {{ g.items.length }} 题<template
                     v-if="g.score"
-                  >，共 {{ g.score }} 分</template>）
+                  >，{{ perQuestion(g.items) }}，共 {{ g.score }} 分</template>）
                 </h2>
                 <div class="sd">{{ sectionHint(g) }}</div>
               </div>

@@ -6,26 +6,36 @@
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import Exam, ExamSubmission, SchoolClass, Student
 from ..schemas import SubmitIn, SubmitOut, TakePaperOut
+from ..services import throttle
 from ..services.exam import (
+    exam_duration,
     grade,
     group_items,
+    load_draw_items,
     load_items,
     strip_answers,
     submission_scores,
     wants_shuffle,
 )
+from ..services.exam_rules import check_submit, find_draw, items_for, make_draw, rank_of
+
+# 防爆破（2.28.0）：免登录的接口按 IP 限次。
+# 取卷：一分钟 30 次（每次都可能重抽一套题、写一行库）；姓名核对不上：10 分钟 20 次（防挨个试名字）
+TAKE_PER_MIN = 30
+ROSTER_FAILS = 20
+ROSTER_WINDOW = 600
 
 router = APIRouter(prefix="/api/take", tags=["学生答题"])
 
 
-def _submit_out(exam, result: dict) -> SubmitOut:
+def _submit_out(exam, result: dict, sub=None) -> SubmitOut:
     """交卷后给学生看什么。
 
     操作题要老师看，所以这里先报客观题那一段，并说清还有几分等着评阅 ——
@@ -39,6 +49,9 @@ def _submit_out(exam, result: dict) -> SubmitOut:
         return out
 
     out.score = result["score"]
+    if sub is not None:
+        # 这份成绩在全部交卷同学里排第几（每人取最高分）
+        out.rank, out.rank_total = rank_of(exam, sub)
     out.right_count = result["right_count"]
     out.objective_count = result["objective_count"]
     out.objective_score = result["objective_score"]
@@ -119,26 +132,39 @@ def _match_roster(db: Session, exam: Exam, body: SubmitIn) -> tuple[Student | No
 
 
 @router.get("/{token}", response_model=TakePaperOut, summary="学生取卷（不含答案）")
-def take_paper(token: str, db: Session = Depends(get_db)):
+def take_paper(token: str, request: Request, draw: str = "", db: Session = Depends(get_db)):
+    """开了乱序的卷子：每次取卷重抽一套（按题型卷）/ 答题页重新打乱（六大题卷），刷新就换。
+    带着临时保存时记下的 draw 来取，给回同一套 —— 临时保存后刷新，题目和作答都不变。"""
     exam = _open_exam(db, token)
-    items = load_items(db, exam.paper)
+    who = throttle.ip_of(request)
+    throttle.check(db, "take_paper", f"{exam.id}:{who}", TAKE_PER_MIN, 60, "刷新太频繁了")
+    # 带了 draw 且还在：同一套；没带、或记下的那份过期清掉了：重新抽一套
+    got = find_draw(db, exam, draw) or make_draw(db, exam)
+    if got is not None:
+        items = load_draw_items(db, exam, json.loads(got.items_json or "[]"))
+    else:
+        items = load_items(db, exam.paper)
+    throttle.hit(db, "take_paper", f"{exam.id}:{who}")
+    db.commit()
     groups = strip_answers(group_items(items))
     return TakePaperOut(
         title=exam.title,
         school=exam.paper.school,
-        duration=exam.paper.duration,
+        duration=exam_duration(exam),
         code=exam.paper.code,
         total=len(items),
         full_score=sum(int(it.get("score") or 0) for it in items),
         early_submit=bool(exam.early_submit),
         shuffle=wants_shuffle(exam.paper),
+        draw=got.key if got is not None else "",
         groups=groups,
     )
 
 
 @router.post("/{token}/submit", response_model=SubmitOut, summary="学生交卷，后端判分")
-def submit(token: str, body: SubmitIn, db: Session = Depends(get_db)):
+def submit(token: str, body: SubmitIn, request: Request, db: Session = Depends(get_db)):
     exam = _open_exam(db, token)
+    ip = throttle.ip_of(request)
 
     if not body.student_name.strip():
         raise HTTPException(status_code=400, detail="请先填写姓名")
@@ -151,28 +177,27 @@ def submit(token: str, body: SubmitIn, db: Session = Depends(get_db)):
     if not no:
         if body.class_id is None:
             raise HTTPException(status_code=400, detail="请先选择班级、填写姓名再交卷")
-        roster_hit, name, cls_name = _match_roster(db, exam, body)
+        # 挨个试名字的：核对不上的次数按 IP 限住
+        throttle.check(db, "take_roster", f"{exam.id}:{ip}", ROSTER_FAILS, ROSTER_WINDOW,
+                       "姓名核对失败次数太多，请找老师确认班级和姓名")
+        try:
+            roster_hit, name, cls_name = _match_roster(db, exam, body)
+        except HTTPException:
+            throttle.hit(db, "take_roster", f"{exam.id}:{ip}")
+            db.commit()
+            raise
         body.student_name, body.student_class = name, cls_name
 
-    # 同一个人默认只能交一次，避免反复试答案
-    if roster_hit is not None and not exam.allow_retake:
-        dup = db.scalar(select(ExamSubmission).where(
-            ExamSubmission.exam_id == exam.id, ExamSubmission.student_id == roster_hit.id))
-        if dup:
-            raise HTTPException(status_code=409, detail="你已经交过这场考试的卷子了，如需重考请联系老师")
+    # 重考次数、交卷频率（老师在考试设置里定）。超了不收，答题页原样留着
+    if roster_hit is not None:
+        check_submit(db, exam, student_id=roster_hit.id)
+    elif no:
+        check_submit(db, exam, student_no=no)
+    else:
+        check_submit(db, exam, name=body.student_name.strip(), cls=body.student_class.strip())
 
-    # 同一学号默认只能交一次，避免反复试答案
-    if no and not exam.allow_retake:
-        dup = db.scalar(
-            select(ExamSubmission).where(
-                ExamSubmission.exam_id == exam.id,
-                ExamSubmission.student_no == body.student_no.strip(),
-            )
-        )
-        if dup:
-            raise HTTPException(status_code=409, detail="这个学号已经交过卷了，如需重考请联系老师")
-
-    items = load_items(db, exam.paper)
+    # 答的是哪一套：重抽过的按那一套判，没有就是原卷
+    items, draw_key = items_for(db, exam, body.draw)
     result = grade(items, body.answers)
 
     # **认领到学生账号上。** 这个接口是免登录的（网页链接、机房 exe 都走它），
@@ -190,9 +215,11 @@ def submit(token: str, body: SubmitIn, db: Session = Depends(get_db)):
         student_no=no or (roster_hit.student_no if roster_hit else ""),
         answers_json=json.dumps(body.answers, ensure_ascii=False),
         detail_json=json.dumps(result["detail"], ensure_ascii=False),
+        draw_key=draw_key,
         **submission_scores(result),
     )
     db.add(sub)
     db.commit()
+    db.refresh(exam)
 
-    return _submit_out(exam, result)
+    return _submit_out(exam, result, sub)

@@ -64,16 +64,24 @@ def test_exam_with_submissions_restores_in_full(client, auth):
     assert all(i["id"] != item["id"] for i in _items(client, auth))
 
 
-def test_paper_takes_its_exams_and_comes_back(client, auth):
+def test_删有考试的卷不连带删考试(client, auth):
+    """2.28.0：组卷页删存档卷，用它发的考试不跟着删，卷子只从历史试卷里藏起来。"""
     pid = _paper(client, auth, "连考试一起删的卷")
     exam = client.post("/api/exams", json={"paper_id": pid}, headers=auth).json()
-    assert client.delete(f"/api/papers/{pid}", headers=auth).status_code == 200
-    with SessionLocal() as db:
-        assert db.get(Exam, exam["id"]) is None
-    item = next(i for i in _items(client, auth, "paper") if "连考试一起删的卷" in i["title"])
-    _restore(client, auth, [item["id"]])
+    res = client.delete(f"/api/papers/{pid}", headers=auth)
+    assert res.status_code == 200 and res.json()["kept_exams"] == 1
     with SessionLocal() as db:
         assert db.get(Exam, exam["id"]) is not None
+    assert pid not in [p["id"] for p in client.get("/api/papers", headers=auth).json()]
+    assert not [i for i in _items(client, auth, "paper") if "连考试一起删的卷" in i["title"]]
+    assert client.get(f"/api/papers/{pid}", headers=auth).status_code == 200
+
+
+def test_没考试的卷照旧进回收站(client, auth):
+    pid = _paper(client, auth, "没考试的卷")
+    assert client.delete(f"/api/papers/{pid}", headers=auth).json()["kept_exams"] == 0
+    item = next(i for i in _items(client, auth, "paper") if "没考试的卷" in i["title"])
+    _restore(client, auth, [item["id"]])
     assert client.get(f"/api/papers/{pid}", headers=auth).status_code == 200
 
 

@@ -37,10 +37,13 @@ from ..services.exam import (
     apply_manual,
     group_items,
     has_scores,
+    exam_duration,
     load_items,
     new_token,
     question_stats,
 )
+
+from ..services.exam_rules import all_items, items_for, people_count
 
 router = APIRouter(prefix="/api/exams", tags=["考试"])
 
@@ -51,6 +54,8 @@ def _to_out(exam: Exam, db: Session | None = None) -> ExamOut:
     item = ExamOut.model_validate(exam)
     subs = exam.submissions
     item.submission_count = len(subs)
+    item.student_count = people_count(exam)
+    item.paper_duration = exam.paper.duration if exam.paper else ""
     item.avg_score = round(sum(s.score for s in subs) / len(subs), 1) if subs else None
     item.full_score = max((s.objective_total + s.subjective_total for s in subs), default=0)
     # 还有几份卷子的操作题没批完。graded_at 只在**全批完**时才落，
@@ -160,6 +165,16 @@ def _get(db: Session, exam_id: int, user: User, *, edit: bool = False) -> Exam:
     return exam
 
 
+def _duration(raw) -> str:
+    """考试时长：空 = 用试卷上的；要填就是 1~600 的整数分钟。"""
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    if not text.isdigit() or not 1 <= int(text) <= 600:
+        raise HTTPException(status_code=400, detail="考试时长填 1~600 的整数（分钟），留空就用试卷上的时长")
+    return str(int(text))
+
+
 @router.post("", response_model=ExamOut, summary="把一份存档试卷发布成考试")
 def create_exam(
     body: ExamCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)
@@ -179,6 +194,10 @@ def create_exam(
         show_score=body.show_score,
         show_answer=body.show_answer,
         early_submit=body.early_submit,
+        duration=_duration(body.duration),
+        max_attempts=body.max_attempts or 0,
+        rate_window=body.rate_window or 0,
+        rate_max=body.rate_max or 0,
         target_classes=_resolve_targets(db, user, body.target_class_ids),
         created_by=user.id,
     )
@@ -229,6 +248,11 @@ def update_exam(
     # 改发放范围要重新走一遍归属校验，别让人绕过创建时的限制
     if "target_class_ids" in data:
         exam.target_classes = _resolve_targets(db, user, data.pop("target_class_ids") or [])
+    if "duration" in data:
+        data["duration"] = _duration(data["duration"])
+    for k in ("max_attempts", "rate_window", "rate_max"):
+        if k in data and data[k] is None:
+            data[k] = 0
 
     for k, v in data.items():
         setattr(exam, k, v)
@@ -314,7 +338,8 @@ def submission_detail(
     sub = db.get(ExamSubmission, sub_id)
     if not sub or sub.exam_id != exam_id:
         raise HTTPException(status_code=404, detail="答卷不存在")
-    items = {it["id"]: it for it in load_items(db, exam.paper)}
+    # 重抽过的答卷按它那一套找题干（2.28.0）
+    items = {it["id"]: it for it in items_for(db, exam, sub.draw_key)[0]}
     detail = json.loads(sub.detail_json or "[]")
     for d in detail:
         it = items.get(d["id"])
@@ -468,7 +493,11 @@ def exam_paper(exam_id: int, user: User = Depends(get_current_user), db: Session
         "title": exam.title,
         "paper_title": paper.title if paper else "",
         "school": paper.school if paper else "",
-        "duration": paper.duration if paper else "",
+        # 这场考试的时长（单独改过的优先）和试卷上原本的时长；样卷里能改（2.28.0）
+        "duration": exam_duration(exam),
+        "paper_duration": paper.duration if paper else "",
+        "code": paper.code if paper else "",
+        "by_sections": bool(json.loads(paper.config_json or "{}").get("by_sections")) if paper else False,
         "full_score": sum(g["score"] for g in out),
         "groups": out,
     }
@@ -485,7 +514,7 @@ def exam_analysis(
     """classes：逗号分隔的班级名，只看这几个班；students：逗号分隔的答卷 id，几个学生对比。
     都不给就是全体参考学生。页面每隔一会儿重新拉一次 —— 老师阅完卷，图跟着变。"""
     exam = _get(db, exam_id, user)
-    items = load_items(db, exam.paper)
+    items = all_items(db, exam)
     everyone = list(exam.submissions)
     want_ids = {int(x) for x in students.split(",") if x.strip().isdigit()}
     want_cls = {x.strip() for x in classes.split(",") if x.strip()}
@@ -512,11 +541,13 @@ def exam_analysis(
 @router.get("/{exam_id}/stats", summary="题目分析：每题正确率")
 def exam_stats(exam_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     exam = _get(db, exam_id, user)
-    items = load_items(db, exam.paper)
+    items = all_items(db, exam)
     subs = exam.submissions
     scores = [s.score for s in subs]
     return {
         "submission_count": len(subs),
+        # 交卷人数：一个人交几次只算一个（允许重考时和交卷份数不一样）
+        "student_count": people_count(exam),
         "avg_score": round(sum(scores) / len(scores), 1) if scores else None,
         "max_score": max(scores) if scores else None,
         "min_score": min(scores) if scores else None,
@@ -529,7 +560,7 @@ def export_scores(
     exam_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
     exam = _get(db, exam_id, user)
-    items = load_items(db, exam.paper)
+    items = all_items(db, exam)
     groups = group_items(items)
     ordered = [it for g in groups for it in g["items"]]
     no_of = {it["id"]: i + 1 for i, it in enumerate(ordered)}

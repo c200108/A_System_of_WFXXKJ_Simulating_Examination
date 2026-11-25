@@ -138,10 +138,11 @@ def test_取卷带多选和空数_交卷按新规则判分(client, auth, roster_
     items = [q for g in body["groups"] for q in g["items"]]
     assert any(q["multi"] for q in items if q["type"] == "选择题")
     assert all(q["blanks"] >= 1 for q in items if q["type"] == "填空题")
-    full = {q["id"]: q for q in roster_exam["paper"]["questions"]}
+    # 开了乱序：每次取卷重抽一套（2.28.0），答案按题目 id 去题库里查
+    assert body["draw"], "开了乱序的按题型卷，网页取卷要重抽"
     mine = {}
     for q in items:
-        right = full[q["id"]]["answer"]
+        right = client.get(f"/api/questions/{q['id']}", headers=auth).json()["answer"]
         if q["type"] == "选择题":
             mine[str(q["id"])] = right[::-1]          # 多选倒着交也对
         elif q["type"] == "判断题":
@@ -152,7 +153,8 @@ def test_取卷带多选和空数_交卷按新规则判分(client, auth, roster_
     client.post("/api/students", json={"student_no": "MD002", "name": "核对乙",
                                        "class_id": roster_exam["cls"]["1班"]}, headers=auth)
     res = client.post(f"/api/take/{tok}/submit", json={
-        "student_name": "核对乙", "class_id": roster_exam["cls"]["1班"], "answers": mine}).json()
+        "student_name": "核对乙", "class_id": roster_exam["cls"]["1班"], "answers": mine,
+        "draw": body["draw"]}).json()
     assert res["right_count"] == res["objective_count"] == len(items)
 
 

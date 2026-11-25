@@ -400,9 +400,9 @@ def test_exam_list_shows_how_many_are_unmarked(client, auth, scored_exam):
 
 
 def test_old_papers_still_use_percentage(client, auth, stocked):
-    """2.4.0 之前组的卷子没有分值，判分要退回按正确率折百分制，历史成绩不能变。"""
+    """按题型组卷 2.28.0 起按比例给每题赋分（合计 100）；老卷子（库里分值是 0）判分时当场补上。"""
     paper = _generate(client, auth, by_sections=False, counts={"选择题": 2}, save=True)
-    assert paper["full_score"] == 0
+    assert paper["full_score"] == 100 and [q["score"] for q in paper["questions"]] == [50, 50]
     exam = client.post(
         "/api/exams", json={"paper_id": paper["paper_id"], "title": "老式卷子"}, headers=auth
     ).json()

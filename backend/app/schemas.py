@@ -483,6 +483,11 @@ class ExamCreate(BaseModel):
     show_score: bool = Field(default_factory=lambda: site.exam.defaults.show_score)
     show_answer: bool = Field(default_factory=lambda: site.exam.defaults.show_answer)
     early_submit: bool = False      # 允许提前交卷（不受一半门槛限制）
+    # 2.28.0：考试时长（分钟，空 = 用试卷上的）、重考次数（0 = 不限）、交卷频率（分钟窗口 + 次数，0 = 不限）
+    duration: str | None = Field(default=None, max_length=16)
+    max_attempts: int | None = Field(default=None, ge=0, le=99)
+    rate_window: int | None = Field(default=None, ge=0, le=1440)
+    rate_max: int | None = Field(default=None, ge=0, le=99)
 
 
 class ExamUpdate(BaseModel):
@@ -493,6 +498,11 @@ class ExamUpdate(BaseModel):
     show_score: bool | None = None
     show_answer: bool | None = None
     early_submit: bool | None = None
+    # 2.28.0：考试时长（分钟，空 = 用试卷上的）、重考次数（0 = 不限）、交卷频率（分钟窗口 + 次数，0 = 不限）
+    duration: str | None = Field(default=None, max_length=16)
+    max_attempts: int | None = Field(default=None, ge=0, le=99)
+    rate_window: int | None = Field(default=None, ge=0, le=1440)
+    rate_max: int | None = Field(default=None, ge=0, le=99)
 
 
 class ExamOut(ORMModel):
@@ -505,10 +515,16 @@ class ExamOut(ORMModel):
     show_score: bool
     show_answer: bool
     early_submit: bool = False
+    duration: str = ""             # 这场考试单独设的时长，空 = 用试卷上的
+    paper_duration: str = ""       # 试卷上的时长（界面上提示「不改就用它」）
+    max_attempts: int = 0
+    rate_window: int = 0
+    rate_max: int = 0
     target_classes: str = ""       # 班级名，逗号分隔；空串表示全体学生
     target_class_ids: list[int] = []
     created_at: datetime | None = None
     submission_count: int = 0
+    student_count: int = 0         # 交卷人数（一个人交几次算一个）
     avg_score: float | None = None
     full_score: int = 0            # 卷面总分，0 = 老卷子（百分制）
     ungraded_count: int = 0        # 还有几份卷子的操作题没批完
@@ -557,6 +573,8 @@ class TakePaperOut(BaseModel):
     # 选择判断题乱序：答题页按「考试 + 学生」各自打乱（题号顺序、选择题选项），
     # 交上来的仍是原选项字母
     shuffle: bool = False
+    # 2.28.0：这一次取卷重抽出来的那一套的编号（没重抽是空串）；临时保存、交卷都带着它
+    draw: str = ""
     groups: list[TakeGroupOut]
 
 
@@ -566,6 +584,8 @@ class SubmitIn(BaseModel):
     student_no: str = Field(default="", max_length=64)
     # 网页答题页（2.27.0）：从下拉里选的班级。交卷时核对姓名在不在这个班的名单里
     class_id: int | None = None
+    # 2.28.0：答的是哪一份重抽的卷子（取卷时给的 draw），没有就是原卷
+    draw: str = Field(default="", max_length=24)
     answers: dict[str, str] = {}
 
 
@@ -582,6 +602,9 @@ class SubmitOut(BaseModel):
     full_score: int | None = None
     pending_manual: int = 0               # 还有几道题等着老师评阅
     detail: list[dict] = []               # show_answer 关掉时为空
+    # 2.28.0：这份成绩在全部交卷同学里排第几（每人取最高分），show_score 关掉时不给
+    rank: int | None = None
+    rank_total: int | None = None
 
 
 class SubmissionOut(ORMModel):

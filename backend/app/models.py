@@ -390,6 +390,8 @@ class Paper(Base):
     duration: Mapped[str] = mapped_column(String(16), default="")  # 考试时长（分钟）
     code: Mapped[str] = mapped_column(String(32), default="")  # 卷号 NO.12345
     config_json: Mapped[str] = mapped_column(LONG_TEXT, default="{}")
+    # 从组卷页「历史试卷」里删掉了，但还有考试在用（2.28.0）：只藏起来，考试照常能考、能看成绩
+    is_hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
 
@@ -439,6 +441,13 @@ class Exam(Base):
     # 哪些班能在学生平台上看到这场考试，逗号分隔；留空表示所有班都能看。
     # 只影响学生平台的列表，凭链接直接答题的老路子不受它限制。
     target_classes: Mapped[str] = mapped_column(String(255), default="")
+    # 2.28.0：这场考试自己的时长（分钟），空 = 用试卷上的；发布以后也能单独改
+    duration: Mapped[str] = mapped_column(String(16), default="", server_default="")
+    # 允许重考时一个人最多交几次（0 = 不限）；不允许重考就是 1 次
+    max_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # 交卷频率：rate_window 分钟内一个人最多交 rate_max 次（0 = 不限）
+    rate_window: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    rate_max: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
 
@@ -446,6 +455,23 @@ class Exam(Base):
     submissions: Mapped[list["ExamSubmission"]] = relationship(
         back_populates="exam", cascade="all, delete-orphan", lazy="selectin"
     )
+
+
+class ExamDraw(Base):
+    """网页链接答题开了乱序时，每次取卷在服务端重抽的一套题（2.28.0）。
+
+    按题型组卷的选择、判断、填空题，从原卷同题型、同知识范围的题里按原数量重抽，
+    操作题照旧；题库不够的位置用原题补。items_json：[[题目 id, 大题名, 分值], ...]，按卷面顺序。
+    交卷带着 key，按这一套判分；临时保存记的也是 key，刷新还是同一套。
+    """
+
+    __tablename__ = "exam_draws"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    exam_id: Mapped[int] = mapped_column(ForeignKey("exams.id", ondelete="CASCADE"), index=True)
+    key: Mapped[str] = mapped_column(String(24), unique=True, index=True)
+    items_json: Mapped[str] = mapped_column(LONG_TEXT, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
 
 
 class ExamSubmission(Base):
@@ -482,6 +508,8 @@ class ExamSubmission(Base):
     )
     graded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     submitted_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, server_default=func.now())
+    # 2.28.0：网页链接开了乱序时每次取卷重抽一套题（ExamDraw），这份答卷答的是哪一套
+    draw_key: Mapped[str] = mapped_column(String(24), default="", server_default="")
 
     exam: Mapped[Exam] = relationship(back_populates="submissions")
 

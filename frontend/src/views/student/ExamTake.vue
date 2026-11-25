@@ -16,6 +16,8 @@ import { currentStudent } from '../../auth'
 import { useSubmitGate } from '../../submitGate'
 import SimHost from '../../components/sim/SimHost.vue'
 import ObjectiveAnswer from '../../components/ObjectiveAnswer.vue'
+import { useExamGuard } from '../../examGuard'
+import { perQuestion } from '../../scoreNote'
 
 const CN = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
 const route = useRoute()
@@ -29,6 +31,44 @@ const loading = ref(true)
 const submitting = ref(false)
 const result = ref(null)
 const answers = reactive({})
+
+// 临时保存（2.28.0）：作答存在这台电脑上，交卷前刷新原样回来；交卷成功就删掉。
+// 学生平台的题序按「考试 + 学号」固定，刷新本来就不变，存的只是作答
+const SAVE_KEY = `exam-save-${examId}-${currentStudent.value?.student_no || ''}`
+const savedAt = ref('')
+function tempSave() {
+  if (!paper.value || result.value) return
+  const now = new Date()
+  const at = [now.getHours(), now.getMinutes(), now.getSeconds()].map(n => String(n).padStart(2, '0')).join(':')
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({ answers: { ...answers }, at }))
+    savedAt.value = at
+    ElMessage.success('已临时保存：交卷前刷新页面，已选内容不变')
+  } catch {
+    ElMessage.error('这台电脑的浏览器存不了（可能开着无痕模式），请直接作答交卷')
+  }
+}
+function restoreSave() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null')
+    if (!saved) return
+    const ids = new Set(paper.value.groups.flatMap(g => g.items.map(q => String(q.id))))
+    Object.entries(saved.answers || {}).forEach(([k, v]) => ids.has(String(k)) && (answers[k] = v))
+    savedAt.value = saved.at || ''
+  } catch {
+    /* 存的东西坏了就当没有 */
+  }
+}
+function clearSave() {
+  try {
+    localStorage.removeItem(SAVE_KEY)
+  } catch {
+    /* 无痕模式 */
+  }
+}
+
+// 防开发者工具、防脚本代答（examGuard.js）
+const { tampered } = useExamGuard()
 
 /** 交卷当场只算得出客观题那一段，标题就照实说，别让学生以为总分就这么多。 */
 const resultTitle = computed(() => {
@@ -68,6 +108,7 @@ onMounted(async () => {
     // 选择判断题乱序：按「考试 + 学号」打乱，刷新、换台电脑登录都是同一套顺序
     paper.value = applyShuffle(await api.studentPaper(examId),
       `exam-${examId}-${me.value?.student_no || ''}`)
+    restoreSave()
     gate.start()
   } catch (e) {
     loadError.value = e.response?.data?.detail || '打不开这场考试，回列表看看还在不在'
@@ -90,6 +131,11 @@ async function submit() {
     return
   }
 
+  if (tampered.value) {
+    ElMessage.error('检测到开发者工具开着，关掉以后才能交卷')
+    return
+  }
+
   const blank = paper.value.total - answered.value
   if (blank > 0) {
     asking.value = true
@@ -109,6 +155,7 @@ async function submit() {
   submitting.value = true
   try {
     result.value = await api.studentSubmit(examId, answers)
+    clearSave()
     gate.done()
     window.scrollTo({ top: 0, behavior: 'smooth' })
   } finally {
@@ -130,6 +177,10 @@ function back() {
 
 <template>
   <div class="wrap" v-loading="loading">
+    <!-- 开发者工具开着：盖住整页，不让交卷（examGuard.js） -->
+    <div v-if="tampered && !result" class="guard">
+      检测到开发者工具（F12）开着。<br />考试期间不能用，请关掉它，关掉后自动恢复答题。
+    </div>
     <el-result v-if="loadError" icon="warning" title="无法进入考试" :sub-title="loadError">
       <template #extra>
         <el-button type="primary" @click="router.push('/exam')">返回考试列表</el-button>
@@ -168,6 +219,11 @@ function back() {
           <p v-else-if="result.score !== null && result.score !== undefined" class="rsub">
             客观题答对 {{ result.right_count }} / {{ result.objective_count }}
           </p>
+          <!-- 在全部交卷同学里排第几（每人取最高分，2.28.0） -->
+          <p v-if="result.rank" class="rsub rank">
+            当前排名：第 <b>{{ result.rank }}</b> 名 / 共 {{ result.rank_total }} 人
+            <span class="tbar">（每人取最高一次的分；后面还有同学交卷，名次会变）</span>
+          </p>
         </template>
         <template #extra>
           <el-button type="primary" @click="router.push('/exam')">返回考试列表</el-button>
@@ -179,7 +235,7 @@ function back() {
         <div class="sect">
           {{ CN[gi] || gi + 1 }}、{{ g.name || g.type }}（共 {{ g.items.length }} 题<template
             v-if="g.score"
-          >，{{ g.score }} 分</template>）
+          >，{{ perQuestion(g.items) }}，共 {{ g.score }} 分</template>）
           <span v-if="g.items.some(q => q.type === '操作题')" class="sd">操作题由老师评阅</span>
         </div>
 
@@ -211,7 +267,7 @@ function back() {
           </div>
           <div v-else class="body">
             <!-- 单选 / 多选（复选框）/ 判断 / 填空（每空一个输入框），见 ObjectiveAnswer.vue -->
-            <ObjectiveAnswer v-model="answers[q.id]" :q="q" :disabled="!!result" />
+            <ObjectiveAnswer v-model="answers[q.id]" :q="q" :disabled="!!result" guard />
           </div>
 
           <div v-if="detailOf[q.id] && detailOf[q.id].scored && !detailOf[q.id].ok" class="key">
@@ -227,6 +283,8 @@ function back() {
         <template v-if="!result">
           <span class="prog">已作答 {{ answered }} / {{ paper.total }}</span>
           <span v-if="gate.reason.value" class="gate">{{ gate.reason.value }}</span>
+          <el-button size="large" @click="tempSave">临时保存</el-button>
+          <span v-if="savedAt" class="tbar">{{ savedAt }} 已临时保存</span>
           <el-button type="primary" size="large" :loading="submitting" @click="submit">
             交卷
           </el-button>
@@ -279,6 +337,28 @@ function back() {
   color: var(--el-text-color-secondary);
   font-size: 12.5px;
   white-space: nowrap;
+}
+.rank b {
+  font-size: 18px;
+  color: var(--el-color-primary);
+}
+.tbar {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.guard {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: 18px;
+  text-align: center;
+  line-height: 1.8;
+  padding: 20px;
 }
 .rsub {
   margin: 4px 0;

@@ -137,6 +137,10 @@ def build_paper(
         groups.append({"name": qtype, "type": qtype, "score": 0, "items": items})
 
     flat = [it for g in groups for it in g["items"]]
+    # 2.28.0：按题型组卷也按比例给每题赋分，合计 100
+    even_scores(flat)
+    for g in groups:
+        g["score"] = sum(int(it["score"]) for it in g["items"])
     tally: dict[str, int] = {k: 0 for k in scope_order}
     for it in flat:
         tally[it["scope"]] = tally.get(it["scope"], 0) + 1
@@ -148,7 +152,7 @@ def build_paper(
         "code": site.paper.code_prefix + str(_seed_int(seed_str) % 100000).zfill(5),
         "seed": seed_str,
         "total": len(flat),
-        "full_score": 0,
+        "full_score": sum(int(it["score"]) for it in flat),
         "by_sections": False,
         "shuffle": bool(shuffle),
         "tally": tally,
@@ -156,6 +160,20 @@ def build_paper(
         "groups": groups,
         "questions": flat,
     }
+
+
+def even_scores(items: list[dict], total: int = 100) -> None:
+    """按题型组卷的卷子按比例给每题赋分（2.28.0），整卷合计 total 分。
+
+    原来这种卷子不设分值、判分按正确率折百分制，卷面上看不出一题几分。现在每题平分，
+    除不尽的余数从前往后每题多给 1 分（40 题就是前 20 题 3 分、后 20 题 2 分），合计正好 100。
+    操作题和别的题一样分；已经设了分的卷子不动。就地改 items 的 score。
+    """
+    if not items or any(int(it.get("score") or 0) for it in items):
+        return
+    base, extra = divmod(int(total), len(items))
+    for i, it in enumerate(items):
+        it["score"] = base + (1 if i < extra else 0)
 
 
 def right_letter(item: dict) -> str:
