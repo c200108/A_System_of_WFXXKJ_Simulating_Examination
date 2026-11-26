@@ -24,6 +24,8 @@ from .dragboard import DragBoard, IpBox
 from .shell import (AMBER, APP_NAME, BG, BLUE, CARD, CLIENT_VER, FONT, GRAY,
                     GREEN, LINE, RED, ai_reply, in_thread, open_in_system)
 
+RED_CLOCK = "#d93026"     # 最后 3 分钟倒计时的底色（4.19.0）
+
 
 # ================================================================ 三、答题
 def submit_needs(total_questions: int, total_seconds: int) -> tuple[int, int]:
@@ -733,15 +735,20 @@ class ExamFrame(ttk.Frame):
         if self.submitted:
             return
         if self.left <= 0:
-            self.unshrink()             # 弹窗、交卷之前先还原：缩着的小窗口里看不全
-            messagebox.showinfo("时间到", "考试时间结束，系统将自动交卷。")
+            self.unshrink()             # 交卷之前先还原：缩着的小窗口里看不全
+            # 4.19.0：时间到直接强制交卷，不再弹「时间到」让学生点确定 —— 学生不点，卷子就一直不交
+            self.clock.config(text="00:00:00", bg=RED_CLOCK, fg="white")
+            self.tip.config(text="考试时间到，正在自动交卷……")
+            self.update_idletasks()
             self.do_submit(auto=True)
             return
         self.left -= 1
         m, s = divmod(max(0, self.left), 60)
         h, m = divmod(m, 60)
-        self.clock.config(text=f"{h:02d}:{m:02d}:{s:02d}",
-                          fg="#ffd9d6" if self.left < 300 else "white")
+        # 最后 3 分钟倒计时整块变红（4.19.0）
+        late = self.left < 180
+        self.clock.config(text=f"{h:02d}:{m:02d}:{s:02d}", fg="white",
+                          bg=RED_CLOCK if late else BLUE, padx=6 if late else 0)
         if self.left % 15 == 0:
             self.save_draft()
         # 页脚提示交卷门槛，学生不用点了「交卷」才知道还差什么

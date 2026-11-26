@@ -556,6 +556,66 @@ def exam_stats(exam_id: int, user: User = Depends(get_current_user), db: Session
     }
 
 
+@router.get("/{exam_id}/hardest.xlsx", summary="错得最多的题导出 Excel（完整题干和选项）")
+def export_hardest(exam_id: int, limit: int = 0, user: User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    """成绩页「错得最多的题」导出（2.29.1）：按正确率从低到高，完整题干、每个选项、正确答案，
+    再加上答错的人最多选了哪个选项 —— 讲评时直接用。limit=0 是全部有人作答的客观题。"""
+    exam = _get(db, exam_id, user)
+    items = all_items(db, exam)
+    by_id = {it["id"]: it for it in items}
+    stats = [q for q in question_stats(exam, items)
+             if q["scorable"] and q["right"] + q["wrong"] + q["blank"] > 0]
+    stats.sort(key=lambda q: (q["accuracy"], -(q["right"] + q["wrong"] + q["blank"])))
+    if limit > 0:
+        stats = stats[:limit]
+
+    # 答错的人各选了什么（多选题按整串算，如 "AB"；填空按原文）
+    wrong_picks: dict = {}
+    for s in exam.submissions:
+        for d in json.loads(s.detail_json or "[]"):
+            if d.get("scored") and not d.get("ok") and d.get("mine"):
+                tally = wrong_picks.setdefault(d["id"], {})
+                tally[d["mine"]] = tally.get(d["mine"], 0) + 1
+
+    letters = "ABCDEF"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "错得最多的题"
+    ws.append(["序号", "题型", "知识范围", "题干"] + [f"选项{x}" for x in letters]
+              + ["正确答案", "作答人数", "答对", "答错", "未作答", "正确率(%)", "答错的人最多选"])
+    for no, q in enumerate(stats, 1):
+        it = by_id.get(q["id"], {})
+        opts = {o.get("label"): o.get("content", "") for o in (it.get("options") or [])}
+        if it.get("type") == "判断题" and not opts:
+            opts = {"A": "正确", "B": "错误"}
+        answer = q["answer"]
+        if answer and all(ch in opts for ch in answer):
+            answer = "；".join(f"{ch}. {opts[ch]}" for ch in answer)
+        picks = sorted((wrong_picks.get(q["id"]) or {}).items(), key=lambda kv: -kv[1])
+        top = "；".join(f"{k}（{v} 人）" for k, v in picks[:2])
+        ws.append([no, q["type"], q["scope"], it.get("stem") or q["stem"]]
+                  + [opts.get(x, "") for x in letters]
+                  + [answer, q["right"] + q["wrong"] + q["blank"], q["right"], q["wrong"], q["blank"],
+                     q["accuracy"], top])
+    from openpyxl.styles import Alignment
+    for row in ws.iter_rows(min_row=2):
+        for c in row:
+            c.alignment = Alignment(wrap_text=True, vertical="top")
+    for col, w in zip("ABCDEFGHIJKLMNOPQ", [6, 8, 18, 60, 22, 22, 22, 22, 14, 14, 26, 9, 7, 7, 8, 10, 20]):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "E2"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    name = quote(f"{exam.title}_错得最多的题.xlsx")
+    return Response(
+        content=buf.getvalue(),
+        media_type=XLSX_MIME,
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{name}"},
+    )
+
+
 @router.get("/{exam_id}/export.xlsx", summary="成绩汇总导出 Excel")
 def export_scores(
     exam_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)

@@ -585,7 +585,7 @@ def question_stats(exam: Exam, items: list[dict]) -> list[dict]:
                 "section": it.get("section") or it["type"],
                 "score": show(it.get("score")),
                 "difficulty": it.get("difficulty") or 3,
-                "stem": it["stem"][:60],
+                "stem": it["stem"],                # 2.29.1：完整题干，成绩页「错得最多的题」要看全
                 "answer": it.get("answer") or "",
                 "right": c["right"],
                 "wrong": c["wrong"],

@@ -575,6 +575,10 @@ def test_countdown_shows(app, server, exam):
     frame = start_exam(app, server, exam, "26090113")
     frame.tick()
     assert ":" in frame.clock.cget("text")
+    assert frame.clock.cget("bg") != exam_ui.RED_CLOCK
+    frame.left = 150                    # 最后 3 分钟变红
+    frame.tick()
+    assert frame.clock.cget("bg") == exam_ui.RED_CLOCK
 
 
 # ================================================================ 交卷
@@ -1196,15 +1200,18 @@ def test_交卷前先还原(app, server, exam, monkeypatch):
     assert not frame.shrunk and seen == [False]
 
 
-def test_时间到自动交卷前先还原(app, server, exam, monkeypatch):
+def test_时间到自动交卷前先还原_不弹窗直接交(app, server, exam, monkeypatch):
+    """4.19.0：时间到强制交卷，不弹任何要学生点的框；交之前把收缩的窗口还原。"""
     frame = start_exam(app, server, exam, "26090122")
     mixed_paper(frame)
     frame.shrink()
-    seen = []
-    monkeypatch.setattr(messagebox, "showinfo", lambda *a, **k: seen.append(frame.shrunk))
+    popped = []
+    for name in ("showinfo", "askyesno", "askokcancel", "showwarning"):
+        monkeypatch.setattr(messagebox, name, lambda *a, _n=name, **k: popped.append(_n) or True)
     frame.left = 0
     frame.tick()
-    assert seen == [False]
+    assert not frame.shrunk
+    assert popped == [], f"时间到不该弹框：{popped}"
     assert settle(app, 20, on(app, exam_ui.DoneFrame))
     assert app.root.attributes("-topmost") in (0, False, "0")
 

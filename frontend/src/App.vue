@@ -65,6 +65,22 @@ body {
   word-break: break-word;
 }
 
+/* 日期 / 时间范围框（2.29.1）：一律固定一个合适的宽度，不跟着筛选栏被拉满一整行。
+   老一些的浏览器（机房 Win7 上的 360、老版 Chrome）不认 el-date-editor 的宽度变量，
+   range 框会被撑宽 —— 这里用 flex: none + 显式宽度压住；窄屏时最多占满一行、自己换行。 */
+.el-date-editor.el-range-editor {
+  flex: none !important;
+  width: 300px !important;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.el-date-editor--datetimerange.el-range-editor {
+  width: 340px !important;
+}
+.el-range-editor .el-range-input {
+  min-width: 0;
+}
+
 /* 窄屏上 2/3 屏就太挤了，这里放宽到贴边 */
 @media (max-width: 600px) {
   .el-message-box {

@@ -195,3 +195,31 @@ def test_学生端考试包带多选和填空空数_每题平均分(client, auth
             assert "answer" not in json.dumps(paper)
             return
     raise AssertionError("组了 8 张卷子都没抽到多选题")
+
+
+def test_错得最多的题导出完整题干和选项(client, auth, setup):
+    import io
+
+    from openpyxl import load_workbook
+
+    ex = setup["exam"](shuffle=False)
+    body = client.get(f"/api/take/{ex['token']}").json()
+    first = body["groups"][0]["items"][0]
+    for i in range(3):
+        client.post(f"/api/take/{ex['token']}/submit", json={
+            "student_name": f"导出{i}", "student_class": "规则测试1班", "student_no": f"DC{i}",
+            "answers": {str(first["id"]): "Z"}})
+    res = client.get(f"/api/exams/{ex['id']}/hardest.xlsx", headers=auth)
+    assert res.status_code == 200
+    ws = load_workbook(io.BytesIO(res.content)).active
+    rows = list(ws.iter_rows(values_only=True))
+    assert rows[0][:5] == ("序号", "题型", "知识范围", "题干", "选项A")
+    assert len(rows) == 41, "40 道题都有人作答（没答的算未作答）"
+    q = client.get(f"/api/questions/{first['id']}", headers=auth).json()
+    row = next(r for r in rows[1:] if r[3] == q["stem"])
+    assert row[3] == q["stem"], "题干完整，不截断"
+    if q["type"] == "选择题":
+        assert row[4] == next(o["content"] for o in q["options"] if o["label"] == "A")
+    assert row[16] == "Z（3 人）", "答错的人最多选了什么"
+    assert client.get(f"/api/exams/{ex['id']}/hardest.xlsx", params={"limit": 5}, headers=auth) \
+        .status_code == 200

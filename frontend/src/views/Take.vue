@@ -3,7 +3,7 @@
  * 学生答题页。不需要登录，凭链接里的口令访问。
  * 这个页面永远拿不到答案——取卷接口不下发，判分在后端做。
  */
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
@@ -120,7 +120,7 @@ onMounted(async () => {
     } else if (saved) {
       clearSave()        // 记下的那一套过期了，作答对不上新题，不往回填
     }
-    gate.start()
+    gate.start(paper.value.draw || '')      // 换了一套卷子（刷新重抽）就重新计时
     classes.value = await api.takeClasses(token).catch(() => [])
   } catch (e) {
     loadError.value = e.response?.data?.detail || '打不开这场考试，请向老师确认链接'
@@ -131,33 +131,51 @@ onMounted(async () => {
 
 const asking = ref(false)
 
-async function submit() {
+// 考试时间到：不用学生确认，直接交卷（2.29.1）。门槛、「还有几题没做」都不问了
+watch(
+  () => gate.timeUp.value,
+  up => {
+    if (up && paper.value && !result.value) submit(true)
+  }
+)
+
+/** force：时间到了自动交 —— 不过交卷门槛、不弹「还有几题没做」，开着的确认框也关掉 */
+async function submit(force = false) {
+  force = force === true || gate.timeUp.value
+  if (force && asking.value) {
+    ElMessageBox.close()
+    asking.value = false
+  }
   // 学生紧张时容易连点，挡住重复弹窗和重复提交
   if (asking.value || submitting.value || result.value) return
-  if (!gate.canSubmit.value) {
+  if (!force && !gate.canSubmit.value) {
     // 被门槛拦住时当场再问一次：老师刚打开「允许提前交卷」，不用等下一个 60 秒
     await gate.sync()
   }
-  if (!gate.canSubmit.value) {
+  if (!force && !gate.canSubmit.value) {
     ElMessage.warning(gate.reason.value)
     return
   }
 
-  if (tampered.value) {
+  if (!force && tampered.value) {
     ElMessage.error('检测到开发者工具开着，关掉以后才能交卷')
     return
   }
-  if (!me.class_id) {
-    ElMessage.warning('请先在卷头选择自己的班级')
-    return
-  }
-  if (!me.student_name.trim()) {
-    ElMessage.warning('请先填写姓名（写全名）')
+  if (!me.class_id || !me.student_name.trim()) {
+    // 时间到了也得知道是谁的卷子：没选班级、没填姓名交不上，弹窗说清楚，填好点「交卷」立刻交
+    const what = !me.class_id ? '请先在卷头选择自己的班级' : '请先填写姓名（写全名）'
+    if (force) {
+      ElMessageBox.alert(`考试时间到了，${what}，然后点「交卷」，会直接交上去。`, '时间到', {
+        type: 'warning', confirmButtonText: '知道了'
+      })
+    } else {
+      ElMessage.warning(what)
+    }
     return
   }
 
   const blank = paper.value.total - answered.value
-  if (blank > 0) {
+  if (!force && blank > 0) {
     asking.value = true
     try {
       await ElMessageBox.confirm(
@@ -200,7 +218,7 @@ async function submit() {
   <div class="wrap" v-loading="loading">
     <!-- 开发者工具开着：盖住整页，不让交卷（examGuard.js） -->
     <!-- 剩余答题时间：左下角固定显示（2.29.0） -->
-    <div v-if="paper && !result && gate.remainText.value" class="clock" :class="{ late: gate.remaining.value < 300 }">
+    <div v-if="paper && !result && gate.remainText.value" class="clock" :class="{ late: gate.late.value }">
       {{ gate.remainText.value }}
     </div>
     <div v-if="tampered && !result" class="guard">
@@ -292,13 +310,13 @@ async function submit() {
               v-model="answers[q.id]"
               type="textarea"
               :rows="3"
-              :disabled="!!result"
+              :disabled="!!result || gate.timeUp.value"
               placeholder="写下你的操作步骤"
             />
           </div>
           <div v-else class="body">
             <!-- 单选 / 多选（复选框）/ 判断 / 填空（每空一个输入框），见 ObjectiveAnswer.vue -->
-            <ObjectiveAnswer v-model="answers[q.id]" :q="q" :disabled="!!result" guard />
+            <ObjectiveAnswer v-model="answers[q.id]" :q="q" :disabled="!!result || gate.timeUp.value" guard />
           </div>
 
           <div v-if="detailOf[q.id] && detailOf[q.id].scored && !detailOf[q.id].ok" class="key">
@@ -310,7 +328,6 @@ async function submit() {
       <!-- 底部操作条 -->
       <div v-if="!result" class="bar">
         <span class="prog">已作答 {{ answered }} / {{ paper.total }}</span>
-        <span v-if="gate.reason.value" class="gate">{{ gate.reason.value }}</span>
         <el-button size="large" @click="tempSave">临时保存</el-button>
         <span v-if="savedAt" class="tbar">{{ savedAt }} 已临时保存，交卷前刷新不会变</span>
         <el-button type="primary" size="large" :loading="submitting" @click="submit">

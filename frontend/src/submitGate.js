@@ -9,6 +9,10 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 
 export const GATE_RATIO = 1 / 2
+/** 记下的开考时间超过「时长 + 这么多秒」就当是上次没交完的旧记录，重新计时 */
+const STALE_GRACE = 600
+/** 剩这么多秒倒计时变红 */
+export const LATE_SECONDS = 180
 
 /** 卷面上的「40」「40分钟」都变成 40；写不出数字的按 45 分钟算（和学生端一致）。 */
 export function durationMinutes(duration) {
@@ -42,16 +46,30 @@ export function useSubmitGate(key, paper, answered, live = null) {
   const now = ref(Date.now())
   let startedAt = 0
 
-  function start() {
+  /**
+   * 开始计时。paperKey 是「这一套卷子」的标识（网页链接开了乱序时是服务端给的 draw）：
+   * 记下的开考时间是另一套卷子的（刷新换了题）就重新计时；同一套（临时保存后刷新）接着计。
+   *
+   * 2.29.1：以前只认考试，不认卷子，而且开过一次没交就一直记着 —— 隔天再打开，一进来就是
+   * 「考试时间已到」。现在除了换卷子重新计时，记下的时间已经超过「时长 + 10 分钟」的
+   * （上次开着没交、早就考完了）也当这次是重新开考。
+   */
+  function start(paperKey = '') {
+    let saved = null
     try {
-      startedAt = Number(localStorage.getItem(storeKey)) || 0
+      const raw = localStorage.getItem(storeKey)
+      saved = raw && raw.startsWith('{') ? JSON.parse(raw) : raw ? { at: Number(raw), paper: null } : null
     } catch {
-      startedAt = 0
+      saved = null
     }
-    if (!startedAt || startedAt > Date.now()) {
-      startedAt = Date.now()
+    const limit = (durationMinutes(paper.value?.duration) * 60 + STALE_GRACE) * 1000
+    const at = Number(saved?.at) || 0
+    const fresh =
+      !at || at > Date.now() || Date.now() - at > limit || (saved?.paper ?? null) !== String(paperKey)
+    startedAt = fresh ? Date.now() : at
+    if (fresh) {
       try {
-        localStorage.setItem(storeKey, String(startedAt))
+        localStorage.setItem(storeKey, JSON.stringify({ at: startedAt, paper: String(paperKey) }))
       } catch {
         /* 无痕模式写不进去也照样考，只是刷新后重新计时 */
       }
@@ -119,15 +137,17 @@ export function useSubmitGate(key, paper, answered, live = null) {
     )
   })
 
-  // 剩余答题时间（2.29.0）：答题页左下角一直显示。时间到了只是提示，不强制收卷
+  // 剩余答题时间：答题页左下角一直显示，最后 3 分钟变红；到点由答题页强制交卷（2.29.1）
   const startedRef = ref(0)
   const remaining = computed(() =>
     startedRef.value ? durationMinutes(paper.value?.duration) * 60 - (now.value - startedRef.value) / 1000 : null
   )
+  const late = computed(() => remaining.value !== null && remaining.value < LATE_SECONDS)
+  const timeUp = computed(() => remaining.value !== null && remaining.value <= 0)
   const remainText = computed(() => {
     const r = remaining.value
     if (r === null) return ''
-    if (r <= 0) return '考试时间已到，请尽快交卷'
+    if (r <= 0) return '考试时间到，自动交卷'
     const s = Math.ceil(r)
     const h = Math.floor(s / 3600)
     const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0')
@@ -136,8 +156,9 @@ export function useSubmitGate(key, paper, answered, live = null) {
   })
 
   return {
-    start: () => {
-      start()
+    /** paperKey：这一套卷子的标识（重抽的 draw），换了卷子重新计时 */
+    start: (paperKey = '') => {
+      start(paperKey)
       startedRef.value = startedAt
     },
     done,
@@ -148,6 +169,8 @@ export function useSubmitGate(key, paper, answered, live = null) {
     waitSeconds,
     moreQuestions,
     remaining,
-    remainText
+    remainText,
+    late,
+    timeUp
   }
 }

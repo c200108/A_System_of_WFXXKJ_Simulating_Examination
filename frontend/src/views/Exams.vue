@@ -315,6 +315,11 @@ async function exportDeskPack(row) {
   ElMessage.success('考试包已下载，拷到学生机上和 exe 放一起即可离线开考')
 }
 
+/** 错得最多的题导出 Excel：按正确率从低到高，完整题干、选项、正确答案、答错的人最多选了什么 */
+async function exportHardest() {
+  await download(api.exportHardest(current.value.id), `${current.value.title}_错得最多的题.xlsx`)
+}
+
 async function exportScores() {
   await download(api.exportScores(current.value.id), `${current.value.title}_成绩.xlsx`)
   ElMessage.success('已下载成绩汇总')
@@ -331,8 +336,10 @@ const hardest = computed(() => {
   return stats.value.questions
     .filter(q => q.scorable)
     .slice()
-    .sort((a, b) => a.accuracy - b.accuracy)
-    .slice(0, 5)
+    // 抽卷的考试每题作答的人不一样多：没人抽到的不列，同样正确率时作答人多的排前面
+    .filter(q => q.right + q.wrong + q.blank > 0)
+    .sort((a, b) => a.accuracy - b.accuracy || b.right + b.wrong + b.blank - (a.right + a.wrong + a.blank))
+    .slice(0, 20)
 })
 </script>
 
@@ -521,11 +528,10 @@ const hardest = computed(() => {
             type="datetimerange"
             size="small"
             value-format="YYYY-MM-DD HH:mm:ss"
-            range-separator="到"
-            start-placeholder="交卷时间从"
-            end-placeholder="到"
+            range-separator="至"
+            start-placeholder="交卷时间起"
+            end-placeholder="交卷时间止"
             :default-time="[new Date(2000, 0, 1, 0, 0, 0), new Date(2000, 0, 1, 23, 59, 59)]"
-            style="width: 330px"
           />
           <span class="of">
             {{ shownSubs.length === subs.length ? `共 ${subs.length} 人` : `筛出 ${shownSubs.length} / ${subs.length} 人` }}
@@ -599,18 +605,28 @@ const hardest = computed(() => {
       </el-col>
 
       <el-col :span="10">
-        <div class="sub-t">错得最多的题</div>
+        <div class="sub-t">
+          错得最多的题
+          <el-button v-if="hardest.length" link type="primary" size="small" @click="exportHardest">
+            导出完整题目（含选项）
+          </el-button>
+        </div>
         <el-empty v-if="!hardest.length" description="等有人交卷后这里会列出来" :image-size="60" />
-        <el-table v-else :data="hardest" border size="small">
-          <el-table-column prop="stem" label="题干" show-overflow-tooltip />
-          <el-table-column prop="answer" label="答案" width="66" />
+        <!-- 题干完整显示、自动折行；题多了表格自己上下滚（2.29.1） -->
+        <el-table v-else :data="hardest" border size="small" max-height="460" class="hardest">
+          <el-table-column type="index" label="#" width="42" />
+          <el-table-column prop="stem" label="题干" min-width="200" />
+          <el-table-column prop="answer" label="答案" width="62" />
+          <el-table-column label="作答" width="56">
+            <template #default="{ row }">{{ row.right + row.wrong + row.blank }}</template>
+          </el-table-column>
           <el-table-column label="正确率" width="76">
             <template #default="{ row }">
               <span :class="row.accuracy >= 60 ? 'ok' : 'no'">{{ row.accuracy }}%</span>
             </template>
           </el-table-column>
         </el-table>
-        <p class="note">完整的每题分析在导出的 Excel 第二张表里。</p>
+        <p class="note">这里列正确率最低的 20 道；「导出完整题目」导出全部作答过的题（完整题干和选项）。</p>
       </el-col>
     </el-row>
   </el-card>

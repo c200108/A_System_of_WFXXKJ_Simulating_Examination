@@ -334,6 +334,8 @@ export const api = {
     http.patch(`/exams/${id}/submissions/${sid}/manual`, { scores }),
   examStats: id => http.get(`/exams/${id}/stats`),
   exportScores: id => http.get(`/exams/${id}/export.xlsx`, { responseType: 'blob' }),
+  // 错得最多的题：完整题干、每个选项、正确答案（2.29.1）
+  exportHardest: id => http.get(`/exams/${id}/hardest.xlsx`, { responseType: 'blob' }),
   // 删答卷（要改得动这场考试）：删掉的学生可以重新交卷
   deleteSubmission: (id, sid) => http.delete(`/exams/${id}/submissions/${sid}`),
   deleteSubmissions: (id, ids) => http.post(`/exams/${id}/submissions/delete`, { ids }),
